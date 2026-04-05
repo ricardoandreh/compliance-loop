@@ -1,0 +1,15 @@
+# AWS SDK
+boto3>=1.34.0
+
+# Property-Based Testing
+hypothesis>=6.92.0
+
+# Unit Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# AWS Service Mocking
+moto[s3,dynamodb,sqs]>=5.0.0
+
+# OPA Integration
+requests>=2.31.0
