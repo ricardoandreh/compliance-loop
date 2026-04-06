@@ -24,16 +24,26 @@ import pytest
 from hypothesis import given, settings, strategies as st
 from hypothesis import assume
 
-# Add lambdas/analyze to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../lambdas/analyze'))
+# Load analyze handler explicitly by file path to avoid module caching
+# (execute/ also has handler.py, and pytest may import it first)
+import importlib.util
+_analyze_handler_path = os.path.join(os.path.dirname(__file__), '../../lambdas/analyze/handler.py')
+_analyze_handler_path = os.path.abspath(_analyze_handler_path)
 
-from handler import (
-    classify_state,
-    extract_bucket_name,
-    evaluate_policy_with_opa,
-    query_exception,
-    lambda_handler
-)
+# Remove any previously cached 'analyze_handler' module
+sys.modules.pop('analyze_handler', None)
+
+_spec = importlib.util.spec_from_file_location('analyze_handler', _analyze_handler_path)
+handler = importlib.util.module_from_spec(_spec)
+sys.modules['analyze_handler'] = handler
+_spec.loader.exec_module(handler)
+
+classify_state = handler.classify_state
+extract_bucket_name = handler.extract_bucket_name
+evaluate_policy_with_opa = handler.evaluate_policy_with_opa
+query_exception = handler.query_exception
+lambda_handler = handler.lambda_handler
+del _analyze_handler_path, _spec
 
 
 # ============================================================================
@@ -212,7 +222,7 @@ def test_property_4_compliant_resource_classification(config):
     assert all(config.values()), "Test setup error: config should be compliant"
     
     # Evaluate policy (mocked OPA call)
-    with patch('handler.subprocess.run') as mock_run:
+    with patch('analyze_handler.subprocess.run') as mock_run:
         # Mock OPA response for compliant configuration
         mock_run.return_value = Mock(
             returncode=0,
@@ -385,7 +395,7 @@ def test_property_8_exception_query_correctness(
         mock_table.query.return_value = {'Items': []}
     
     # Patch the exceptions_table
-    with patch('handler.exceptions_table', mock_table):
+    with patch('analyze_handler.exceptions_table', mock_table):
         result = query_exception(control_id, resource_arn)
     
     # Verify query was called with correct parameters
@@ -453,10 +463,10 @@ def test_property_end_to_end_classification(event, config, has_exception, except
         expected_state = "S_violation"
     
     # Mock AWS services
-    with patch('handler.s3_client') as mock_s3, \
-         patch('handler.exceptions_table') as mock_exceptions, \
-         patch('handler.violations_log_table') as mock_log, \
-         patch('handler.subprocess.run') as mock_opa:
+    with patch('analyze_handler.s3_client') as mock_s3, \
+         patch('analyze_handler.exceptions_table') as mock_exceptions, \
+         patch('analyze_handler.violations_log_table') as mock_log, \
+         patch('analyze_handler.subprocess.run') as mock_opa:
         
         # Mock S3 GetPublicAccessBlock
         mock_s3.get_public_access_block.return_value = {

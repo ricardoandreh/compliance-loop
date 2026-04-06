@@ -17,6 +17,7 @@ from subprocess import CompletedProcess, TimeoutExpired
 # Import the handler module
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../lambdas/execute'))
+import handler
 from handler import lambda_handler, extract_bucket_name
 
 
@@ -26,17 +27,17 @@ class TestExtractBucketName:
     def test_extract_bucket_name_standard(self):
         """Test extraction from standard S3 ARN."""
         arn = "arn:aws:s3:::my-test-bucket"
-        assert extract_bucket_name(arn) == "my-test-bucket"
+        assert handler.extract_bucket_name(arn) == "my-test-bucket"
     
     def test_extract_bucket_name_with_dots(self):
         """Test extraction from ARN with dots in bucket name."""
         arn = "arn:aws:s3:::my.test.bucket"
-        assert extract_bucket_name(arn) == "my.test.bucket"
+        assert handler.extract_bucket_name(arn) == "my.test.bucket"
     
     def test_extract_bucket_name_with_dashes(self):
         """Test extraction from ARN with dashes in bucket name."""
         arn = "arn:aws:s3:::my-test-bucket-123"
-        assert extract_bucket_name(arn) == "my-test-bucket-123"
+        assert handler.extract_bucket_name(arn) == "my-test-bucket-123"
 
 
 class TestExecuteLambdaHandler:

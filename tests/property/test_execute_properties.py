@@ -22,10 +22,22 @@ import pytest
 from hypothesis import given, settings, strategies as st
 from hypothesis import assume
 
-# Add lambdas/execute to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../lambdas/execute'))
+# Load execute handler explicitly by file path to avoid module caching
+# (analyze/ also has handler.py, and pytest may import it first)
+import importlib.util
+_execute_handler_path = os.path.join(os.path.dirname(__file__), '../../lambdas/execute/handler.py')
+_execute_handler_path = os.path.abspath(_execute_handler_path)
 
-from handler import lambda_handler, extract_bucket_name
+# Remove any previously cached 'execute_handler' module
+sys.modules.pop('execute_handler', None)
+
+_spec = importlib.util.spec_from_file_location('execute_handler', _execute_handler_path)
+handler = importlib.util.module_from_spec(_spec)
+sys.modules['execute_handler'] = handler
+_spec.loader.exec_module(handler)
+lambda_handler = handler.lambda_handler
+extract_bucket_name = handler.extract_bucket_name
+del _execute_handler_path, _spec
 
 
 # ============================================================================
@@ -152,12 +164,12 @@ def test_property_15_execute_idempotency(event, tofu_output, num_invocations):
     - 11.5: (Implicit) Multiple executions don't cause configuration drift
     """
     # Mock file system operations and subprocess
-    with patch('handler.shutil.rmtree'), \
-         patch('handler.os.path.exists', return_value=False), \
-         patch('handler.os.makedirs'), \
-         patch('handler.shutil.copy'), \
-         patch('handler.shutil.copytree'), \
-         patch('handler.subprocess.run') as mock_run:
+    with patch('execute_handler.shutil.rmtree'), \
+         patch('execute_handler.os.path.exists', return_value=False), \
+         patch('execute_handler.os.makedirs'), \
+         patch('execute_handler.shutil.copy'), \
+         patch('execute_handler.shutil.copytree'), \
+         patch('execute_handler.subprocess.run') as mock_run:
         
         # Mock successful tofu apply (idempotent)
         mock_run.return_value = CompletedProcess(
@@ -227,12 +239,12 @@ def test_property_16_execute_opentofu_invocation(event, tofu_output):
     region = event['region']
     
     # Mock file system operations and subprocess
-    with patch('handler.shutil.rmtree'), \
-         patch('handler.os.path.exists', return_value=False), \
-         patch('handler.os.makedirs'), \
-         patch('handler.shutil.copy'), \
-         patch('handler.shutil.copytree'), \
-         patch('handler.subprocess.run') as mock_run, \
+    with patch('execute_handler.shutil.rmtree'), \
+         patch('execute_handler.os.path.exists', return_value=False), \
+         patch('execute_handler.os.makedirs'), \
+         patch('execute_handler.shutil.copy'), \
+         patch('execute_handler.shutil.copytree'), \
+         patch('execute_handler.subprocess.run') as mock_run, \
          patch('builtins.open', create=True) as mock_open:
         
         # Mock file write for tfvars
@@ -333,12 +345,12 @@ def test_property_17_execute_success_response(event, tofu_output):
     - 7.5: When OpenTofu apply succeeds, Execute SHALL return success status to Orchestrator
     """
     # Mock file system operations and subprocess
-    with patch('handler.shutil.rmtree'), \
-         patch('handler.os.path.exists', return_value=False), \
-         patch('handler.os.makedirs'), \
-         patch('handler.shutil.copy'), \
-         patch('handler.shutil.copytree'), \
-         patch('handler.subprocess.run') as mock_run:
+    with patch('execute_handler.shutil.rmtree'), \
+         patch('execute_handler.os.path.exists', return_value=False), \
+         patch('execute_handler.os.makedirs'), \
+         patch('execute_handler.shutil.copy'), \
+         patch('execute_handler.shutil.copytree'), \
+         patch('execute_handler.subprocess.run') as mock_run:
         
         # Mock successful tofu apply
         mock_run.return_value = CompletedProcess(
@@ -400,12 +412,12 @@ def test_property_18_execute_failure_response(event, tofu_error, returncode):
     - 7.6: If OpenTofu apply fails, Execute SHALL return failure status with error details
     """
     # Mock file system operations and subprocess
-    with patch('handler.shutil.rmtree'), \
-         patch('handler.os.path.exists', return_value=False), \
-         patch('handler.os.makedirs'), \
-         patch('handler.shutil.copy'), \
-         patch('handler.shutil.copytree'), \
-         patch('handler.subprocess.run') as mock_run:
+    with patch('execute_handler.shutil.rmtree'), \
+         patch('execute_handler.os.path.exists', return_value=False), \
+         patch('execute_handler.os.makedirs'), \
+         patch('execute_handler.shutil.copy'), \
+         patch('execute_handler.shutil.copytree'), \
+         patch('execute_handler.subprocess.run') as mock_run:
         
         # Mock failed tofu apply
         mock_run.return_value = CompletedProcess(
@@ -466,12 +478,12 @@ def test_property_18b_execute_timeout_failure_response(event):
     - 7.6: If OpenTofu apply fails, Execute SHALL return failure status with error details
     """
     # Mock file system operations and subprocess
-    with patch('handler.shutil.rmtree'), \
-         patch('handler.os.path.exists', return_value=False), \
-         patch('handler.os.makedirs'), \
-         patch('handler.shutil.copy'), \
-         patch('handler.shutil.copytree'), \
-         patch('handler.subprocess.run') as mock_run:
+    with patch('execute_handler.shutil.rmtree'), \
+         patch('execute_handler.os.path.exists', return_value=False), \
+         patch('execute_handler.os.makedirs'), \
+         patch('execute_handler.shutil.copy'), \
+         patch('execute_handler.shutil.copytree'), \
+         patch('execute_handler.subprocess.run') as mock_run:
         
         # Mock timeout exception
         mock_run.side_effect = TimeoutExpired(
@@ -519,12 +531,12 @@ def test_property_18c_execute_unexpected_exception_failure_response(event, error
     - 7.6: If OpenTofu apply fails, Execute SHALL return failure status with error details
     """
     # Mock file system operations and subprocess
-    with patch('handler.shutil.rmtree'), \
-         patch('handler.os.path.exists', return_value=False), \
-         patch('handler.os.makedirs'), \
-         patch('handler.shutil.copy'), \
-         patch('handler.shutil.copytree'), \
-         patch('handler.subprocess.run') as mock_run:
+    with patch('execute_handler.shutil.rmtree'), \
+         patch('execute_handler.os.path.exists', return_value=False), \
+         patch('execute_handler.os.makedirs'), \
+         patch('execute_handler.shutil.copy'), \
+         patch('execute_handler.shutil.copytree'), \
+         patch('execute_handler.subprocess.run') as mock_run:
         
         # Mock unexpected exception
         mock_run.side_effect = Exception(error_message)
@@ -567,12 +579,12 @@ def test_property_warm_container_cleanup(event, tofu_output, has_previous_state)
     This ensures idempotency across warm container invocations.
     """
     # Mock file system operations
-    with patch('handler.shutil.rmtree') as mock_rmtree, \
-         patch('handler.os.path.exists') as mock_exists, \
-         patch('handler.os.makedirs') as mock_makedirs, \
-         patch('handler.shutil.copy'), \
-         patch('handler.shutil.copytree'), \
-         patch('handler.subprocess.run') as mock_run:
+    with patch('execute_handler.shutil.rmtree') as mock_rmtree, \
+         patch('execute_handler.os.path.exists') as mock_exists, \
+         patch('execute_handler.os.makedirs') as mock_makedirs, \
+         patch('execute_handler.shutil.copy'), \
+         patch('execute_handler.shutil.copytree'), \
+         patch('execute_handler.subprocess.run') as mock_run:
         
         # Simulate warm container with previous state
         mock_exists.return_value = has_previous_state
