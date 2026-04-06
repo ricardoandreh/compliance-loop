@@ -237,6 +237,34 @@ def log_violation(
         raise
 
 
+def validate_input(event: Dict[str, Any]) -> None:
+    """
+    Validate input event from EventBridge Input Transformer.
+    
+    Args:
+        event: Input event to validate
+        
+    Raises:
+        ValueError: If required fields are missing or invalid
+    """
+    # Validate presence of required fields
+    required_fields = ['resource_arn', 'control_id', 'account_id', 'region', 'event_time']
+    missing_fields = [field for field in required_fields if field not in event]
+    
+    if missing_fields:
+        raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
+    
+    # Validate resource_arn format (arn:aws:s3:::bucket-name)
+    resource_arn = event['resource_arn']
+    if not isinstance(resource_arn, str) or not resource_arn.startswith('arn:aws:s3:::'):
+        raise ValueError(f"Invalid resource_arn format: {resource_arn}. Expected format: arn:aws:s3:::bucket-name")
+    
+    # Validate bucket name is not empty
+    bucket_name = resource_arn.replace('arn:aws:s3:::', '')
+    if not bucket_name:
+        raise ValueError(f"Invalid resource_arn: bucket name is empty")
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Main Lambda handler for Analyze component.
@@ -247,8 +275,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
     Returns:
         Dictionary with state, violation_id, exception_id, approved_by
+        
+    Raises:
+        ValueError: If input validation fails
     """
     print(f"Received event: {json.dumps(event)}")
+    
+    # 0. Validate input from EventBridge Input Transformer
+    validate_input(event)
     
     # 1. Extract resource metadata
     resource_arn = event['resource_arn']

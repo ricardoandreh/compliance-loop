@@ -28,6 +28,7 @@ os.environ['VIOLATIONS_LOG_TABLE'] = 'violations_log'
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../lambdas/analyze'))
 from handler import (
+    validate_input,
     extract_bucket_name,
     get_bucket_public_access_config,
     evaluate_policy_with_opa,
@@ -36,6 +37,167 @@ from handler import (
     log_violation,
     lambda_handler
 )
+
+
+class TestValidateInput(unittest.TestCase):
+    """Test input validation from EventBridge Input Transformer."""
+    
+    def test_valid_input_passes(self):
+        """Test that valid input passes validation."""
+        event = {
+            'resource_arn': 'arn:aws:s3:::my-test-bucket',
+            'control_id': 'ctrl-s3-public-block',
+            'account_id': '123456789012',
+            'region': 'us-east-1',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        # Should not raise any exception
+        validate_input(event)
+    
+    def test_missing_resource_arn_raises_error(self):
+        """Test that missing resource_arn raises ValueError."""
+        event = {
+            'control_id': 'ctrl-s3-public-block',
+            'account_id': '123456789012',
+            'region': 'us-east-1',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        self.assertIn('resource_arn', str(context.exception))
+    
+    def test_missing_control_id_raises_error(self):
+        """Test that missing control_id raises ValueError."""
+        event = {
+            'resource_arn': 'arn:aws:s3:::my-test-bucket',
+            'account_id': '123456789012',
+            'region': 'us-east-1',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        self.assertIn('control_id', str(context.exception))
+    
+    def test_missing_account_id_raises_error(self):
+        """Test that missing account_id raises ValueError."""
+        event = {
+            'resource_arn': 'arn:aws:s3:::my-test-bucket',
+            'control_id': 'ctrl-s3-public-block',
+            'region': 'us-east-1',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        self.assertIn('account_id', str(context.exception))
+    
+    def test_missing_region_raises_error(self):
+        """Test that missing region raises ValueError."""
+        event = {
+            'resource_arn': 'arn:aws:s3:::my-test-bucket',
+            'control_id': 'ctrl-s3-public-block',
+            'account_id': '123456789012',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        self.assertIn('region', str(context.exception))
+    
+    def test_missing_event_time_raises_error(self):
+        """Test that missing event_time raises ValueError."""
+        event = {
+            'resource_arn': 'arn:aws:s3:::my-test-bucket',
+            'control_id': 'ctrl-s3-public-block',
+            'account_id': '123456789012',
+            'region': 'us-east-1'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        self.assertIn('event_time', str(context.exception))
+    
+    def test_missing_multiple_fields_raises_error(self):
+        """Test that missing multiple fields raises ValueError with all missing fields."""
+        event = {
+            'resource_arn': 'arn:aws:s3:::my-test-bucket'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        error_message = str(context.exception)
+        self.assertIn('control_id', error_message)
+        self.assertIn('account_id', error_message)
+        self.assertIn('region', error_message)
+        self.assertIn('event_time', error_message)
+    
+    def test_invalid_resource_arn_format_raises_error(self):
+        """Test that invalid resource_arn format raises ValueError."""
+        event = {
+            'resource_arn': 'invalid-arn-format',
+            'control_id': 'ctrl-s3-public-block',
+            'account_id': '123456789012',
+            'region': 'us-east-1',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        self.assertIn('Invalid resource_arn format', str(context.exception))
+        self.assertIn('arn:aws:s3:::bucket-name', str(context.exception))
+    
+    def test_resource_arn_wrong_service_raises_error(self):
+        """Test that resource_arn for wrong service raises ValueError."""
+        event = {
+            'resource_arn': 'arn:aws:ec2:us-east-1:123456789012:instance/i-1234567890abcdef0',
+            'control_id': 'ctrl-s3-public-block',
+            'account_id': '123456789012',
+            'region': 'us-east-1',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        self.assertIn('Invalid resource_arn format', str(context.exception))
+    
+    def test_empty_bucket_name_raises_error(self):
+        """Test that empty bucket name in resource_arn raises ValueError."""
+        event = {
+            'resource_arn': 'arn:aws:s3:::',
+            'control_id': 'ctrl-s3-public-block',
+            'account_id': '123456789012',
+            'region': 'us-east-1',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        with self.assertRaises(ValueError) as context:
+            validate_input(event)
+        
+        self.assertIn('bucket name is empty', str(context.exception))
+    
+    def test_resource_arn_with_bucket_name_passes(self):
+        """Test that resource_arn with valid bucket name passes validation."""
+        event = {
+            'resource_arn': 'arn:aws:s3:::my-bucket-with-dashes-123',
+            'control_id': 'ctrl-s3-public-block',
+            'account_id': '123456789012',
+            'region': 'us-east-1',
+            'event_time': '2024-01-15T10:30:00Z'
+        }
+        
+        # Should not raise any exception
+        validate_input(event)
 
 
 class TestExtractBucketName(unittest.TestCase):
