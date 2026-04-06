@@ -86,21 +86,23 @@ resource "aws_iam_role_policy" "eventbridge_sfn" {
   })
 }
 
-# Placeholder for Step Functions state machine (to be implemented in task 7)
+# Step Functions state machine for compliance loop
 resource "aws_sfn_state_machine" "compliance_loop" {
   name     = "${var.project_name}-compliance-loop-${var.environment}"
   role_arn = aws_iam_role.step_functions.arn
 
-  definition = jsonencode({
-    Comment = "Compliance Loop MAPE-K State Machine - Placeholder"
-    StartAt = "Placeholder"
-    States = {
-      Placeholder = {
-        Type = "Pass"
-        End  = true
-      }
-    }
+  definition = templatefile("${path.module}/state_machine_definition.json", {
+    analyze_lambda_arn    = aws_lambda_function.analyze.arn
+    execute_lambda_arn    = aws_lambda_function.execute.arn
+    violations_log_table  = aws_dynamodb_table.violations_log.name
+    escalation_queue_url  = aws_sqs_queue.escalation.url
   })
+
+  logging_configuration {
+    log_destination        = "${aws_cloudwatch_log_group.step_functions.arn}:*"
+    include_execution_data = true
+    level                  = "ALL"
+  }
 
   tags = {
     Name        = "${var.project_name}-compliance-loop"
@@ -109,7 +111,18 @@ resource "aws_sfn_state_machine" "compliance_loop" {
   }
 }
 
-# IAM role for Step Functions (placeholder, will be expanded in task 10)
+# CloudWatch Log Group for Step Functions execution logs
+resource "aws_cloudwatch_log_group" "step_functions" {
+  name              = "/aws/vendedlogs/states/${var.project_name}-compliance-loop-${var.environment}"
+  retention_in_days = 30
+
+  tags = {
+    Name        = "${var.project_name}-step-functions-logs"
+    Environment = var.environment
+  }
+}
+
+# IAM role for Step Functions
 resource "aws_iam_role" "step_functions" {
   name = "${var.project_name}-step-functions-${var.environment}"
 
@@ -145,9 +158,82 @@ resource "aws_iam_role_policy" "step_functions_logging" {
         Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
-          "logs:PutLogEvents"
+          "logs:PutLogEvents",
+          "logs:CreateLogDelivery",
+          "logs:GetLogDelivery",
+          "logs:UpdateLogDelivery",
+          "logs:DeleteLogDelivery",
+          "logs:ListLogDeliveries",
+          "logs:PutResourcePolicy",
+          "logs:DescribeResourcePolicies",
+          "logs:DescribeLogGroups"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Lambda invocation policy for Step Functions
+resource "aws_iam_role_policy" "step_functions_lambda" {
+  name = "lambda-invocation"
+  role = aws_iam_role.step_functions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "lambda:InvokeFunction"
+        ]
+        Resource = [
+          aws_lambda_function.analyze.arn,
+          aws_lambda_function.execute.arn
+        ]
+      }
+    ]
+  })
+}
+
+# DynamoDB operations policy for Step Functions
+resource "aws_iam_role_policy" "step_functions_dynamodb" {
+  name = "dynamodb-operations"
+  role = aws_iam_role.step_functions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.violations_log.arn
+        ]
+      }
+    ]
+  })
+}
+
+# SQS SendMessage policy for Step Functions
+resource "aws_iam_role_policy" "step_functions_sqs" {
+  name = "sqs-sendmessage"
+  role = aws_iam_role.step_functions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = [
+          aws_sqs_queue.escalation.arn
+        ]
       }
     ]
   })
