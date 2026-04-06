@@ -1,13 +1,19 @@
+# Stage 1: Get OpenTofu binary from official minimal image
+# Using OpenTofu's official Docker image as recommended in:
+# https://opentofu.org/docs/intro/install/docker/
+# The minimal image contains only the tofu binary (~50MB)
+FROM ghcr.io/opentofu/opentofu:1.6-minimal AS tofu
+
+# Stage 2: Build Lambda image
 FROM public.ecr.aws/lambda/python:3.12
 
-# Install dependencies for downloading and extracting OpenTofu
-RUN dnf install -y unzip curl && dnf clean all
-
-# Install OpenTofu 1.6+ binary
-RUN curl -Lo /tmp/tofu.zip https://github.com/opentofu/opentofu/releases/download/v1.6.0/tofu_1.6.0_linux_amd64.zip && \
-    unzip /tmp/tofu.zip -d /usr/local/bin && \
-    chmod +x /usr/local/bin/tofu && \
-    rm /tmp/tofu.zip
+# Copy OpenTofu binary from minimal image
+# This approach is preferred over manual downloads because:
+# - Uses official, verified binary
+# - Smaller final image size
+# - No need for curl/unzip dependencies
+# - Consistent across all builds
+COPY --from=tofu /usr/local/bin/tofu /usr/local/bin/tofu
 
 # Create remediation directory
 RUN mkdir -p /opt/remediation

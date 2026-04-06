@@ -75,3 +75,19 @@ output "state_machine_arn" {
   description = "ARN of the Step Functions state machine"
   value       = aws_sfn_state_machine.compliance_loop.arn
 }
+
+# ECR outputs
+output "ecr_repository_url" {
+  description = "URL of the ECR repository for Execute Lambda"
+  value       = aws_ecr_repository.execute_lambda.repository_url
+}
+
+output "ecr_repository_arn" {
+  description = "ARN of the ECR repository"
+  value       = aws_ecr_repository.execute_lambda.arn
+}
+
+output "ecr_repository_name" {
+  description = "Name of the ECR repository"
+  value       = aws_ecr_repository.execute_lambda.name
+}
