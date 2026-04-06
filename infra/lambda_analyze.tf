@@ -55,7 +55,7 @@ resource "aws_iam_role" "analyze_lambda" {
   }
 }
 
-# Basic logging policy for Analyze Lambda
+# CloudWatch Logs policy for Analyze Lambda
 resource "aws_iam_role_policy" "analyze_lambda_logging" {
   name = "cloudwatch-logging"
   role = aws_iam_role.analyze_lambda.id
@@ -71,6 +71,54 @@ resource "aws_iam_role_policy" "analyze_lambda_logging" {
           "logs:PutLogEvents"
         ]
         Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
+# S3 permissions for Analyze Lambda
+resource "aws_iam_role_policy" "analyze_lambda_s3" {
+  name = "s3-access"
+  role = aws_iam_role.analyze_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetPublicAccessBlock"
+        ]
+        Resource = "arn:aws:s3:::*"
+      }
+    ]
+  })
+}
+
+# DynamoDB permissions for Analyze Lambda
+resource "aws_iam_role_policy" "analyze_lambda_dynamodb" {
+  name = "dynamodb-access"
+  role = aws_iam_role.analyze_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:Query"
+        ]
+        Resource = [
+          aws_dynamodb_table.exceptions.arn,
+          "${aws_dynamodb_table.exceptions.arn}/index/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem"
+        ]
+        Resource = aws_dynamodb_table.violations_log.arn
       }
     ]
   })

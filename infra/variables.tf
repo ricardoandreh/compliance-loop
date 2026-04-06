@@ -15,3 +15,16 @@ variable "project_name" {
   type        = string
   default     = "compliance-loop"
 }
+
+variable "github_token" {
+  description = "GitHub personal access token for creating issues"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "github_repo" {
+  description = "GitHub repository in format 'owner/repo' for escalation issues"
+  type        = string
+  default     = ""
+}

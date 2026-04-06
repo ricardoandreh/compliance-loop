@@ -55,7 +55,7 @@ resource "aws_iam_role" "execute_lambda" {
   }
 }
 
-# Basic logging policy for Execute Lambda
+# CloudWatch Logs policy for Execute Lambda
 resource "aws_iam_role_policy" "execute_lambda_logging" {
   name = "cloudwatch-logging"
   role = aws_iam_role.execute_lambda.id
@@ -71,6 +71,25 @@ resource "aws_iam_role_policy" "execute_lambda_logging" {
           "logs:PutLogEvents"
         ]
         Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
+# S3 permissions for Execute Lambda
+resource "aws_iam_role_policy" "execute_lambda_s3" {
+  name = "s3-remediation"
+  role = aws_iam_role.execute_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutBucketPublicAccessBlock"
+        ]
+        Resource = "arn:aws:s3:::*"
       }
     ]
   })
