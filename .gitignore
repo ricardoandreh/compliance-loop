@@ -43,6 +43,7 @@ htmlcov/
 *.swo
 .kiro/
 VERIFICATION.md
+TASK_5.2_SUMMARY.md
 
 # AWS
 .aws-sam/

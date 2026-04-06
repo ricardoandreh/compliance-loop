@@ -15,7 +15,7 @@ import os
 import subprocess
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 
@@ -211,7 +211,7 @@ def log_violation(
         region: AWS region
         exception: Exception item if state is S_exception
     """
-    timestamp = datetime.utcnow().isoformat() + 'Z'
+    timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     
     item = {
         'violation_id': violation_id,
