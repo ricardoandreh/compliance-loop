@@ -71,14 +71,17 @@ def get_bucket_public_access_config(bucket_name: str) -> Dict[str, bool]:
             'BlockPublicPolicy': config.get('BlockPublicPolicy', False),
             'RestrictPublicBuckets': config.get('RestrictPublicBuckets', False)
         }
-    except s3_client.exceptions.NoSuchPublicAccessBlockConfiguration:
+    except Exception as e:
         # No configuration means all settings are false
-        return {
-            'BlockPublicAcls': False,
-            'IgnorePublicAcls': False,
-            'BlockPublicPolicy': False,
-            'RestrictPublicBuckets': False
-        }
+        # Catch all exceptions including NoSuchPublicAccessBlockConfiguration
+        if 'NoSuchPublicAccessBlockConfiguration' in str(e) or 'NoSuchBucket' in str(e):
+            return {
+                'BlockPublicAcls': False,
+                'IgnorePublicAcls': False,
+                'BlockPublicPolicy': False,
+                'RestrictPublicBuckets': False
+            }
+        raise
 
 
 def evaluate_policy_with_opa(resource_config: Dict[str, bool]) -> bool:
@@ -101,15 +104,18 @@ def evaluate_policy_with_opa(resource_config: Dict[str, bool]) -> bool:
     
     try:
         # Execute OPA eval command
+        opa_bin = os.path.join(os.path.dirname(__file__), 'opa')
+        input_path = '/tmp/opa_input.json'
+        with open(input_path, 'w') as f:
+            json.dump(opa_input, f)
         result = subprocess.run(
             [
-                'opa', 'eval',
+                opa_bin, 'eval',
                 '--data', policy_path,
-                '--input', '-',
+                '--input', input_path,
                 '--format', 'json',
                 'data.s3_public_access.allow'
             ],
-            input=json.dumps(opa_input),
             capture_output=True,
             text=True,
             timeout=5
@@ -328,6 +334,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     result = {
         'state': state,
         'violation_id': violation_id,
+        'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        'policy_version': POLICY_VERSION,
         'exception_id': exception.get('exception_id') if exception else None,
         'approved_by': exception.get('approved_by') if exception else None,
         'resource_arn': resource_arn,
