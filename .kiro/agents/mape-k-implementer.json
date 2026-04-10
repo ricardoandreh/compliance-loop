@@ -19,6 +19,7 @@
     "read",
     "write",
     "shell",
+    "use_aws",
     "@cw-logs"
   ],
   "allowedTools": [

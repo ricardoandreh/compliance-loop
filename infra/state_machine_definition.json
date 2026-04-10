@@ -1,7 +1,7 @@
 {
   "Comment": "MVP Compliance Automation Loop - MAPE-K State Machine",
   "StartAt": "InvokeAnalyze",
-  "TimeoutSeconds": 60,
+  "TimeoutSeconds": 120,
   "QueryLanguage": "JSONata",
   "States": {
     "InvokeAnalyze": {
@@ -167,7 +167,7 @@
           "violation_id": "{% $states.input.analyze_result.violation_id %}"
         }
       },
-      "TimeoutSeconds": 45,
+      "TimeoutSeconds": 90,
       "Output": {
         "resource_arn": "{% $states.input.resource_arn %}",
         "resource_id": "{% $states.input.resource_id %}",
@@ -178,8 +178,8 @@
         "analyze_result": "{% $states.input.analyze_result %}",
         "execute_result": {
           "remediation_status": "{% $states.result.Payload.remediation_status %}",
-          "output": "{% $states.result.Payload.output %}",
-          "error": "{% $states.result.Payload.error %}"
+          "output": "{% $states.result.Payload.output ? $states.result.Payload.output : '' %}",
+          "error": "{% $states.result.Payload.error ? $states.result.Payload.error : '' %}"
         }
       },
       "Retry": [

@@ -47,8 +47,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # 4. Copy remediation.tf to /tmp/remediation/
     shutil.copy('/opt/remediation/remediation.tf', '/tmp/remediation/')
     
-    # 5. Copy .terraform/ directory to /tmp/remediation/.terraform/
-    shutil.copytree('/opt/remediation/.terraform', '/tmp/remediation/.terraform')
+    # 5. Symlink .terraform/ to avoid copying ~500MB provider binaries
+    os.symlink('/opt/remediation/.terraform', '/tmp/remediation/.terraform')
+    
+    # 5b. Copy lock file
+    shutil.copy('/opt/remediation/.terraform.lock.hcl', '/tmp/remediation/')
     
     # 6. Write terraform.tfvars.json with bucket_name and region
     tfvars = {
@@ -66,13 +69,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 '-refresh=false',
                 '-auto-approve',
                 '-var-file=/tmp/terraform.tfvars.json',
-                '-state=/tmp/remediation.tfstate',
-                '-plugin-dir=/opt/providers'
+                '-state=/tmp/remediation.tfstate'
             ],
             cwd='/tmp/remediation',
             capture_output=True,
             text=True,
-            timeout=40
+            timeout=55
         )
         
         # 8. Return success or failure based on returncode
