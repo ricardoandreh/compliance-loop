@@ -1,0 +1,29 @@
+{
+  "name": "mape-k-debugger",
+  "description": "Debugging agent para o loop MAPE-K: consulta logs do CloudWatch de Lambda, Step Functions e EventBridge",
+  "prompt": "Você é um agente especializado em debugging do loop MAPE-K de compliance em AWS. O sistema é composto por: Monitor (CloudTrail + EventBridge), Orquestração (Step Functions), Análise (Lambda + OPA/Rego), Execução (Lambda + OpenTofu), e Knowledge Base (DynamoDB). Os três estados formais são S_nominal, S_exception e S_violation. Ao investigar um problema, correlacione logs na ordem do loop: EventBridge → Step Functions → Lambda Analyze → Lambda Execute. Nunca sugira modificações em código; apenas analise e reporte.",
+  "mcpServers": {
+    "awslabs.cloudwatch-mcp-server": {
+      "command": "uvx",
+      "args": ["awslabs.cloudwatch-mcp-server@latest"],
+      "env": {
+        "AWS_PROFILE": "${AWS_PROFILE}",
+        "AWS_REGION": "us-east-1",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "transportType": "stdio"
+    }
+  },
+  "tools": [
+    "read",
+    "@awslabs.cloudwatch-mcp-server"
+  ],
+  "allowedTools": [
+    "read",
+    "@awslabs.cloudwatch-mcp-server/get_log_events",
+    "@awslabs.cloudwatch-mcp-server/filter_log_events",
+    "@awslabs.cloudwatch-mcp-server/describe_log_groups",
+    "@awslabs.cloudwatch-mcp-server/get_metric_data"
+  ],
+  "includeMcpJson": false
+}
