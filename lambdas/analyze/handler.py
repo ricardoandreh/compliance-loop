@@ -317,6 +317,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     print(f"Classification: {state}")
     
     # 6. Generate violation_id
+    # CONTRACT: violation_id is ALWAYS generated for every evaluation,
+    # regardless of state (S_nominal, S_exception, S_violation).
+    # Downstream consumers (Step Functions, DynamoDB) depend on this as partition key.
     violation_id = str(uuid.uuid4())
     
     # 7. Log to violations_log

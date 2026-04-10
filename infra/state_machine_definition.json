@@ -1,7 +1,7 @@
 {
   "Comment": "MVP Compliance Automation Loop - MAPE-K State Machine",
   "StartAt": "InvokeAnalyze",
-  "TimeoutSeconds": 120,
+  "TimeoutSeconds": 300,
   "QueryLanguage": "JSONata",
   "States": {
     "InvokeAnalyze": {
@@ -140,10 +140,10 @@
             "S": "{% $states.input.analyze_result.policy_version %}"
           },
           "exception_id": {
-            "S": "{% $states.input.analyze_result.exception_id %}"
+            "S": "{% $states.input.analyze_result.exception_id ? $states.input.analyze_result.exception_id : '' %}"
           },
           "approved_by": {
-            "S": "{% $states.input.analyze_result.approved_by %}"
+            "S": "{% $states.input.analyze_result.approved_by ? $states.input.analyze_result.approved_by : '' %}"
           },
           "account_id": {
             "S": "{% $states.input.account_id %}"
@@ -163,6 +163,7 @@
         "Payload": {
           "resource_arn": "{% $states.input.resource_arn %}",
           "resource_id": "{% $states.input.resource_id %}",
+          "control_id": "{% $states.input.control_id %}",
           "region": "{% $states.input.region %}",
           "violation_id": "{% $states.input.analyze_result.violation_id %}"
         }
@@ -207,8 +208,7 @@
             "execute_result": {
               "remediation_status": "failed",
               "error": "{% $states.errorOutput %}"
-            },
-            "execute_error": "{% $states.errorOutput %}"
+            }
           },
           "Next": "UpdateLogFailed"
         }
@@ -288,6 +288,21 @@
           "BackoffRate": 2.0
         }
       ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Output": {
+            "resource_arn": "{% $states.input.resource_arn %}",
+            "resource_id": "{% $states.input.resource_id %}",
+            "control_id": "{% $states.input.control_id %}",
+            "account_id": "{% $states.input.account_id %}",
+            "region": "{% $states.input.region %}",
+            "analyze_result": "{% $states.input.analyze_result %}",
+            "execute_result": "{% $states.input.execute_result %}"
+          },
+          "Next": "EnqueueEscalation"
+        }
+      ],
       "Next": "EnqueueEscalation"
     },
     "EnqueueEscalation": {
@@ -296,7 +311,7 @@
       "Arguments": {
         "QueueUrl": "${escalation_queue_url}",
         "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.control_id, 'error': $string($states.input.execute_result.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
-        "MessageGroupId": "{% $states.input.resource_arn %}",
+        "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.control_id %}",
         "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
       },
       "Retry": [
@@ -317,9 +332,9 @@
       "Resource": "arn:aws:states:::sqs:sendMessage",
       "Arguments": {
         "QueueUrl": "${escalation_queue_url}",
-        "MessageBody": "{% $string({'violation_id': $uuid(), 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.control_id, 'error': 'Analyze Lambda failed: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
-        "MessageGroupId": "{% $states.input.resource_arn %}",
-        "MessageDeduplicationId": "{% $uuid() %}"
+        "MessageBody": "{% $string({'violation_id': 'analyze-failed-' & $states.input.resource_id & '-' & $now(), 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.control_id, 'error': 'Analyze Lambda failed: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+        "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.control_id %}",
+        "MessageDeduplicationId": "{% 'analyze-failed-' & $states.input.resource_id & '#' & $states.input.control_id %}"
       },
       "End": true
     },
@@ -329,7 +344,7 @@
       "Arguments": {
         "QueueUrl": "${escalation_queue_url}",
         "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.control_id, 'error': 'Unknown state returned by Analyze: ' & $states.input.analyze_result.state, 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
-        "MessageGroupId": "{% $states.input.resource_arn %}",
+        "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.control_id %}",
         "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
       },
       "End": true
