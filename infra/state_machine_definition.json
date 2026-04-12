@@ -277,6 +277,15 @@
           }
         }
       },
+      "Output": {
+        "resource_arn": "{% $states.input.resource_arn %}",
+        "resource_id": "{% $states.input.resource_id %}",
+        "control_id": "{% $states.input.control_id %}",
+        "account_id": "{% $states.input.account_id %}",
+        "region": "{% $states.input.region %}",
+        "analyze_result": "{% $states.input.analyze_result %}",
+        "execute_result": "{% $states.input.execute_result %}"
+      },
       "Retry": [
         {
           "ErrorEquals": [

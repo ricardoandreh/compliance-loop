@@ -5,8 +5,8 @@ resource "aws_lambda_function" "analyze" {
   function_name = "${var.project_name}-analyze-${var.environment}"
   role          = aws_iam_role.analyze_lambda.arn
   
-  # Placeholder configuration - will be updated when Lambda is implemented
-  filename      = "placeholder.zip"
+  filename         = "${path.module}/../lambdas/analyze/analyze.zip"
+  source_code_hash = filebase64sha256("${path.module}/../lambdas/analyze/analyze.zip")
   handler       = "handler.lambda_handler"
   runtime       = "python3.12"
   timeout       = 15
@@ -16,7 +16,7 @@ resource "aws_lambda_function" "analyze" {
     variables = {
       CONTROLS_TABLE    = aws_dynamodb_table.controls.name
       EXCEPTIONS_TABLE  = aws_dynamodb_table.exceptions.name
-      VIOLATIONS_TABLE  = aws_dynamodb_table.violations_log.name
+      VIOLATIONS_LOG_TABLE  = aws_dynamodb_table.violations_log.name
       POLICY_PACKAGE    = "s3_public_access"
     }
   }
@@ -87,7 +87,7 @@ resource "aws_iam_role_policy" "analyze_lambda_s3" {
       {
         Effect = "Allow"
         Action = [
-          "s3:GetPublicAccessBlock"
+          "s3:GetBucketPublicAccessBlock"
         ]
         Resource = "arn:aws:s3:::*"
       }

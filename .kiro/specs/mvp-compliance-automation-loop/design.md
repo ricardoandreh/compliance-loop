@@ -682,6 +682,16 @@ def lambda_handler(event, context):
 - GSI on control_id: Efficient query for all exceptions of a control
 - UUID partition key: Uniform distribution, no hot partitions
 
+**Re-avaliação Automática após Expiração de Exceção**:
+
+O DynamoDB Streams está habilitado na tabela exceptions com `OLD_IMAGE`. Quando o TTL deleta fisicamente um item expirado, o stream emite um evento `REMOVE` contendo a imagem anterior do item. Um EventBridge Pipe filtra apenas eventos `REMOVE`, extrai `resource_arn` e `control_id` do `OLD_IMAGE`, e dispara o Step Functions para re-avaliação completa (Analyze → Execute se necessário).
+
+Isso garante que, após expiração de uma exceção, o recurso seja automaticamente re-avaliado pelo loop MAPE-K completo, mantendo o invariante arquitetural de que o Analyze é sempre o componente decisor.
+
+**Limitação conhecida — Latência do TTL**:
+
+A deleção física de itens expirados pelo DynamoDB TTL é **não-determinística** e pode levar até 48 horas após o timestamp `valid_until`. Isso significa que a re-avaliação automática via DynamoDB Streams pode ter latência de até 48h. No entanto, a **correção lógica** do sistema não depende da deleção física: a Analyze Lambda filtra exceções com `valid_until > now()`, garantindo que exceções logicamente expiradas sejam ignoradas em qualquer avaliação disparada por eventos CloudTrail. A re-avaliação via Pipe é um mecanismo complementar que fecha o loop para recursos que não recebem novos eventos de mutação.
+
 
 
 #### Table: violations_log
@@ -1539,3 +1549,142 @@ def test_compliant_resource_classification(
 - Clear DynamoDB tables between tests
 - Reset GitHub API mocks between tests
 
+
+## Análise de Performance: Execute Lambda e Decisão Arquitetural do OpenTofu
+
+### Dados Observados (2048 MB, us-east-1)
+
+| Cenário | Duração | Init Duration | Memória usada |
+|---|---|---|---|
+| Cold start | 33.4s | 207ms | 1074 MB |
+| Warm container | 6.7s | — | 1090 MB |
+
+Com 1024 MB, o provider AWS (~700MB) causava memory thrashing (55-80s). A 2048 MB,
+o gargalo é exclusivamente I/O do `tofu apply` carregando o provider do disco.
+
+### Decisão: OpenTofu vs. SDK direto
+
+A remediação do controle `ctrl-s3-public-block` poderia ser implementada como uma
+única chamada `s3:PutBucketPublicAccessBlock` via boto3 — reduzindo a Lambda de
+container image (700MB+, 2048 MB RAM, 7-33s) para zip (~1KB, 128 MB RAM, <1s).
+
+Essa otimização foi conscientemente descartada por três razões:
+
+1. **Corretude declarativa**: o modelo declarativo do OpenTofu garante idempotência
+   sem lógica imperativa de verificação. O estado desejado é descrito, não computado.
+
+2. **Extensibilidade**: adicionar um novo controle é criar um `.tf` + `.rego`, não
+   reescrever código de remediação. O custo marginal de cada controle adicional é
+   constante.
+
+3. **Observabilidade**: o `tofu apply` produz um diff legível do que foi alterado no
+   recurso, gravado no `violations_log` como `remediation_output`. Uma chamada SDK
+   direta registra que algo mudou, mas não o que teria mudado se não tivesse — o diff
+   declarativo é um artefato de auditoria sem equivalente imperativo.
+
+### Contexto de adequação
+
+A latência de 7-33s é irrelevante para o domínio: o baseline de comparação é tempo de
+exposição medido em horas ou dias (janela entre violação e detecção manual). Qualquer
+valor abaixo de 60s já representa uma redução de ordem de grandeza no MTTR.
+
+### Espaço de otimização (não implementado)
+
+- **Provisioned Concurrency**: eliminaria o cold start de 33s, garantindo ~7s
+  consistente. Mecanismo de SLA para requisitos de MTTR < 10s. Custo fixo (~$15/mês
+  por instância) não justificado para MVP acadêmico.
+- **Memória 3008 MB**: 2 vCPUs proporcionais, reduziria cold start para ~15s.
+- **SDK direto por controle**: otimização pontual para controles críticos com SLA
+  de latência, mantendo OpenTofu como default para controles novos.
+
+## Evidências Experimentais
+
+### Teste 1: Ciclo Completo de Exception Governance com Convergência
+
+**Data**: 2026-04-11 (timestamps em UTC)
+**Recurso**: `arn:aws:s3:::test-compliance-bucket-1775622472`
+**Control**: `ctrl-s3-public-block`
+
+Este teste demonstra duas propriedades do sistema em sequência:
+1. **Exception Governance**: exceção expirada dispara re-avaliação automática via EventBridge Pipe
+2. **Convergência**: após remediação, o sistema confirma autonomamente a transição para `S_nominal`
+
+#### Timeline
+
+| Timestamp (UTC) | Evento | Origem | Estado |
+|---|---|---|---|
+| 17:38:36 | Exceção `exc-test-ttl-002` removida (TTL expirado) | DynamoDB TTL | — |
+| 17:38:36 | DynamoDB Stream emite evento `REMOVE` com `OLD_IMAGE` | DynamoDB Streams | — |
+| 17:38:36 | EventBridge Pipe filtra `REMOVE`, transforma payload, dispara Step Functions | EventBridge Pipes | — |
+| 17:38:36 | Execução `7605272d` inicia — `InvokeAnalyze` | Step Functions | — |
+| 17:38:39 | Analyze classifica recurso (sem exceção válida) | Lambda Analyze | **S_violation** |
+| 17:38:39 | `ClassifyState` → `InvokeExecute` | Step Functions | — |
+| 17:38:45 | Execute aplica OpenTofu: `block_public_acls=true`, `ignore_public_acls=true`, `block_public_policy=true`, `restrict_public_buckets=true` | Lambda Execute | — |
+| 17:38:45 | `CheckRemediationStatus` → `UpdateLogSuccess` | Step Functions | **remediado** |
+| 17:38:45 | Remediação gera evento `PutBucketPublicAccessBlock` no CloudTrail | CloudTrail | — |
+| 17:38:50 | Execução `526ce66d` inicia — re-avaliação automática via EventBridge Rule | Step Functions | — |
+| 17:38:50 | Analyze confirma conformidade | Lambda Analyze | **S_nominal** |
+| 17:38:50 | `ClassifyState` → `RegisterNominal` | Step Functions | — |
+
+#### Transições de Estado Observadas
+
+```
+[exceptions table: TTL expiry] ──→ re-avaliação do recurso
+ │
+ recurso ainda não-conforme
+ exceção não mais válida
+ ↓
+ S_violation ──[Execute]──→ S_nominal
+ │
+ CloudTrail ◄┘
+ │
+ re-avaliação ──→ S_nominal (confirmação)
+```
+
+Nota: a expiração do TTL ocorre na Knowledge Base (tabela `exceptions`), não no recurso.
+O recurso permaneceu não-conforme durante todo o período da exceção — o que mudou foi
+a validade da autorização que justificava tolerar aquele estado. O estado classificado
+(`S_violation`, `S_nominal`) é sempre uma observação do mundo real no momento da avaliação,
+não uma variável interna do sistema.
+
+#### Referências de Execução
+
+- **Execução 1 (Pipe → remediação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-dev:7605272d-929e-49e3-9dfe-747e3904f079`
+  - Duração: ~9s | Resultado: `S_violation` → remediação `success`
+  - Violation ID: `d1a750d5-c460-43b6-bbc1-e97b3c907e75`
+
+- **Execução 2 (CloudTrail → confirmação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-dev:526ce66d-9739-0a93-c55d-acd064ee260b_eb54a608-677c-71d5-9726-5cba4a896916`
+  - Duração: <1s | Resultado: `S_nominal`
+  - Violation ID: `cbcc2263-3457-4d69-9145-817fe81fafc4`
+
+#### Propriedade de Convergência
+
+O trace demonstra empiricamente que o sistema satisfaz a propriedade de convergência: dado um recurso em estado `S_violation`, após remediação bem-sucedida pelo Execute, a próxima avaliação (disparada automaticamente pelo CloudTrail ao detectar a mutação corretiva) classifica o recurso como `S_nominal`. O sistema converge para o estado conforme sem intervenção humana e auto-verifica o resultado.
+
+### Teste 2: Exceção Válida Impede Remediação
+
+**Data**: 2026-04-11 (timestamps em UTC)
+**Recurso**: `arn:aws:s3:::test-compliance-bucket-1775622472`
+**Control**: `ctrl-s3-public-block`
+
+#### Timeline
+
+| Timestamp (UTC) | Evento | Origem | Estado |
+|---|---|---|---|
+| 16:53:00 | Exceção `exc-test-001` inserida (`valid_until` = 24h futuro) | DynamoDB (manual) | — |
+| 16:56:38 | `PutBucketPublicAccessBlock` com todos os campos `false` | CloudTrail | — |
+| 16:56:46 | Execução `999f6bbf` inicia — `InvokeAnalyze` | Step Functions | — |
+| 16:56:49 | Analyze encontra exceção válida `exc-test-001` | Lambda Analyze | **S_exception** |
+| 16:56:49 | `ClassifyState` → `RegisterException` → End | Step Functions | — |
+
+#### Resultado
+
+- Bucket **não foi remediado** — `PublicAccessBlockConfiguration` permaneceu com todos os campos `false`
+- Violations log registrou `state: S_exception`, `exception_id: exc-test-001`, `approved_by: admin@example.com`
+- Execute Lambda **não foi invocada**
+
+#### Referência de Execução
+
+- `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-dev:999f6bbf-e258-a477-9dab-0e42e7242f4f_134ceb51-54f7-efff-8f54-58e4cb9146ca`
+  - Duração: ~3s | Resultado: `S_exception` (sem remediação)
+  - Violation ID: `d4e40a50-cf65-4771-94f3-2b326fd89c78`

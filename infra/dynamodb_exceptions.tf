@@ -22,6 +22,10 @@ resource "aws_dynamodb_table" "exceptions" {
     projection_type = "ALL"
   }
 
+  # Stream for TTL expiry → EventBridge Pipe → Step Functions re-evaluation
+  stream_enabled   = true
+  stream_view_type = "OLD_IMAGE"
+
   # TTL configuration for automatic expiration
   ttl {
     attribute_name = "valid_until"

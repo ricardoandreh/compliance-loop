@@ -8,8 +8,8 @@ resource "aws_lambda_function" "execute" {
   # Placeholder configuration - will be updated when Lambda container is implemented
   package_type  = "Image"
   image_uri     = "${aws_ecr_repository.execute_lambda.repository_url}:latest"
-  timeout       = 45
-  memory_size   = 1024
+  timeout       = 90
+  memory_size   = 2048
   
   ephemeral_storage {
     size = 1024
@@ -87,7 +87,8 @@ resource "aws_iam_role_policy" "execute_lambda_s3" {
       {
         Effect = "Allow"
         Action = [
-          "s3:PutBucketPublicAccessBlock"
+          "s3:PutBucketPublicAccessBlock",
+          "s3:GetBucketPublicAccessBlock"
         ]
         Resource = "arn:aws:s3:::*"
       }

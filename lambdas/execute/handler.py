@@ -1,101 +1,48 @@
 import subprocess
 import json
 import os
-import shutil
 from typing import Dict, Any
 
 
 def extract_bucket_name(resource_arn: str) -> str:
-    """
-    Extract bucket name from S3 ARN.
-    
-    Args:
-        resource_arn: S3 bucket ARN in format arn:aws:s3:::bucket-name
-        
-    Returns:
-        Bucket name
-    """
-    # ARN format: arn:aws:s3:::bucket-name
     return resource_arn.split(':::')[1]
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """
-    Execute Lambda handler for remediating S3 bucket public access configuration.
-    
-    Uses OpenTofu to apply compliant configuration to S3 buckets in violation.
-    
-    Args:
-        event: Event from Step Functions containing resource_arn and region
-        context: Lambda context object
-        
-    Returns:
-        Dict with remediation_status ("success" or "failed") and output/error
-    """
-    # 1. Extract resource metadata
     resource_arn = event['resource_arn']
     region = event['region']
     bucket_name = extract_bucket_name(resource_arn)
-    
-    # 2. Warm container cleanup - remove existing /tmp/remediation/
-    if os.path.exists('/tmp/remediation'):
-        shutil.rmtree('/tmp/remediation')
-    
-    # 3. Create /tmp/remediation/ directory
-    os.makedirs('/tmp/remediation', exist_ok=True)
-    
-    # 4. Copy remediation.tf to /tmp/remediation/
-    shutil.copy('/opt/remediation/remediation.tf', '/tmp/remediation/')
-    
-    # 5. Symlink .terraform/ to avoid copying ~500MB provider binaries
-    os.symlink('/opt/remediation/.terraform', '/tmp/remediation/.terraform')
-    
-    # 5b. Copy lock file
-    shutil.copy('/opt/remediation/.terraform.lock.hcl', '/tmp/remediation/')
-    
-    # 6. Write terraform.tfvars.json with bucket_name and region
-    tfvars = {
-        "bucket_name": bucket_name,
-        "region": region
-    }
+
+    state_dir = f'/tmp/{bucket_name}'
+    os.makedirs(state_dir, exist_ok=True)
+    state_path = f'{state_dir}/terraform.tfstate'
+
+    # Write tfvars
     with open('/tmp/terraform.tfvars.json', 'w') as f:
-        json.dump(tfvars, f)
-    
-    # 7. Execute tofu apply
+        json.dump({"bucket_name": bucket_name, "region": region}, f)
+
     try:
         result = subprocess.run(
             [
                 'tofu', 'apply',
                 '-refresh=false',
                 '-auto-approve',
+                '-no-color',
                 '-var-file=/tmp/terraform.tfvars.json',
-                '-state=/tmp/remediation.tfstate'
+                f'-state={state_path}'
             ],
-            cwd='/tmp/remediation',
+            cwd='/opt/remediation',
             capture_output=True,
             text=True,
-            timeout=55
+            timeout=80
         )
-        
-        # 8. Return success or failure based on returncode
+
         if result.returncode == 0:
-            return {
-                "remediation_status": "success",
-                "output": result.stdout
-            }
+            return {"remediation_status": "success", "output": result.stdout}
         else:
-            return {
-                "remediation_status": "failed",
-                "error": result.stderr
-            }
-            
+            return {"remediation_status": "failed", "error": result.stderr}
+
     except subprocess.TimeoutExpired as e:
-        return {
-            "remediation_status": "failed",
-            "error": f"OpenTofu apply timed out after 40 seconds: {str(e)}"
-        }
+        return {"remediation_status": "failed", "error": f"OpenTofu apply timed out: {str(e)}"}
     except Exception as e:
-        return {
-            "remediation_status": "failed",
-            "error": f"Unexpected error during remediation: {str(e)}"
-        }
+        return {"remediation_status": "failed", "error": f"Unexpected error: {str(e)}"}

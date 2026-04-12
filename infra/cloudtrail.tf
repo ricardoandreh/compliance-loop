@@ -64,11 +64,6 @@ resource "aws_cloudtrail" "s3_events" {
   event_selector {
     read_write_type           = "WriteOnly"
     include_management_events = true
-
-    data_resource {
-      type   = "AWS::S3::Object"
-      values = ["arn:aws:s3:::*/"]
-    }
   }
 
   tags = {

@@ -53,3 +53,7 @@ htmlcov/
 
 # Environment
 .env
+
+# Lambda Zip
+analyze.zip
+escalation.zip

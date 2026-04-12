@@ -5,8 +5,8 @@ resource "aws_lambda_function" "escalation" {
   function_name = "${var.project_name}-escalation-${var.environment}"
   role          = aws_iam_role.escalation_lambda.arn
   
-  # Placeholder configuration - will be updated when Lambda is implemented
-  filename      = "placeholder.zip"
+  filename         = "${path.module}/../lambdas/escalation/escalation.zip"
+  source_code_hash = filebase64sha256("${path.module}/../lambdas/escalation/escalation.zip")
   handler       = "handler.lambda_handler"
   runtime       = "python3.12"
   timeout       = 30
@@ -15,8 +15,6 @@ resource "aws_lambda_function" "escalation" {
   environment {
     variables = {
       VIOLATIONS_TABLE = aws_dynamodb_table.violations_log.name
-      GITHUB_TOKEN     = var.github_token
-      GITHUB_REPO      = var.github_repo
     }
   }
 
@@ -127,3 +125,30 @@ resource "aws_iam_role_policy" "escalation_lambda_dynamodb" {
   })
 }
 
+
+# SSM Parameter Store + KMS permissions for GitHub credentials
+resource "aws_iam_role_policy" "escalation_lambda_ssm" {
+  name = "ssm-github-params"
+  role = aws_iam_role.escalation_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["ssm:GetParameters"]
+        Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/compliance/github/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.region}.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}

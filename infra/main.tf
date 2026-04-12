@@ -7,8 +7,16 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  backend "s3" {
+    bucket = "compliance-mvp-terraform-state"
+    key    = "compliance-loop/dev/terraform.tfstate"
+    region = "us-east-1"
+  }
 }
 
 provider "aws" {
   region = var.region
 }
+
+data "aws_caller_identity" "current" {}
