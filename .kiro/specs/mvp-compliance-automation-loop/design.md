@@ -1866,3 +1866,167 @@ confirmação. É o argumento empírico central de H2 (rastreabilidade/completud
 
 - **Execução 3 (confirmação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:95c2fd63-9ad9-0dd5-fb68-3bf442fbf5fa_32237787-e46e-cefc-09a6-13aa378b691c`
   - Duração: <1s | Resultado: `S_nominal`
+
+### Teste 6 (C4): Falha na Remediação → Escalação via GitHub Issue
+
+**Data**: 2026-04-13 (timestamps em UTC)
+**Recurso**: `arn:aws:s3:::bucket-inexistente-c4v2-test` (bucket propositalmente inexistente)
+**Control**: `ctrl-s3-public-block`
+**Hipótese validada**: H2 (rastreabilidade)
+
+Este teste valida o caminho de escalação: quando o Analyze não consegue avaliar o recurso
+(bucket inexistente), o erro é capturado pelo Catch da Step Functions e escalado via SQS FIFO
+para a Escalation Lambda, que cria um GitHub Issue.
+
+#### Bug Descoberto e Corrigido
+
+Na primeira execução do C4, o Analyze tratava `NoSuchBucket` como "todos os settings false"
+(violação), o que fazia o Execute tentar remediar um bucket inexistente. A chamada à API S3
+era registrada no CloudTrail mesmo falhando, gerando re-triggers em loop infinito.
+
+**Fix aplicado**: separar `NoSuchBucket` de `NoSuchPublicAccessBlockConfiguration` no Analyze.
+Bucket inexistente agora propaga exceção → Catch → `AnalyzeFailedEscalation` → SQS → GitHub Issue.
+O Execute nunca é invocado, eliminando o loop.
+
+#### Timeline (após fix)
+
+| Timestamp (UTC) | Evento | Origem | Estado |
+|---|---|---|---|
+| 03:45:54 | Step Functions disparada manualmente com bucket inexistente | CLI | — |
+| 03:45:54 | Analyze falha (`NoSuchBucket`) | Lambda Analyze | **erro** |
+| 03:45:54 | Catch → `AnalyzeFailedEscalation` → SQS | Step Functions | — |
+| 03:45:55 | Escalation Lambda cria GitHub Issue | Lambda Escalation | **escalado** |
+
+#### Resultado
+
+- Duração: ~1.3s
+- Execute Lambda **não invocada**
+- **Zero re-triggers** (loop eliminado)
+- GitHub Issue criada com detalhes do erro
+- `state=S_violation` preservado no violations_log (regra: não sobrescrever por falha de remediação)
+
+#### Referência de Execução
+
+- `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:47c3110f-7be9-4c3b-9f64-db1c21fc0ccd`
+  - Duração: ~1.3s | Resultado: `AnalyzeFailedEscalation`
+
+### Teste 7 (C5): Violação Originada pelo Próprio IaC
+
+**Data**: 2026-04-13 (timestamps em UTC)
+**Recurso**: `arn:aws:s3:::compliance-test-c5-1776025390`
+**Control**: `ctrl-s3-public-block`
+**Hipóteses validadas**: H1 (MTTR), H2 (rastreabilidade)
+
+Este teste demonstra que o sistema funciona como guardrail independente da origem da
+mudança. A violação foi criada por um `tofu apply` externo (simulando um time de
+desenvolvimento configurando um bucket como público via IaC), e o sistema detectou,
+remediou e confirmou convergência automaticamente.
+
+#### Setup
+
+Arquivo `tests/c5_iac_violation/main.tf` aplicado via OpenTofu:
+```hcl
+resource "aws_s3_bucket_public_access_block" "non_compliant" {
+  bucket                  = "compliance-test-c5-1776025390"
+  block_public_acls       = false
+  ignore_public_acls      = false
+  block_public_policy     = false
+  restrict_public_buckets = false
+}
+```
+
+#### Timeline
+
+| Timestamp (UTC) | Evento | Origem | Estado |
+|---|---|---|---|
+| 03:55:04 | `tofu apply` configura bucket como não-conforme | OpenTofu externo | — |
+| 03:55:14 | Execução `98933e79` inicia — `InvokeAnalyze` | Step Functions | — |
+| 03:55:14 | Analyze classifica recurso | Lambda Analyze | **S_violation** |
+| 03:55:23 | Execute remedia → `UpdateLogSuccess` | Lambda Execute | **remediado** |
+| 03:55:30 | Execução `ba2b64db` inicia — re-avaliação (re-trigger) | Step Functions | — |
+| 03:55:30 | Analyze confirma conformidade | Lambda Analyze | **S_nominal** |
+
+#### Métricas
+
+| Métrica | Valor | Hipótese |
+|---|---|---|
+| t_remediation (SFN start → success) | **~9.6s** | H1 |
+| Execuções geradas | 2 (remediação + confirmação) | — |
+
+#### Referências de Execução
+
+- **Execução 1 (remediação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:98933e79-4b38-52ce-b391-805681c699c1_1ec735d7-5be8-89b4-f73a-ddfffa9cec3c`
+  - Duração: ~9.6s | Resultado: `S_violation` → remediação `success`
+
+- **Execução 2 (confirmação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:ba2b64db-efb0-1708-312f-c45616e3bd1b_b46505b0-cc7a-7821-05af-89e97763989b`
+  - Duração: <1s | Resultado: `S_nominal`
+
+### Teste 8 (C6): Recurso Já Conforme
+
+**Data**: 2026-04-13 (timestamps em UTC)
+**Recurso**: `arn:aws:s3:::compliance-test-c6-1776025390`
+**Control**: `ctrl-s3-public-block`
+**Hipótese validada**: H1 (MTTR)
+
+Cenário mais simples: bucket já conforme recebe `PutBucketPublicAccessBlock` com todos
+os settings em `true`. O sistema detecta, avalia, confirma conformidade e encerra.
+
+#### Timeline
+
+| Timestamp (UTC) | Evento | Origem | Estado |
+|---|---|---|---|
+| 03:58:53 | `PutBucketPublicAccessBlock` com todos os campos `true` | CloudTrail | — |
+| 03:59:01 | Execução `5e252252` inicia — `InvokeAnalyze` | Step Functions | — |
+| 03:59:01 | Analyze confirma conformidade | Lambda Analyze | **S_nominal** |
+| 03:59:01 | `ClassifyState` → `RegisterNominal` → End | Step Functions | — |
+
+#### Resultado
+
+- Duração: **<1s**
+- Execute Lambda **não invocada**
+- Execuções geradas: **1** (sem re-trigger)
+
+#### Referência de Execução
+
+- `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:5e252252-38ae-a97d-61fd-dd0385390608_a9a58871-ab59-b36a-9548-d7f27b5e93fa`
+  - Duração: <1s | Resultado: `S_nominal`
+
+### Teste 9 (C7): TTL Expira em S_exception
+
+Coberto pelo Teste 5 (C3). O ciclo completo de exceção — criação, período de tolerância,
+expiração via EventBridge Scheduler, re-avaliação como S_violation, remediação e confirmação
+S_nominal — foi demonstrado com precisão de segundos no Teste 5.
+
+---
+
+## Tabela Comparativa de Métricas por Cenário
+
+| Cenário | Descrição | Estado Final | t_remediation | t_exposure | Execute? | Escalação? | Hipóteses |
+|---|---|---|---|---|---|---|---|
+| C1 | Violação simples via console | S_nominal | 18s | 24s | Sim (success) | Não | H1, H3 |
+| C2 | Violação com exceção ativa | S_exception | — | — | Não | Não | H2 |
+| C3 | Exceção expira → remediação | S_nominal | 8s | 66s* | Sim (success) | Não | H2, H3 |
+| C4 | Bucket inexistente → escalação | Escalado | — | — | Não | Sim (GitHub Issue) | H2 |
+| C5 | Violação originada por IaC | S_nominal | 9.6s | ~19s | Sim (success) | Não | H1, H2 |
+| C6 | Recurso já conforme | S_nominal | — | — | Não | Não | H1 |
+| C7 | TTL expira em S_exception | = C3 | = C3 | = C3 | = C3 | = C3 | H2, H3 |
+
+*C3 t_exposure: 30s buffer do Scheduler + 36s de execução após disparo.
+
+### Síntese por Hipótese
+
+**H1 — Redução do MTTR**
+- t_remediation médio (C1, C3, C5): **~12s**
+- Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual
+- Redução: **ordens de grandeza** (segundos vs. dias)
+
+**H2 — Rastreabilidade**
+- 100% dos cenários com todos os campos obrigatórios no `violations_log`
+- Ciclo completo de exceção documentado com 3 registros consecutivos (C3): S_exception → S_violation → S_nominal
+- Escalação com `github_issue_id` persistido no violations_log (C4)
+- `state=S_violation` preservado mesmo após falha de remediação (C4)
+
+**H3 — Tempo de exposição**
+- t_exposure médio para violações simples (C1, C5): **~22s**
+- Janela de risco pós-expiração de exceção (C3): **~66s** (controlado pelo buffer de 30s do Scheduler)
+- Precisão do Scheduler: `valid_until + 30s` (determinístico, vs. até 48h do mecanismo anterior)

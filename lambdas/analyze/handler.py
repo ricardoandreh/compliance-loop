@@ -72,15 +72,15 @@ def get_bucket_public_access_config(bucket_name: str) -> Dict[str, bool]:
             'RestrictPublicBuckets': config.get('RestrictPublicBuckets', False)
         }
     except Exception as e:
-        # No configuration means all settings are false
-        # Catch all exceptions including NoSuchPublicAccessBlockConfiguration
-        if 'NoSuchPublicAccessBlockConfiguration' in str(e) or 'NoSuchBucket' in str(e):
+        # No configuration means all settings are false (violation)
+        if 'NoSuchPublicAccessBlockConfiguration' in str(e):
             return {
                 'BlockPublicAcls': False,
                 'IgnorePublicAcls': False,
                 'BlockPublicPolicy': False,
                 'RestrictPublicBuckets': False
             }
+        # Bucket doesn't exist or access denied — propagate to trigger escalation
         raise
 
 
