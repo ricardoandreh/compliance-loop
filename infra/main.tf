@@ -52,14 +52,12 @@ module "ecr" {
 }
 
 module "analyze" {
-  source                    = "./modules/analyze"
-  project_name              = var.project_name
-  environment               = var.environment
-  controls_table_name       = module.knowledge.controls_table_name
-  exceptions_table_name     = module.knowledge.exceptions_table_name
-  exceptions_table_arn      = module.knowledge.exceptions_table_arn
-  violations_log_table_name = module.knowledge.violations_log_table_name
-  violations_log_table_arn  = module.knowledge.violations_log_table_arn
+  source                = "./modules/analyze"
+  project_name          = var.project_name
+  environment           = var.environment
+  controls_table_name   = module.knowledge.controls_table_name
+  exceptions_table_name = module.knowledge.exceptions_table_name
+  exceptions_table_arn  = module.knowledge.exceptions_table_arn
 }
 
 module "execute" {

@@ -5,8 +5,11 @@ Classifies S3 bucket compliance state by:
 1. Retrieving current resource configuration from AWS
 2. Evaluating against Rego policy using OPA
 3. Checking for valid exceptions in DynamoDB
-4. Logging evaluation to violations_log
-5. Returning classification state
+4. Returning classification state
+
+NOTE: Persistence to violations_log is handled exclusively by the
+Step Function (RegisterNominal / RegisterException / UpdateLog* states).
+This Lambda is a pure decision function — no side-effects beyond reads.
 """
 
 import boto3
@@ -25,7 +28,6 @@ dynamodb = boto3.resource('dynamodb')
 
 # DynamoDB table references
 exceptions_table = dynamodb.Table(os.environ.get('EXCEPTIONS_TABLE', 'exceptions'))
-violations_log_table = dynamodb.Table(os.environ.get('VIOLATIONS_LOG_TABLE', 'violations_log'))
 
 # Policy version for audit trail
 POLICY_VERSION = "s3_public_access:v1.0"
@@ -196,53 +198,6 @@ def classify_state(is_compliant: bool, exception: Optional[Dict[str, Any]]) -> s
         return "S_violation"
 
 
-def log_violation(
-    violation_id: str,
-    resource_arn: str,
-    control_id: str,
-    state: str,
-    account_id: str,
-    region: str,
-    exception: Optional[Dict[str, Any]] = None
-) -> None:
-    """
-    Write evaluation entry to violations_log table.
-    
-    Args:
-        violation_id: Unique violation identifier (UUID)
-        resource_arn: Resource ARN
-        control_id: Control identifier
-        state: Classification state
-        account_id: AWS account ID
-        region: AWS region
-        exception: Exception item if state is S_exception
-    """
-    timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-    
-    item = {
-        'violation_id': violation_id,
-        'resource_arn': resource_arn,
-        'control_id': control_id,
-        'state': state,
-        'timestamp': timestamp,
-        'policy_version': POLICY_VERSION,
-        'account_id': account_id,
-        'region': region
-    }
-    
-    # Add exception details if state is S_exception
-    if state == "S_exception" and exception:
-        item['exception_id'] = exception.get('exception_id')
-        item['approved_by'] = exception.get('approved_by')
-    
-    try:
-        violations_log_table.put_item(Item=item)
-    except Exception as e:
-        print(f"Failed to write to violations_log: {str(e)}")
-        # Don't fail the Lambda if logging fails
-        raise
-
-
 def validate_input(event: Dict[str, Any]) -> None:
     """
     Validate input event from EventBridge Input Transformer.
@@ -322,18 +277,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # Downstream consumers (Step Functions, DynamoDB) depend on this as partition key.
     violation_id = str(uuid.uuid4())
     
-    # 7. Log to violations_log
-    log_violation(
-        violation_id=violation_id,
-        resource_arn=resource_arn,
-        control_id=control_id,
-        state=state,
-        account_id=account_id,
-        region=region,
-        exception=exception
-    )
-    
-    # 8. Return classification result
+    # 7. Return classification result (Step Function handles persistence)
     result = {
         'state': state,
         'violation_id': violation_id,

@@ -10,12 +10,12 @@ variable "escalation_queue_url" { type = string }
 # --- EventBridge Rule ---
 resource "aws_cloudwatch_event_rule" "s3_public_access_block" {
   name        = "${var.project_name}-s3-public-access-block-${var.environment}"
-  description = "Capture S3 PutBucketPublicAccessBlock events for compliance monitoring"
+  description = "Capture S3 public access block changes and bucket creation for compliance monitoring"
 
   event_pattern = jsonencode({
     source      = ["aws.s3"]
     detail-type = ["AWS API Call via CloudTrail"]
-    detail      = { eventName = ["PutBucketPublicAccessBlock"] }
+    detail      = { eventName = ["PutBucketPublicAccessBlock", "DeleteBucketPublicAccessBlock", "CreateBucket"] }
   })
 
   tags = { Name = "${var.project_name}-s3-public-access-block", Environment = var.environment }

@@ -51,7 +51,7 @@ O OpenTofu oferece várias tags para a imagem minimal:
 ### 1. Sem Downloads Manuais
 ```dockerfile
 # ❌ Abordagem antiga (manual)
-RUN curl -Lo /tmp/tofu.zip https://github.com/opentofu/opentofu/releases/download/v1.6.0/tofu_1.6.0_linux_amd64.zip && \
+RUN curl -Lo /tmp/tofu.zip https://github.com/opentofu/opentofu/releases/download/v1.6.0/tofu_1.6.0_linux_arm64.zip && \
     unzip /tmp/tofu.zip -d /usr/local/bin
 
 # ✅ Abordagem atual (Docker)

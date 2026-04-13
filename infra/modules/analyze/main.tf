@@ -3,8 +3,6 @@ variable "environment" { type = string }
 variable "controls_table_name" { type = string }
 variable "exceptions_table_name" { type = string }
 variable "exceptions_table_arn" { type = string }
-variable "violations_log_table_name" { type = string }
-variable "violations_log_table_arn" { type = string }
 
 resource "aws_lambda_function" "analyze" {
   function_name    = "${var.project_name}-analyze-${var.environment}"
@@ -12,16 +10,16 @@ resource "aws_lambda_function" "analyze" {
   filename         = "${path.module}/../../../lambdas/analyze/analyze.zip"
   source_code_hash = filebase64sha256("${path.module}/../../../lambdas/analyze/analyze.zip")
   handler          = "handler.lambda_handler"
-  runtime          = "python3.12"
+  runtime          = "python3.13"
+  architectures    = ["arm64"]
   timeout          = 15
   memory_size      = 512
 
   environment {
     variables = {
-      CONTROLS_TABLE       = var.controls_table_name
-      EXCEPTIONS_TABLE     = var.exceptions_table_name
-      VIOLATIONS_LOG_TABLE = var.violations_log_table_name
-      POLICY_PACKAGE       = "s3_public_access"
+      CONTROLS_TABLE   = var.controls_table_name
+      EXCEPTIONS_TABLE = var.exceptions_table_name
+      POLICY_PACKAGE   = "s3_public_access"
     }
   }
 
@@ -63,8 +61,7 @@ resource "aws_iam_role_policy" "dynamodb" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = [var.exceptions_table_arn, "${var.exceptions_table_arn}/index/*"] },
-      { Effect = "Allow", Action = ["dynamodb:PutItem"], Resource = var.violations_log_table_arn }
+      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = [var.exceptions_table_arn, "${var.exceptions_table_arn}/index/*"] }
     ]
   })
 }

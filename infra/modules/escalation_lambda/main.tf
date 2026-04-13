@@ -12,7 +12,8 @@ resource "aws_lambda_function" "escalation" {
   filename         = "${path.module}/../../../lambdas/escalation/escalation.zip"
   source_code_hash = filebase64sha256("${path.module}/../../../lambdas/escalation/escalation.zip")
   handler          = "handler.lambda_handler"
-  runtime          = "python3.12"
+  runtime          = "python3.13"
+  architectures    = ["arm64"]
   timeout          = 30
   memory_size      = 256
 

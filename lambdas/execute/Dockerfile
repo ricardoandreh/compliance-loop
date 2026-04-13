@@ -2,10 +2,10 @@
 # Using OpenTofu's official Docker image as recommended in:
 # https://opentofu.org/docs/intro/install/docker/
 # The minimal image contains only the tofu binary (~50MB)
-FROM ghcr.io/opentofu/opentofu:minimal AS tofu
+FROM --platform=linux/arm64 ghcr.io/opentofu/opentofu:minimal AS tofu
 
 # Stage 2: Build Lambda image
-FROM public.ecr.aws/lambda/python:3.12
+FROM --platform=linux/arm64 public.ecr.aws/lambda/python:3.13
 
 # Copy OpenTofu binary from minimal image
 # This approach is preferred over manual downloads because:

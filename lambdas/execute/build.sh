@@ -57,7 +57,7 @@ if [ $? -ne 0 ]; then
     echo -e "${RED}Error: Docker build failed${NC}"
     exit 1
 fi
-echo -e "${GREEN}✓ Docker image built successfully${NC}"
+echo -e "${GREEN}✓ Docker image built successfully (arm64)${NC}"
 echo ""
 
 # Step 5: Push to ECR

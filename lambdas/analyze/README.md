@@ -16,7 +16,7 @@ The Lambda requires the OPA binary to be included in the deployment package. Dow
 
 ```bash
 # Download OPA binary for Linux (Lambda runtime)
-curl -L -o lambdas/analyze/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+curl -L -o lambdas/analyze/opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static
 chmod +x lambdas/analyze/opa
 ```
 

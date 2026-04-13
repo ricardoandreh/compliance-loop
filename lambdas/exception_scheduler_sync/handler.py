@@ -39,7 +39,7 @@ def upsert_schedule(item):
     valid_until = int(item['valid_until'])
     fire_at = datetime.fromtimestamp(valid_until, tz=timezone.utc) + timedelta(seconds=30)
 
-    scheduler.create_schedule(
+    schedule_kwargs = dict(
         Name=f'exc-{exception_id}',
         GroupName=SCHEDULE_GROUP,
         ScheduleExpression=f"at({fire_at.strftime('%Y-%m-%dT%H:%M:%S')})",
@@ -51,8 +51,12 @@ def upsert_schedule(item):
             'Input':   build_sfn_input(item, 'exception_ttl_expiry'),
         },
         ActionAfterCompletion='DELETE',
-        ClientToken=f'exc-{exception_id}',
     )
+
+    try:
+        scheduler.create_schedule(**schedule_kwargs, ClientToken=f'exc-{exception_id}')
+    except scheduler.exceptions.ConflictException:
+        scheduler.update_schedule(**schedule_kwargs)
 
 
 def delete_schedule(exception_id):

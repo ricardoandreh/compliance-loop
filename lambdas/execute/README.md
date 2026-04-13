@@ -187,8 +187,8 @@ sudo systemctl start docker
 
 **Platform mismatch errors:**
 ```bash
-# Always build with linux/amd64 platform for Lambda
-docker build --platform linux/amd64 -t compliance-loop-execute-lambda:latest .
+# Always build with linux/arm64 platform for Lambda
+docker build --platform linux/arm64 -t compliance-loop-execute-lambda:latest .
 ```
 
 **ECR authentication fails:**
@@ -208,7 +208,7 @@ aws ecr get-login-password --region us-east-1 | \
 ```bash
 # Use BuildKit for faster builds
 export DOCKER_BUILDKIT=1
-docker build --platform linux/amd64 --progress=plain -t compliance-loop-execute-lambda:latest .
+docker build --platform linux/arm64 --progress=plain -t compliance-loop-execute-lambda:latest .
 
 # Check available disk space
 docker system df

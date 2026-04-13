@@ -45,7 +45,8 @@ resource "aws_lambda_function" "exception_scheduler_sync" {
   filename         = data.archive_file.handler.output_path
   source_code_hash = data.archive_file.handler.output_base64sha256
   handler          = "handler.handler"
-  runtime          = "python3.12"
+  runtime          = "python3.13"
+  architectures    = ["arm64"]
   timeout          = 30
   memory_size      = 128
 

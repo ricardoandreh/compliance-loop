@@ -58,3 +58,4 @@ htmlcov/
 analyze.zip
 escalation.zip
 handler.zip
+lambdas/analyze/opa

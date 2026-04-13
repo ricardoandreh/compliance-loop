@@ -7,6 +7,7 @@ resource "aws_lambda_function" "execute" {
   role          = aws_iam_role.execute_lambda.arn
   package_type  = "Image"
   image_uri     = "${var.ecr_repository_url}:latest"
+  architectures = ["arm64"]
   timeout       = 90
   memory_size   = 2048
 
