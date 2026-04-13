@@ -1,36 +1,26 @@
-# SQS FIFO Queue for escalation (task 8.1)
-# This resource is referenced by the Step Functions state machine
+variable "project_name" { type = string }
+variable "environment" { type = string }
 
 resource "aws_sqs_queue" "escalation" {
   name                        = "${var.project_name}-escalation-${var.environment}.fifo"
   fifo_queue                  = true
   content_based_deduplication = false
-  message_retention_seconds   = 1209600  # 14 days
-  visibility_timeout_seconds  = 300      # 5 minutes
+  message_retention_seconds   = 1209600
+  visibility_timeout_seconds  = 300
   deduplication_scope         = "messageGroup"
   fifo_throughput_limit       = "perMessageGroupId"
 
-  tags = {
-    Name        = "${var.project_name}-escalation"
-    Environment = var.environment
-    Purpose     = "Queue for failed remediation escalations"
-  }
+  tags = { Name = "${var.project_name}-escalation", Environment = var.environment }
 }
 
-# Dead Letter Queue for escalation failures
 resource "aws_sqs_queue" "escalation_dlq" {
   name                      = "${var.project_name}-escalation-dlq-${var.environment}.fifo"
   fifo_queue                = true
-  message_retention_seconds = 1209600  # 14 days
+  message_retention_seconds = 1209600
 
-  tags = {
-    Name        = "${var.project_name}-escalation-dlq"
-    Environment = var.environment
-    Purpose     = "DLQ for escalation queue failures"
-  }
+  tags = { Name = "${var.project_name}-escalation-dlq", Environment = var.environment }
 }
 
-# Redrive policy for escalation queue
 resource "aws_sqs_queue_redrive_policy" "escalation" {
   queue_url = aws_sqs_queue.escalation.id
   redrive_policy = jsonencode({
@@ -39,7 +29,6 @@ resource "aws_sqs_queue_redrive_policy" "escalation" {
   })
 }
 
-# CloudWatch alarm for DLQ messages
 resource "aws_cloudwatch_metric_alarm" "escalation_dlq" {
   alarm_name          = "${var.project_name}-escalation-dlq-${var.environment}"
   comparison_operator = "GreaterThanThreshold"
@@ -52,12 +41,10 @@ resource "aws_cloudwatch_metric_alarm" "escalation_dlq" {
   alarm_description   = "Alert when messages appear in escalation DLQ"
   treat_missing_data  = "notBreaching"
 
-  dimensions = {
-    QueueName = aws_sqs_queue.escalation_dlq.name
-  }
+  dimensions = { QueueName = aws_sqs_queue.escalation_dlq.name }
 
-  tags = {
-    Name        = "${var.project_name}-escalation-dlq-alarm"
-    Environment = var.environment
-  }
+  tags = { Name = "${var.project_name}-escalation-dlq-alarm", Environment = var.environment }
 }
+
+output "queue_arn" { value = aws_sqs_queue.escalation.arn }
+output "queue_url" { value = aws_sqs_queue.escalation.url }

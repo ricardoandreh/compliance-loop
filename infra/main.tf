@@ -24,3 +24,94 @@ provider "aws" {
 }
 
 data "aws_caller_identity" "current" {}
+
+# --- Modules ---
+
+module "knowledge" {
+  source       = "./modules/knowledge"
+  project_name = var.project_name
+  environment  = var.environment
+}
+
+module "escalation_queue" {
+  source       = "./modules/escalation_queue"
+  project_name = var.project_name
+  environment  = var.environment
+}
+
+module "monitoring" {
+  source       = "./modules/monitoring"
+  project_name = var.project_name
+  environment  = var.environment
+}
+
+module "ecr" {
+  source       = "./modules/ecr"
+  project_name = var.project_name
+  environment  = var.environment
+}
+
+module "analyze" {
+  source                    = "./modules/analyze"
+  project_name              = var.project_name
+  environment               = var.environment
+  controls_table_name       = module.knowledge.controls_table_name
+  exceptions_table_name     = module.knowledge.exceptions_table_name
+  exceptions_table_arn      = module.knowledge.exceptions_table_arn
+  violations_log_table_name = module.knowledge.violations_log_table_name
+  violations_log_table_arn  = module.knowledge.violations_log_table_arn
+}
+
+module "execute" {
+  source             = "./modules/execute"
+  project_name       = var.project_name
+  environment        = var.environment
+  ecr_repository_url = module.ecr.repository_url
+}
+
+module "escalation_lambda" {
+  source                    = "./modules/escalation_lambda"
+  project_name              = var.project_name
+  environment               = var.environment
+  region                    = var.region
+  account_id                = data.aws_caller_identity.current.account_id
+  escalation_queue_arn      = module.escalation_queue.queue_arn
+  violations_log_table_name = module.knowledge.violations_log_table_name
+  violations_log_table_arn  = module.knowledge.violations_log_table_arn
+}
+
+module "orchestration" {
+  source                    = "./modules/orchestration"
+  project_name              = var.project_name
+  environment               = var.environment
+  analyze_lambda_arn        = module.analyze.function_arn
+  execute_lambda_arn        = module.execute.function_arn
+  violations_log_table_name = module.knowledge.violations_log_table_name
+  violations_log_table_arn  = module.knowledge.violations_log_table_arn
+  escalation_queue_arn      = module.escalation_queue.queue_arn
+  escalation_queue_url      = module.escalation_queue.queue_url
+}
+
+module "exception_scheduler" {
+  source                = "./modules/exception_scheduler"
+  project_name          = var.project_name
+  environment           = var.environment
+  region                = var.region
+  account_id            = data.aws_caller_identity.current.account_id
+  exceptions_table_name = module.knowledge.exceptions_table_name
+  exceptions_table_arn  = module.knowledge.exceptions_table_arn
+  exceptions_stream_arn = module.knowledge.exceptions_stream_arn
+  state_machine_arn     = module.orchestration.state_machine_arn
+}
+
+# --- Outputs ---
+
+output "state_machine_arn" { value = module.orchestration.state_machine_arn }
+output "state_machine_name" { value = module.orchestration.state_machine_name }
+output "controls_table_name" { value = module.knowledge.controls_table_name }
+output "exceptions_table_name" { value = module.knowledge.exceptions_table_name }
+output "violations_log_table_name" { value = module.knowledge.violations_log_table_name }
+output "eventbridge_rule_name" { value = module.orchestration.eventbridge_rule_name }
+output "ecr_repository_url" { value = module.ecr.repository_url }
+output "analyze_function_name" { value = module.analyze.function_name }
+output "execute_function_name" { value = module.execute.function_name }
