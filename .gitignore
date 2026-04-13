@@ -57,3 +57,4 @@ htmlcov/
 # Lambda Zip
 analyze.zip
 escalation.zip
+handler.zip

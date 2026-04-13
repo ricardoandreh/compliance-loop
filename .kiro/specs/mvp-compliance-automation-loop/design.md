@@ -684,13 +684,15 @@ def lambda_handler(event, context):
 
 **Re-avaliação Automática após Expiração de Exceção**:
 
-O DynamoDB Streams está habilitado na tabela exceptions com `OLD_IMAGE`. Quando o TTL deleta fisicamente um item expirado, o stream emite um evento `REMOVE` contendo a imagem anterior do item. Um EventBridge Pipe filtra apenas eventos `REMOVE`, extrai `resource_arn` e `control_id` do `OLD_IMAGE`, e dispara o Step Functions para re-avaliação completa (Analyze → Execute se necessário).
+O DynamoDB Streams está habilitado na tabela exceptions com `NEW_AND_OLD_IMAGES`. Uma Lambda (`exception-scheduler-sync`) processa eventos `INSERT` e `MODIFY` do Stream. Para cada exceção ativa com `valid_until` no futuro, a Lambda cria um EventBridge Scheduler one-time programado para `valid_until + 30s`. Quando o Scheduler dispara, a exceção já expirou logicamente, e o Step Functions é acionado para re-avaliação completa (Analyze → Execute se necessário). O Scheduler se auto-deleta após o disparo (`ActionAfterCompletion=DELETE`).
+
+Este mecanismo substituiu a abordagem anterior baseada em EventBridge Pipe + DynamoDB TTL, que dependia da deleção física de itens expirados — operação com latência não determinística de até 48h. O novo mecanismo oferece precisão de segundos (evidenciado no Teste 5/C3) e comportamento determinístico.
 
 Isso garante que, após expiração de uma exceção, o recurso seja automaticamente re-avaliado pelo loop MAPE-K completo, mantendo o invariante arquitetural de que o Analyze é sempre o componente decisor.
 
 **Limitação conhecida — Latência do TTL**:
 
-A deleção física de itens expirados pelo DynamoDB TTL é **não-determinística** e pode levar até 48 horas após o timestamp `valid_until`. Isso significa que a re-avaliação automática via DynamoDB Streams pode ter latência de até 48h. No entanto, a **correção lógica** do sistema não depende da deleção física: a Analyze Lambda filtra exceções com `valid_until > now()`, garantindo que exceções logicamente expiradas sejam ignoradas em qualquer avaliação disparada por eventos CloudTrail. A re-avaliação via Pipe é um mecanismo complementar que fecha o loop para recursos que não recebem novos eventos de mutação.
+A deleção física de itens expirados pelo DynamoDB TTL é **não-determinística** e pode levar até 48 horas após o timestamp `valid_until`. No entanto, a re-avaliação automática **não depende da deleção física**: o EventBridge Scheduler dispara em `valid_until + 30s` com precisão de segundos, e a Analyze Lambda filtra exceções com `valid_until > now()`, garantindo que exceções logicamente expiradas sejam ignoradas em qualquer avaliação. O TTL permanece habilitado apenas para limpeza eventual dos itens na tabela.
 
 
 
@@ -1688,3 +1690,179 @@ O trace demonstra empiricamente que o sistema satisfaz a propriedade de converg�
 - `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-dev:999f6bbf-e258-a477-9dab-0e42e7242f4f_134ceb51-54f7-efff-8f54-58e4cb9146ca`
   - Duração: ~3s | Resultado: `S_exception` (sem remediação)
   - Violation ID: `d4e40a50-cf65-4771-94f3-2b326fd89c78`
+
+### Teste 3 (C1): Violação Simples — Remediação Automática com Convergência
+
+**Data**: 2026-04-12 (timestamps em UTC)
+**Recurso**: `arn:aws:s3:::compliance-test-c1-1776025390`
+**Control**: `ctrl-s3-public-block`
+**Hipóteses validadas**: H1 (MTTR), H3 (tempo de exposição)
+
+Este teste demonstra o cenário mais básico: um bucket tem seu public access block
+desabilitado (simulando ação via console), o sistema detecta, classifica como
+`S_violation`, remedia automaticamente, e confirma convergência para `S_nominal`.
+
+#### Timeline
+
+| Timestamp (UTC) | Evento | Origem | Estado |
+|---|---|---|---|
+| 20:36:00 | `PutBucketPublicAccessBlock` com todos os campos `false` | CloudTrail | — |
+| 20:36:06 | Execução `91d93438` inicia — `InvokeAnalyze` | Step Functions | — |
+| 20:36:09 | Analyze classifica recurso | Lambda Analyze | **S_violation** |
+| 20:36:09 | `ClassifyState` → `InvokeExecute` | Step Functions | — |
+| 20:36:24 | Execute aplica OpenTofu: 4 settings → `true` | Lambda Execute | **remediado** |
+| 20:36:24 | `CheckRemediationStatus` → `UpdateLogSuccess` | Step Functions | — |
+| 20:36:32 | Execução `48d2658d` inicia — re-avaliação (CloudTrail re-trigger) | Step Functions | — |
+| 20:36:32 | Analyze confirma conformidade | Lambda Analyze | **S_nominal** |
+
+#### Métricas
+
+| Métrica | Valor | Hipótese |
+|---|---|---|
+| t_detection (evento → SFN start) | ~6s | H3 |
+| t_remediation (SFN start → success) | **18s** | H1 |
+| t_exposure (evento → remediação confirmada) | **24s** | H3 |
+
+#### Rastreabilidade (H2)
+
+Dois registros no `violations_log`:
+1. `state=S_violation`, `remediation_status=success`, `remediation_output` com plan completo do OpenTofu
+2. `state=S_nominal` (confirmação de convergência)
+
+Todos os campos obrigatórios presentes: `violation_id`, `resource_arn`, `control_id`, `timestamp`, `policy_version`, `account_id`, `region`.
+
+#### Referências de Execução
+
+- **Execução 1 (remediação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:91d93438-9614-425a-5a28-3f7ffc909da9_54ca886a-b509-12a6-17dc-25c4a68b2277`
+  - Duração: ~18s | Resultado: `S_violation` → remediação `success`
+  - Violation ID: `3104b049-eb7a-481f-a577-b4d72092ad9d`
+
+- **Execução 2 (confirmação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:48d2658d-51f2-8839-ae2a-16ed0a5e9a78_72914d31-8b9a-8a17-65eb-10ffb30a20bf`
+  - Duração: <1s | Resultado: `S_nominal`
+  - Violation ID: `2c419433-1862-4294-88d5-feba8dd4d587`
+
+### Teste 4 (C2): Exceção Ativa Impede Remediação
+
+**Data**: 2026-04-12 (timestamps em UTC)
+**Recurso**: `arn:aws:s3:::compliance-test-c2-1776025390`
+**Control**: `ctrl-s3-public-block`
+**Hipótese validada**: H2 (rastreabilidade)
+
+Exceção `exc-c2-1776025390` criada com `valid_until` 24h no futuro e `approved_by=test-approver`.
+Bucket configurado com todos os public access settings em `false`.
+
+#### Timeline
+
+| Timestamp (UTC) | Evento | Origem | Estado |
+|---|---|---|---|
+| 20:44:00 | `PutBucketPublicAccessBlock` com todos os campos `false` | CloudTrail | — |
+| 20:44:09 | Execução `d2d96985` inicia — `InvokeAnalyze` | Step Functions | — |
+| 20:44:11 | Analyze encontra exceção válida `exc-c2-1776025390` | Lambda Analyze | **S_exception** |
+| 20:44:11 | `ClassifyState` → `RegisterException` → End | Step Functions | — |
+
+#### Resultado
+
+- Bucket **não foi remediado** — 4 settings permanecem `false`
+- Execute Lambda **não foi invocada**
+- `violations_log`: `state=S_exception`, `exception_id=exc-c2-1776025390`, `approved_by=test-approver`
+- Duração total: ~2.5s
+
+#### Referência de Execução
+
+- `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:d2d96985-3d82-1bed-71c6-d098e5454b58_d34b34cc-2a42-c42d-1227-1b52870be655`
+  - Duração: ~2.5s | Resultado: `S_exception` (sem remediação)
+  - Violation ID: `8a0d6f3c-27b9-4cf4-aa14-7e26036c0bfb`
+
+### Teste 5 (C3): Ciclo Completo de Exceção — Criação, Tolerância, Expiração e Remediação
+
+**Data**: 2026-04-13 (timestamps em UTC)
+**Recurso**: `arn:aws:s3:::compliance-test-c3-1776025390`
+**Control**: `ctrl-s3-public-block`
+**Hipóteses validadas**: H2 (rastreabilidade), H3 (tempo de exposição)
+
+Este é o teste mais completo do sistema. Demonstra o ciclo de vida inteiro de uma
+exceção com precisão de segundos, usando o novo mecanismo de EventBridge Scheduler
+(substituiu o EventBridge Pipe + DynamoDB TTL, que tinha latência não determinística
+de até 48h).
+
+#### Mudança Arquitetural: Pipe → Scheduler
+
+O mecanismo anterior usava DynamoDB TTL para deletar exceções expiradas, com um
+EventBridge Pipe filtrando eventos `REMOVE` do DynamoDB Stream. O problema: a
+deleção física pelo TTL tem latência não determinística (até 48h após expiração),
+tornando o comportamento do sistema imprevisível.
+
+O novo mecanismo usa uma Lambda (`exception-scheduler-sync`) acionada por DynamoDB
+Streams em eventos `INSERT`/`MODIFY`. Para cada exceção ativa, a Lambda cria um
+EventBridge Scheduler one-time programado para `valid_until + 30s`. Quando o
+Scheduler dispara, a exceção já expirou logicamente, e o Analyze classifica como
+`S_violation`.
+
+Propriedades do novo mecanismo:
+- **Precisão**: disparo em `valid_until + 30s` (vs. até 48h do TTL)
+- **Idempotência**: nome determinístico `exc-{exception_id}` permite upsert
+- **Auto-limpeza**: `ActionAfterCompletion=DELETE` remove o Scheduler após disparo
+- **Extensibilidade**: `MODIFY` no DynamoDB atualiza o Scheduler (ex: extensão de prazo)
+
+#### Setup
+
+1. Bucket configurado com todos os public access settings em `false`
+2. Exceção `exc-c3v4-1776044143` criada com `valid_until` = 3 minutos no futuro (epoch 1776044321)
+3. Lambda `exception-scheduler-sync` processou o Stream e criou Scheduler `exc-exc-c3v4-1776044143`
+4. Scheduler programado para `at(2026-04-13T01:39:11)` (valid_until + 30s)
+
+#### Timeline
+
+| Timestamp (UTC) | Evento | Origem | Estado |
+|---|---|---|---|
+| 01:35:44 | Exceção criada (`valid_until` = 01:38:41) | DynamoDB (manual) | — |
+| 01:35:45 | Lambda sync cria Scheduler `at(01:39:11)` | Lambda Sync | — |
+| 01:35:54 | Violação disparada → Analyze encontra exceção válida | CloudTrail → SFN | **S_exception** |
+| 01:38:41 | Exceção expira logicamente (`valid_until` atingido) | — | — |
+| 01:39:11 | Scheduler dispara Step Functions | EventBridge Scheduler | — |
+| 01:39:47 | Analyze classifica (sem exceção válida) → Execute remedia | SFN → Lambda | **S_violation** → `success` |
+| 01:40:00 | Re-avaliação confirma conformidade | CloudTrail → SFN | **S_nominal** |
+| 01:40:01 | Scheduler auto-deletado (`ActionAfterCompletion=DELETE`) | EventBridge Scheduler | — |
+
+#### Trace do `violations_log`
+
+```
+01:35:54Z | S_exception | exception_id=exc-c3v4-1776044143 | approved_by=test-approver
+01:39:47Z | S_violation | remediation_status=success        | exception_id=-
+01:40:00Z | S_nominal   | remediation_status=-              | exception_id=-
+```
+
+Esta sequência de três registros com timestamps consecutivos documenta o ciclo de vida
+completo de uma exceção: período de tolerância aprovado → expiração → remediação →
+confirmação. É o argumento empírico central de H2 (rastreabilidade/completude).
+
+#### Métricas
+
+| Métrica | Valor | Hipótese |
+|---|---|---|
+| Precisão do Scheduler | valid_until + 30s (exato) | H3 |
+| t_remediation (Scheduler fire → success) | **~8s** | H1 |
+| Janela de risco pós-expiração | **~66s** (30s buffer + 36s execução) | H3 |
+| Ciclo completo S_exception → S_nominal | **~4 min** (controlado pelo TTL) | H3 |
+
+#### Verificações
+
+- [x] Scheduler criado automaticamente pela Lambda sync
+- [x] Scheduler disparou em `valid_until + 30s` com precisão de segundos
+- [x] Scheduler auto-deletado após disparo (lista vazia confirmada)
+- [x] Analyze ignorou exceção expirada (FilterExpression `valid_until > now()`)
+- [x] Execute remediou com sucesso (OpenTofu apply)
+- [x] Re-avaliação confirmou `S_nominal`
+- [x] `violations_log` contém trace completo com todos os campos obrigatórios
+
+#### Referências de Execução
+
+- **Execução 1 (S_exception)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:d8a47391-31a9-2be5-36a9-7dab6e222168_57912355-3a4b-444d-b7a4-713149bab451`
+  - Duração: ~2.4s | Resultado: `S_exception`
+
+- **Execução 2 (Scheduler → remediação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:1f69dc49-3f00-4c37-adad-5bf50bcb2d6a`
+  - Duração: ~8.5s | Resultado: `S_violation` → remediação `success`
+  - Trigger: `exception_ttl_expiry` (via EventBridge Scheduler)
+
+- **Execução 3 (confirmação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:95c2fd63-9ad9-0dd5-fb68-3bf442fbf5fa_32237787-e46e-cefc-09a6-13aa378b691c`
+  - Duração: <1s | Resultado: `S_nominal`

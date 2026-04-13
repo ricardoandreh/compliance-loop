@@ -11,9 +11,11 @@ Sistema de automação de conformidade baseado no padrão MAPE-K para AWS S3.
 │   ├── analyze/        # Analyze Lambda (classificação de conformidade)
 │   ├── execute/        # Execute Lambda (remediação com OpenTofu)
 │   ├── escalation/     # Escalation Lambda (criação de GitHub Issues)
+│   ├── exception_scheduler_sync/  # Sync exceções → EventBridge Scheduler
 │   ├── requirements.txt
 │   └── Dockerfile      # Container image para Execute Lambda
 ├── policies/           # Políticas Rego para OPA
+├── scripts/            # Scripts de setup (SSM params, etc.)
 ├── tests/              # Testes
 │   ├── unit/           # Testes unitários
 │   ├── integration/    # Testes de integração end-to-end
