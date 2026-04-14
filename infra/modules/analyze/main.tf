@@ -1,6 +1,7 @@
 variable "project_name" { type = string }
 variable "environment" { type = string }
 variable "controls_table_name" { type = string }
+variable "controls_table_arn" { type = string }
 variable "exceptions_table_name" { type = string }
 variable "exceptions_table_arn" { type = string }
 
@@ -51,7 +52,7 @@ resource "aws_iam_role_policy" "s3" {
   role = aws_iam_role.analyze_lambda.id
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = ["s3:GetBucketPublicAccessBlock"], Resource = "arn:aws:s3:::*" }]
+    Statement = [{ Effect = "Allow", Action = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy"], Resource = "arn:aws:s3:::*" }]
   })
 }
 
@@ -61,6 +62,7 @@ resource "aws_iam_role_policy" "dynamodb" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = [var.controls_table_arn] },
       { Effect = "Allow", Action = ["dynamodb:Query"], Resource = [var.exceptions_table_arn, "${var.exceptions_table_arn}/index/*"] }
     ]
   })

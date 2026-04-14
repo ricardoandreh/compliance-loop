@@ -45,7 +45,7 @@ resource "aws_iam_role_policy" "s3" {
   role = aws_iam_role.execute_lambda.id
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = ["s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock"], Resource = "arn:aws:s3:::*" }]
+    Statement = [{ Effect = "Allow", Action = ["s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock", "s3:PutBucketPolicy", "s3:GetBucketPolicy"], Resource = "arn:aws:s3:::*" }]
   })
 }
 

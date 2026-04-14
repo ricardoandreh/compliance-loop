@@ -1,15 +1,11 @@
 """
-Analyze Lambda Handler
+Analyze Lambda Handler (Dynamic Multi-Control, Single Invocation)
 
-Classifies S3 bucket compliance state by:
-1. Retrieving current resource configuration from AWS
-2. Evaluating against Rego policy using OPA
-3. Checking for valid exceptions in DynamoDB
-4. Returning classification state
+Evaluates ALL applicable controls for a resource in one invocation.
+Returns a list of classification results — one per control.
 
-NOTE: Persistence to violations_log is handled exclusively by the
-Step Function (RegisterNominal / RegisterException / UpdateLog* states).
 This Lambda is a pure decision function — no side-effects beyond reads.
+Persistence is handled by the Step Function.
 """
 
 import boto3
@@ -19,277 +15,188 @@ import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
-
-# Initialize AWS clients
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
-# DynamoDB table references
+controls_table = dynamodb.Table(os.environ.get('CONTROLS_TABLE', 'controls'))
 exceptions_table = dynamodb.Table(os.environ.get('EXCEPTIONS_TABLE', 'exceptions'))
 
-# Policy version for audit trail
-POLICY_VERSION = "s3_public_access:v1.0"
 
+# --- Resource Config Fetchers (cached per invocation) ---
 
-def extract_bucket_name(resource_arn: str) -> str:
-    """
-    Extract bucket name from S3 ARN.
-    
-    Args:
-        resource_arn: ARN in format arn:aws:s3:::bucket-name
-        
-    Returns:
-        Bucket name
-    """
-    if not resource_arn.startswith('arn:aws:s3:::'):
-        raise ValueError(f"Invalid S3 ARN format: {resource_arn}")
-    
-    return resource_arn.replace('arn:aws:s3:::', '')
+_config_cache: Dict[str, Any] = {}
 
-
-def get_bucket_public_access_config(bucket_name: str) -> Dict[str, bool]:
-    """
-    Retrieve current public access block configuration from S3.
-    
-    Args:
-        bucket_name: Name of the S3 bucket
-        
-    Returns:
-        Dictionary with BlockPublicAcls, IgnorePublicAcls, 
-        BlockPublicPolicy, RestrictPublicBuckets
-        
-    Raises:
-        ClientError: If bucket doesn't exist or access denied
-    """
+def get_bucket_public_access_config(bucket_name: str) -> Dict[str, Any]:
+    key = f'public_access:{bucket_name}'
+    if key in _config_cache:
+        return _config_cache[key]
     try:
-        response = s3_client.get_public_access_block(Bucket=bucket_name)
-        config = response['PublicAccessBlockConfiguration']
-        
-        return {
-            'BlockPublicAcls': config.get('BlockPublicAcls', False),
-            'IgnorePublicAcls': config.get('IgnorePublicAcls', False),
-            'BlockPublicPolicy': config.get('BlockPublicPolicy', False),
-            'RestrictPublicBuckets': config.get('RestrictPublicBuckets', False)
+        resp = s3_client.get_public_access_block(Bucket=bucket_name)
+        cfg = resp['PublicAccessBlockConfiguration']
+        result = {
+            'BlockPublicAcls': cfg.get('BlockPublicAcls', False),
+            'IgnorePublicAcls': cfg.get('IgnorePublicAcls', False),
+            'BlockPublicPolicy': cfg.get('BlockPublicPolicy', False),
+            'RestrictPublicBuckets': cfg.get('RestrictPublicBuckets', False)
         }
     except Exception as e:
-        # No configuration means all settings are false (violation)
         if 'NoSuchPublicAccessBlockConfiguration' in str(e):
-            return {
-                'BlockPublicAcls': False,
-                'IgnorePublicAcls': False,
-                'BlockPublicPolicy': False,
-                'RestrictPublicBuckets': False
-            }
-        # Bucket doesn't exist or access denied — propagate to trigger escalation
-        raise
+            result = {'BlockPublicAcls': False, 'IgnorePublicAcls': False,
+                      'BlockPublicPolicy': False, 'RestrictPublicBuckets': False}
+        else:
+            raise
+    _config_cache[key] = result
+    return result
 
 
-def evaluate_policy_with_opa(resource_config: Dict[str, bool]) -> bool:
-    """
-    Evaluate resource configuration against Rego policy using OPA.
-    
-    Args:
-        resource_config: S3 public access block configuration
-        
-    Returns:
-        True if compliant (policy allows), False if non-compliant
-    """
-    # Prepare OPA input
-    opa_input = {
-        "resource": resource_config
-    }
-    
-    # Path to Rego policy file (bundled in deployment package)
-    policy_path = os.path.join(os.path.dirname(__file__), 's3_public_access.rego')
-    
+def get_bucket_policy_statements(bucket_name: str) -> Dict[str, Any]:
+    key = f'policy:{bucket_name}'
+    if key in _config_cache:
+        return _config_cache[key]
     try:
-        # Execute OPA eval command
-        opa_bin = os.path.join(os.path.dirname(__file__), 'opa')
-        input_path = '/tmp/opa_input.json'
-        with open(input_path, 'w') as f:
-            json.dump(opa_input, f)
-        result = subprocess.run(
-            [
-                opa_bin, 'eval',
-                '--data', policy_path,
-                '--input', input_path,
-                '--format', 'json',
-                'data.s3_public_access.allow'
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        
-        if result.returncode != 0:
-            print(f"OPA evaluation error: {result.stderr}")
-            # Fail-secure: treat evaluation error as violation
-            return False
-        
-        # Parse OPA output
-        output = json.loads(result.stdout)
-        allow = output.get('result', [{}])[0].get('expressions', [{}])[0].get('value', False)
-        
-        return bool(allow)
-        
-    except subprocess.TimeoutExpired:
-        print("OPA evaluation timeout")
-        return False
+        resp = s3_client.get_bucket_policy(Bucket=bucket_name)
+        policy = json.loads(resp['Policy'])
+        result = {'policy_statements': policy.get('Statement', [])}
     except Exception as e:
-        print(f"OPA evaluation exception: {str(e)}")
-        # Fail-secure: treat exceptions as violations
+        if 'NoSuchBucketPolicy' in str(e):
+            result = {'policy_statements': []}
+        else:
+            raise
+    _config_cache[key] = result
+    return result
+
+
+RESOURCE_FETCHERS = {
+    's3_public_access': get_bucket_public_access_config,
+    's3_ssl_only': get_bucket_policy_statements,
+}
+
+
+# --- OPA Evaluation ---
+
+def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any]) -> bool:
+    opa_input = {"resource": resource_config}
+    policy_path = os.path.join(os.path.dirname(__file__), f'{rego_package}.rego')
+    opa_bin = os.path.join(os.path.dirname(__file__), 'opa')
+    input_path = '/tmp/opa_input.json'
+
+    with open(input_path, 'w') as f:
+        json.dump(opa_input, f)
+    try:
+        result = subprocess.run(
+            [opa_bin, 'eval', '--data', policy_path, '--input', input_path,
+             '--format', 'json', f'data.{rego_package}.allow'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            print(f"OPA error ({rego_package}): {result.stderr}")
+            return False
+        output = json.loads(result.stdout)
+        return bool(output.get('result', [{}])[0].get('expressions', [{}])[0].get('value', False))
+    except Exception as e:
+        print(f"OPA exception ({rego_package}): {e}")
         return False
 
+
+# --- Exception Query ---
 
 def query_exception(control_id: str, resource_arn: str) -> Optional[Dict[str, Any]]:
-    """
-    Query DynamoDB for valid exception matching control_id and resource_arn.
-    
-    Args:
-        control_id: Control identifier
-        resource_arn: Resource ARN to match
-        
-    Returns:
-        Exception item if valid exception exists, None otherwise
-    """
-    current_timestamp = int(time.time())
-    
     try:
-        # Query using GSI control_id-index
-        response = exceptions_table.query(
+        resp = exceptions_table.query(
             IndexName='control_id-index',
             KeyConditionExpression='control_id = :cid',
             FilterExpression='resource_arn = :arn AND valid_until > :now',
             ExpressionAttributeValues={
-                ':cid': control_id,
-                ':arn': resource_arn,
-                ':now': current_timestamp
+                ':cid': control_id, ':arn': resource_arn, ':now': int(time.time())
             },
-            Limit=1  # We only need one valid exception
+            Limit=1
         )
-        
-        items = response.get('Items', [])
+        items = resp.get('Items', [])
         return items[0] if items else None
-        
     except Exception as e:
-        print(f"DynamoDB query error: {str(e)}")
-        # Fail-secure: proceed without exception on query errors
+        print(f"DynamoDB query error: {e}")
         return None
 
 
+# --- Classification ---
+
 def classify_state(is_compliant: bool, exception: Optional[Dict[str, Any]]) -> str:
-    """
-    Classify resource compliance state based on policy evaluation and exceptions.
-    
-    Args:
-        is_compliant: Result of policy evaluation
-        exception: Valid exception if exists
-        
-    Returns:
-        State classification: S_nominal, S_exception, or S_violation
-    """
     if is_compliant:
         return "S_nominal"
-    elif exception is not None:
-        return "S_exception"
-    else:
-        return "S_violation"
+    return "S_exception" if exception else "S_violation"
 
 
-def validate_input(event: Dict[str, Any]) -> None:
-    """
-    Validate input event from EventBridge Input Transformer.
-    
-    Args:
-        event: Input event to validate
-        
-    Raises:
-        ValueError: If required fields are missing or invalid
-    """
-    # Validate presence of required fields
-    required_fields = ['resource_arn', 'control_id', 'account_id', 'region', 'event_time']
-    missing_fields = [field for field in required_fields if field not in event]
-    
-    if missing_fields:
-        raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
-    
-    # Validate resource_arn format (arn:aws:s3:::bucket-name)
-    resource_arn = event['resource_arn']
-    if not isinstance(resource_arn, str) or not resource_arn.startswith('arn:aws:s3:::'):
-        raise ValueError(f"Invalid resource_arn format: {resource_arn}. Expected format: arn:aws:s3:::bucket-name")
-    
-    # Validate bucket name is not empty
-    bucket_name = resource_arn.replace('arn:aws:s3:::', '')
-    if not bucket_name:
-        raise ValueError(f"Invalid resource_arn: bucket name is empty")
+def extract_bucket_name(resource_arn: str) -> str:
+    if not resource_arn.startswith('arn:aws:s3:::'):
+        raise ValueError(f"Invalid S3 ARN: {resource_arn}")
+    name = resource_arn.replace('arn:aws:s3:::', '')
+    if not name:
+        raise ValueError("Empty bucket name")
+    return name
 
+
+# --- Handler ---
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """
-    Main Lambda handler for Analyze component.
-    
-    Args:
-        event: Input event with resource_arn, control_id, account_id, region, event_time
-        context: Lambda context object
-        
-    Returns:
-        Dictionary with state, violation_id, exception_id, approved_by
-        
-    Raises:
-        ValueError: If input validation fails
-    """
     print(f"Received event: {json.dumps(event)}")
-    
-    # 0. Validate input from EventBridge Input Transformer
-    validate_input(event)
-    
-    # 1. Extract resource metadata
+
     resource_arn = event['resource_arn']
-    control_id = event['control_id']
+    control_ids = event['control_ids']
     account_id = event['account_id']
     region = event['region']
-    
     bucket_name = extract_bucket_name(resource_arn)
-    print(f"Analyzing bucket: {bucket_name}")
-    
-    # 2. Retrieve current resource configuration
-    resource_config = get_bucket_public_access_config(bucket_name)
-    print(f"Resource configuration: {json.dumps(resource_config)}")
-    
-    # 3. Evaluate with OPA
-    is_compliant = evaluate_policy_with_opa(resource_config)
-    print(f"Policy evaluation result: {'compliant' if is_compliant else 'non-compliant'}")
-    
-    # 4. Check for valid exception
-    exception = query_exception(control_id, resource_arn)
-    if exception:
-        print(f"Found valid exception: {exception['exception_id']}")
-    
-    # 5. Classify state
-    state = classify_state(is_compliant, exception)
-    print(f"Classification: {state}")
-    
-    # 6. Generate violation_id
-    # CONTRACT: violation_id is ALWAYS generated for every evaluation,
-    # regardless of state (S_nominal, S_exception, S_violation).
-    # Downstream consumers (Step Functions, DynamoDB) depend on this as partition key.
-    violation_id = str(uuid.uuid4())
-    
-    # 7. Return classification result (Step Function handles persistence)
-    result = {
-        'state': state,
-        'violation_id': violation_id,
-        'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-        'policy_version': POLICY_VERSION,
-        'exception_id': exception.get('exception_id') if exception else None,
-        'approved_by': exception.get('approved_by') if exception else None,
+    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+    _config_cache.clear()
+    results = []
+
+    for control_id in control_ids:
+        try:
+            control = controls_table.get_item(Key={'control_id': control_id}).get('Item')
+            if not control:
+                raise ValueError(f"Control not found: {control_id}")
+
+            rego_package = control['rego_policy_package']
+            policy_version = f"{rego_package}:{control.get('policy_version', 'v1.0')}"
+
+            fetcher = RESOURCE_FETCHERS.get(rego_package)
+            if not fetcher:
+                raise ValueError(f"No fetcher for: {rego_package}")
+
+            resource_config = fetcher(bucket_name)
+            is_compliant = evaluate_policy_with_opa(rego_package, resource_config)
+            exception = query_exception(control_id, resource_arn)
+            state = classify_state(is_compliant, exception)
+
+            results.append({
+                'control_id': control_id,
+                'state': state,
+                'violation_id': str(uuid.uuid4()),
+                'timestamp': now,
+                'policy_version': policy_version,
+                'exception_id': exception.get('exception_id') if exception else None,
+                'approved_by': exception.get('approved_by') if exception else None,
+            })
+            print(f"  {control_id}: {state}")
+
+        except Exception as e:
+            print(f"  {control_id}: ERROR - {e}")
+            results.append({
+                'control_id': control_id,
+                'state': 'S_error',
+                'violation_id': str(uuid.uuid4()),
+                'timestamp': now,
+                'policy_version': 'unknown',
+                'exception_id': None,
+                'approved_by': None,
+                'error': str(e),
+            })
+
+    return {
         'resource_arn': resource_arn,
-        'control_id': control_id,
         'account_id': account_id,
-        'region': region
+        'region': region,
+        'results': results
     }
-    
-    print(f"Returning result: {json.dumps(result)}")
-    return result

@@ -18,8 +18,8 @@ COPY --from=tofu /usr/local/bin/tofu /usr/local/bin/tofu
 # Create remediation directory
 RUN mkdir -p /opt/remediation
 
-# Copy remediation.tf to /opt/remediation/
-COPY remediation.tf /opt/remediation/
+# Copy remediation templates to /opt/remediation/
+COPY remediation.tf remediation_ssl.tf /opt/remediation/
 
 # Set working directory for provider initialization
 WORKDIR /opt/remediation

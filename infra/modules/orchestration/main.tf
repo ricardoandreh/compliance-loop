@@ -6,6 +6,8 @@ variable "violations_log_table_name" { type = string }
 variable "violations_log_table_arn" { type = string }
 variable "escalation_queue_arn" { type = string }
 variable "escalation_queue_url" { type = string }
+variable "controls_table_name" { type = string }
+variable "controls_table_arn" { type = string }
 
 # --- EventBridge Rule ---
 resource "aws_cloudwatch_event_rule" "s3_public_access_block" {
@@ -15,7 +17,7 @@ resource "aws_cloudwatch_event_rule" "s3_public_access_block" {
   event_pattern = jsonencode({
     source      = ["aws.s3"]
     detail-type = ["AWS API Call via CloudTrail"]
-    detail      = { eventName = ["PutBucketPublicAccessBlock", "DeleteBucketPublicAccessBlock", "CreateBucket"] }
+    detail      = { eventName = ["PutBucketPublicAccessBlock", "DeleteBucketPublicAccessBlock", "CreateBucket", "PutBucketPolicy", "DeleteBucketPolicy"] }
   })
 
   tags = { Name = "${var.project_name}-s3-public-access-block", Environment = var.environment }
@@ -33,16 +35,17 @@ resource "aws_cloudwatch_event_target" "step_functions" {
       account_id  = "$.detail.userIdentity.accountId"
       region      = "$.detail.awsRegion"
       event_time  = "$.detail.eventTime"
+      event_name  = "$.detail.eventName"
     }
 
     input_template = <<-EOT
     {
       "resource_id": <bucket_name>,
       "resource_arn": "arn:aws:s3:::<bucket_name>",
-      "control_id": "ctrl-s3-public-block",
       "account_id": <account_id>,
       "region": <region>,
-      "event_time": <event_time>
+      "event_time": <event_time>,
+      "event_name": <event_name>
     }
     EOT
   }
@@ -76,6 +79,7 @@ resource "aws_sfn_state_machine" "compliance_loop" {
     execute_lambda_arn   = var.execute_lambda_arn
     violations_log_table = var.violations_log_table_name
     escalation_queue_url = var.escalation_queue_url
+    controls_table       = var.controls_table_name
   })
 
   logging_configuration {
@@ -131,7 +135,8 @@ resource "aws_iam_role_policy" "sfn_dynamodb" {
   role = aws_iam_role.step_functions.id
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem"], Resource = [var.violations_log_table_arn] }]
+    Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem"], Resource = [var.violations_log_table_arn] },
+                 { Effect = "Allow", Action = ["dynamodb:Scan"], Resource = [var.controls_table_arn] }]
   })
 }
 

@@ -59,3 +59,4 @@ analyze.zip
 escalation.zip
 handler.zip
 lambdas/analyze/opa
+lambdas/execute/tofu

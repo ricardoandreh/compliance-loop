@@ -1,0 +1,18 @@
+FROM public.ecr.aws/lambda/python:3.13-arm64
+
+COPY tofu /usr/local/bin/tofu
+RUN chmod +x /usr/local/bin/tofu
+
+# ctrl-s3-public-block
+RUN mkdir -p /opt/remediation/ctrl-s3-public-block
+COPY remediation.tf /opt/remediation/ctrl-s3-public-block/
+RUN cd /opt/remediation/ctrl-s3-public-block && tofu init -no-color
+
+# ctrl-s3-ssl-only
+RUN mkdir -p /opt/remediation/ctrl-s3-ssl-only
+COPY remediation_ssl.tf /opt/remediation/ctrl-s3-ssl-only/main.tf
+RUN cd /opt/remediation/ctrl-s3-ssl-only && tofu init -no-color
+
+COPY handler.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["handler.lambda_handler"]
