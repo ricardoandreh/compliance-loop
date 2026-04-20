@@ -1,6 +1,7 @@
 variable "project_name" { type = string }
 variable "environment" { type = string }
 variable "ecr_repository_url" { type = string }
+variable "remediation_bucket" { type = string }
 
 resource "aws_lambda_function" "execute" {
   function_name = "${var.project_name}-execute-${var.environment}"
@@ -14,7 +15,10 @@ resource "aws_lambda_function" "execute" {
   ephemeral_storage { size = 1024 }
 
   environment {
-    variables = { TOFU_PLUGIN_DIR = "/opt/providers" }
+    variables = {
+      TOFU_PLUGIN_DIR    = "/opt/providers"
+      REMEDIATION_BUCKET = var.remediation_bucket
+    }
   }
 
   tags = { Name = "${var.project_name}-execute", Environment = var.environment }
@@ -45,7 +49,10 @@ resource "aws_iam_role_policy" "s3" {
   role = aws_iam_role.execute_lambda.id
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = ["s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock", "s3:PutBucketPolicy", "s3:GetBucketPolicy"], Resource = "arn:aws:s3:::*" }]
+    Statement = [
+      { Effect = "Allow", Action = ["s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock", "s3:PutBucketPolicy", "s3:GetBucketPolicy"], Resource = "arn:aws:s3:::*" },
+      { Effect = "Allow", Action = ["s3:GetObject"], Resource = "arn:aws:s3:::${var.remediation_bucket}/controls/*/remediation.tf" }
+    ]
   })
 }
 

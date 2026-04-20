@@ -183,7 +183,8 @@
                 "resource_id": "{% $states.input.resource_id %}",
                 "control_id": "{% $states.input.analyze_result.control_id %}",
                 "region": "{% $states.input.region %}",
-                "violation_id": "{% $states.input.analyze_result.violation_id %}"
+                "violation_id": "{% $states.input.analyze_result.violation_id %}",
+                "remediation_s3_key": "{% $states.input.analyze_result.remediation_s3_key %}"
               }
             },
             "TimeoutSeconds": 90,

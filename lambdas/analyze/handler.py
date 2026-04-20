@@ -22,6 +22,7 @@ dynamodb = boto3.resource('dynamodb')
 
 controls_table = dynamodb.Table(os.environ.get('CONTROLS_TABLE', 'controls'))
 exceptions_table = dynamodb.Table(os.environ.get('EXCEPTIONS_TABLE', 'exceptions'))
+POLICY_BUCKET = os.environ.get('POLICY_BUCKET', '')
 
 
 # --- Resource Config Fetchers (cached per invocation) ---
@@ -76,11 +77,20 @@ RESOURCE_FETCHERS = {
 
 # --- OPA Evaluation ---
 
-def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any]) -> bool:
+def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any], rego_s3_key: str = None) -> bool:
     opa_input = {"resource": resource_config}
-    policy_path = os.path.join(os.path.dirname(__file__), f'{rego_package}.rego')
+    policy_path = f'/tmp/policies/{rego_package}.rego'
     opa_bin = os.path.join(os.path.dirname(__file__), 'opa')
     input_path = '/tmp/opa_input.json'
+
+    # Download rego from S3 if not cached
+    if not os.path.exists(policy_path) and rego_s3_key and POLICY_BUCKET:
+        os.makedirs('/tmp/policies', exist_ok=True)
+        s3_client.download_file(POLICY_BUCKET, rego_s3_key, policy_path)
+
+    # Fallback to bundled rego
+    if not os.path.exists(policy_path):
+        policy_path = os.path.join(os.path.dirname(__file__), f'{rego_package}.rego')
 
     with open(input_path, 'w') as f:
         json.dump(opa_input, f)
@@ -166,7 +176,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 raise ValueError(f"No fetcher for: {rego_package}")
 
             resource_config = fetcher(bucket_name)
-            is_compliant = evaluate_policy_with_opa(rego_package, resource_config)
+            is_compliant = evaluate_policy_with_opa(rego_package, resource_config, control.get('rego_s3_key'))
             exception = query_exception(control_id, resource_arn)
             state = classify_state(is_compliant, exception)
 
@@ -178,6 +188,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'policy_version': policy_version,
                 'exception_id': exception.get('exception_id') if exception else None,
                 'approved_by': exception.get('approved_by') if exception else None,
+                'remediation_s3_key': control.get('remediation_s3_key'),
             })
             print(f"  {control_id}: {state}")
 

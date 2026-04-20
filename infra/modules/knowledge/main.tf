@@ -11,6 +11,9 @@ resource "aws_dynamodb_table" "controls" {
     type = "S"
   }
 
+  stream_enabled   = true
+  stream_view_type = "KEYS_ONLY"
+
   tags = { Name = "${var.project_name}-controls-${var.environment}", Environment = var.environment, ManagedBy = "OpenTofu" }
 }
 
@@ -78,6 +81,7 @@ resource "aws_dynamodb_table" "violations_log" {
 
 output "controls_table_name" { value = aws_dynamodb_table.controls.name }
 output "controls_table_arn" { value = aws_dynamodb_table.controls.arn }
+output "controls_stream_arn" { value = aws_dynamodb_table.controls.stream_arn }
 output "exceptions_table_name" { value = aws_dynamodb_table.exceptions.name }
 output "exceptions_table_arn" { value = aws_dynamodb_table.exceptions.arn }
 output "exceptions_stream_arn" { value = aws_dynamodb_table.exceptions.stream_arn }

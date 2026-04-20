@@ -18,8 +18,22 @@ if [ ! -f opa ]; then
   chmod +x opa
 fi
 
-# Copy policies from single source of truth
-cp "$PROJECT_ROOT/policies/"*.rego .
+# Validate OPA is arm64
+if ! file opa | grep -q "ARM aarch64"; then
+  echo "ERROR: OPA binary is not arm64. Delete ./opa and re-run." >&2
+  exit 1
+fi
+
+# Copy policies from controls (single source of truth)
+for dir in "$PROJECT_ROOT/controls"/*/; do
+  [ -f "$dir/policy.rego" ] && cp "$dir/policy.rego" "$(basename "$dir").rego"
+done
+
+# Validate at least one rego file exists
+if ! ls *.rego >/dev/null 2>&1; then
+  echo "ERROR: No .rego files found in $PROJECT_ROOT/controls/*/" >&2
+  exit 1
+fi
 
 # Package
 rm -f "$OUT"
@@ -28,4 +42,4 @@ zip -j "$OUT" handler.py opa *.rego
 # Clean copied rego files (source of truth stays in policies/)
 rm -f *.rego
 
-echo "Built: $OUT"
+echo "Built: $OUT ($(du -h "$OUT" | cut -f1))"

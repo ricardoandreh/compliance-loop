@@ -4,6 +4,7 @@ variable "controls_table_name" { type = string }
 variable "controls_table_arn" { type = string }
 variable "exceptions_table_name" { type = string }
 variable "exceptions_table_arn" { type = string }
+variable "policy_bucket" { type = string }
 
 resource "aws_lambda_function" "analyze" {
   function_name    = "${var.project_name}-analyze-${var.environment}"
@@ -20,7 +21,7 @@ resource "aws_lambda_function" "analyze" {
     variables = {
       CONTROLS_TABLE   = var.controls_table_name
       EXCEPTIONS_TABLE = var.exceptions_table_name
-      POLICY_PACKAGE   = "s3_public_access"
+      POLICY_BUCKET    = var.policy_bucket
     }
   }
 
@@ -52,7 +53,8 @@ resource "aws_iam_role_policy" "s3" {
   role = aws_iam_role.analyze_lambda.id
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy"], Resource = "arn:aws:s3:::*" }]
+    Statement = [{ Effect = "Allow", Action = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy"], Resource = "arn:aws:s3:::*" },
+                 { Effect = "Allow", Action = ["s3:GetObject"], Resource = "arn:aws:s3:::${var.policy_bucket}/controls/*/policy.rego" }]
   })
 }
 

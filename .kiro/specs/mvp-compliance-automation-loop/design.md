@@ -4,7 +4,7 @@
 
 O MVP Compliance Automation Loop implementa um sistema de automação de conformidade baseado no padrão arquitetural MAPE-K (Monitor, Analyze, Plan, Execute, Knowledge). O sistema detecta desvios de conformidade em recursos AWS, classifica o estado do recurso, executa remediação automática quando apropriado, e escala violações não resolvidas para operadores humanos.
 
-O MVP foca em um controle específico: bloqueio de acesso público em buckets S3 (ctrl-s3-public-block). O sistema monitora eventos CloudTrail, avalia conformidade usando políticas Rego executadas pelo Open Policy Agent (OPA), e remedia violações usando OpenTofu com infraestrutura como código declarativa.
+O sistema suporta múltiplos controles de compliance de forma extensível. Dois controles estão implementados: bloqueio de acesso público em buckets S3 (`ctrl-s3-public-block`) e política SSL-only (`ctrl-s3-ssl-only`). Novos controles podem ser adicionados sem rebuild de imagens — políticas Rego e templates HCL de remediação são armazenados no S3 e carregados em runtime. O sistema monitora eventos CloudTrail, resolve dinamicamente quais controles aplicar via tabela DynamoDB, avalia conformidade usando OPA/Rego, e remedia violações usando OpenTofu.
 
 ### Design Goals
 
@@ -16,10 +16,10 @@ O MVP foca em um controle específico: bloqueio de acesso público em buckets S3
 
 ### MAPE-K Architecture Mapping
 
-- **Monitor**: CloudTrail + EventBridge Rule (filtra PutBucketPublicAccessBlock)
-- **Analyze**: Lambda Python + OPA/Rego embedded + consulta DynamoDB exceptions
-- **Plan**: Implícito no Step Functions (orquestração de estados via Choice states)
-- **Execute**: Lambda container + OpenTofu com state efêmero local
+- **Monitor**: CloudTrail + EventBridge Rule (event pattern gerenciado dinamicamente pela Lambda `controls-sync` via DynamoDB Stream na tabela `controls`)
+- **Analyze**: Lambda Python (arm64) + OPA/Rego (binário arm64 empacotado no zip, políticas carregadas do S3 em runtime) + consulta DynamoDB exceptions
+- **Plan**: Implícito no Step Functions — QueryControls resolve dinamicamente quais controles aplicar baseado no `eventName` do CloudTrail via campo `cloudtrail_events` na tabela `controls`
+- **Execute**: Lambda container (arm64) + OpenTofu com state efêmero local. Templates HCL carregados do S3 em runtime. Provider AWS pré-inicializado no build da imagem e compartilhado via symlink (elimina `tofu init` em runtime)
 - **Knowledge**: DynamoDB (controls, exceptions, violations_log)
 
 ### State Classification Model
@@ -1599,6 +1599,59 @@ valor abaixo de 60s já representa uma redução de ordem de grandeza no MTTR.
 - **SDK direto por controle**: otimização pontual para controles críticos com SLA
   de latência, mantendo OpenTofu como default para controles novos.
 
+
+## Arquitetura de Extensibilidade
+
+### Desacoplamento de Controles
+
+Cada controle de compliance é auto-contido em um diretório:
+
+```
+controls/
+  ctrl-s3-public-block/
+    policy.rego          # Avaliação OPA
+    remediation.tf       # Remediação OpenTofu
+  ctrl-s3-ssl-only/
+    policy.rego
+    remediation.tf
+```
+
+Os artefatos são armazenados no S3 e referenciados na tabela `controls` via campos `rego_s3_key` e `remediation_s3_key`. Em runtime, tanto o Analyze quanto o Execute baixam os artefatos do S3 e os cacheiam em `/tmp/` entre invocações warm.
+
+### Resolução Dinâmica de Controles
+
+O EventBridge passa o `event_name` do CloudTrail para a Step Function. O estado `QueryControls` faz um scan na tabela `controls` filtrando por `contains(cloudtrail_events, :evt)`. Isso resolve dinamicamente quais controles aplicar para cada tipo de evento. Por exemplo, `CreateBucket` ativa ambos os controles, enquanto `PutBucketPolicy` ativa apenas `ctrl-s3-ssl-only`.
+
+### Multi-Control em Invocação Única
+
+O Analyze recebe uma lista de `control_ids` e avalia todos em uma única invocação Lambda, compartilhando o cache de configuração do recurso (ex: `GetBucketPublicAccessBlock` é chamado uma vez e reutilizado). Os resultados são processados individualmente pelo Map state da Step Function.
+
+### Adição de Novo Controle (sem rebuild)
+
+1. Criar `controls/<control-id>/policy.rego` + `remediation.tf`
+2. `aws s3 sync controls/ s3://<bucket>/controls/`
+3. Insert na tabela `controls` com `rego_s3_key`, `remediation_s3_key`, `rego_policy_package`, `cloudtrail_events`
+
+O passo 3 dispara automaticamente a Lambda `controls-sync` via DynamoDB Stream, que:
+- Faz scan na tabela `controls` para coletar todos os `cloudtrail_events` distintos
+- Chama `events:PutRule` para atualizar o EventBridge rule com o novo event pattern
+- A API `PutRule` é idempotente (upsert por nome) — não cria rules duplicadas
+- O scan completo a cada trigger garante consistência mesmo com múltiplos updates simultâneos
+
+### Otimização: Eliminação do `tofu init` em Runtime
+
+O `tofu init` com `-plugin-dir` extraía o provider AWS (~140MB zip → ~657MB binário) a cada cold start, levando 30-50s. A solução implementada:
+
+1. **Build time**: o Dockerfile executa `tofu init` uma vez, salvando o `.terraform/` (provider extraído) e o `.terraform.lock.hcl` em `/opt/`
+2. **Runtime**: o handler cria um symlink (`ln -s /opt/tf-dot-terraform .terraform`) e copia o lock file (1KB)
+3. **Resultado**: setup de ~100ms em vez de ~30-50s. O `tofu apply` encontra o provider pronto e executa imediatamente
+
+O symlink aponta para a camada read-only da imagem Docker. Todos os controles compartilham o mesmo provider sem duplicação em disco. Rebuild da imagem só é necessário ao atualizar a versão do provider AWS.
+
+### Remediação SSL com Merge de Policy
+
+O controle `ctrl-s3-ssl-only` faz merge com a bucket policy existente em vez de substituí-la. O template HCL usa `data.aws_s3_bucket_policy` para ler os statements atuais, filtra o `DenyNonSSLRequests` (evita duplicata), e concatena com o novo statement. Isso preserva policies pré-existentes (ex: CloudFront, cross-account access).
+
 ## Evidências Experimentais
 
 ### Teste 1: Ciclo Completo de Exception Governance com Convergência
@@ -2016,7 +2069,8 @@ S_nominal — foi demonstrado com precisão de segundos no Teste 5.
 ### Síntese por Hipótese
 
 **H1 — Redução do MTTR**
-- t_remediation médio (C1, C3, C5): **~12s**
+- t_remediation médio (C1, C3, C5): **~12s** (testes iniciais, pré-otimização)
+- t_remediation pós-otimização (symlink, sem init): **~5s** (warm e cold start)
 - Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual
 - Redução: **ordens de grandeza** (segundos vs. dias)
 

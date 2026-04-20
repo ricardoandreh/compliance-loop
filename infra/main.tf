@@ -59,6 +59,7 @@ module "analyze" {
   controls_table_arn    = module.knowledge.controls_table_arn
   exceptions_table_name = module.knowledge.exceptions_table_name
   exceptions_table_arn  = module.knowledge.exceptions_table_arn
+  policy_bucket         = "compliance-mvp-terraform-state"
 }
 
 module "execute" {
@@ -66,6 +67,7 @@ module "execute" {
   project_name       = var.project_name
   environment        = var.environment
   ecr_repository_url = module.ecr.repository_url
+  remediation_bucket = "compliance-mvp-terraform-state"
 }
 
 module "escalation_lambda" {
@@ -103,6 +105,17 @@ module "exception_scheduler" {
   exceptions_table_arn  = module.knowledge.exceptions_table_arn
   exceptions_stream_arn = module.knowledge.exceptions_stream_arn
   state_machine_arn     = module.orchestration.state_machine_arn
+}
+
+module "controls_sync" {
+  source                = "./modules/controls_sync"
+  project_name          = var.project_name
+  environment           = var.environment
+  controls_table_name   = module.knowledge.controls_table_name
+  controls_table_arn    = module.knowledge.controls_table_arn
+  controls_stream_arn   = module.knowledge.controls_stream_arn
+  eventbridge_rule_name = module.orchestration.eventbridge_rule_name
+  eventbridge_rule_arn  = module.orchestration.eventbridge_rule_arn
 }
 
 # --- Outputs ---

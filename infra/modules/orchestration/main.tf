@@ -10,9 +10,11 @@ variable "controls_table_name" { type = string }
 variable "controls_table_arn" { type = string }
 
 # --- EventBridge Rule ---
+# Event pattern is dynamically managed by the controls-sync Lambda
+# via DynamoDB Stream on INSERT/MODIFY in the controls table.
 resource "aws_cloudwatch_event_rule" "s3_public_access_block" {
   name        = "${var.project_name}-s3-public-access-block-${var.environment}"
-  description = "Capture S3 public access block changes and bucket creation for compliance monitoring"
+  description = "Capture S3 compliance events - managed dynamically from controls table"
 
   event_pattern = jsonencode({
     source      = ["aws.s3"]
@@ -21,6 +23,8 @@ resource "aws_cloudwatch_event_rule" "s3_public_access_block" {
   })
 
   tags = { Name = "${var.project_name}-s3-public-access-block", Environment = var.environment }
+
+  lifecycle { ignore_changes = [event_pattern] }
 }
 
 resource "aws_cloudwatch_event_target" "step_functions" {
