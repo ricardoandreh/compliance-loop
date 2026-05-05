@@ -45,8 +45,8 @@ module "monitoring" {
   environment  = var.environment
 }
 
-module "ecr" {
-  source       = "./modules/ecr"
+module "opa_layer" {
+  source       = "./modules/opa_layer"
   project_name = var.project_name
   environment  = var.environment
 }
@@ -60,13 +60,20 @@ module "analyze" {
   exceptions_table_name = module.knowledge.exceptions_table_name
   exceptions_table_arn  = module.knowledge.exceptions_table_arn
   policy_bucket         = "compliance-mvp-terraform-state"
+  opa_layer_arn         = module.opa_layer.layer_arn
+}
+
+module "tofu_layer" {
+  source       = "./modules/tofu_layer"
+  project_name = var.project_name
+  environment  = var.environment
 }
 
 module "execute" {
   source             = "./modules/execute"
   project_name       = var.project_name
   environment        = var.environment
-  ecr_repository_url = module.ecr.repository_url
+  tofu_layer_arn     = module.tofu_layer.layer_arn
   remediation_bucket = "compliance-mvp-terraform-state"
 }
 
@@ -126,6 +133,5 @@ output "controls_table_name" { value = module.knowledge.controls_table_name }
 output "exceptions_table_name" { value = module.knowledge.exceptions_table_name }
 output "violations_log_table_name" { value = module.knowledge.violations_log_table_name }
 output "eventbridge_rule_name" { value = module.orchestration.eventbridge_rule_name }
-output "ecr_repository_url" { value = module.ecr.repository_url }
 output "analyze_function_name" { value = module.analyze.function_name }
 output "execute_function_name" { value = module.execute.function_name }

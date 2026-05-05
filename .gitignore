@@ -55,8 +55,6 @@ htmlcov/
 .env
 
 # Lambda Zip
-analyze.zip
-escalation.zip
-handler.zip
+*.zip
 lambdas/analyze/opa
 lambdas/execute/tofu

@@ -46,10 +46,7 @@
       "Choices": [
         { "Condition": "{% $count($states.input.control_ids) > 0 %}", "Next": "InvokeAnalyze" }
       ],
-      "Default": "NoControlsMatched"
-    },
-    "NoControlsMatched": {
-      "Type": "Succeed"
+      "Default": "ExecutionSucceeded"
     },
     "InvokeAnalyze": {
       "Type": "Task",
@@ -132,6 +129,7 @@
                 "region": { "S": "{% $states.input.region %}" }
               }
             },
+            "Output": { "outcome": "nominal" },
             "End": true
           },
           "RegisterException": {
@@ -152,6 +150,7 @@
                 "region": { "S": "{% $states.input.region %}" }
               }
             },
+            "Output": { "outcome": "exception" },
             "End": true
           },
           "RegisterViolation": {
@@ -243,6 +242,7 @@
                 ":output": { "S": "{% $states.input.execute_result.output %}" }
               }
             },
+            "Output": { "outcome": "remediated" },
             "End": true
           },
           "UpdateLogFailed": {
@@ -278,6 +278,7 @@
               "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
               "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
             },
+            "Output": { "outcome": "escalated" },
             "End": true
           },
           "ControlErrorEscalation": {
@@ -289,11 +290,19 @@
               "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
               "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
             },
+            "Output": { "outcome": "escalated" },
             "End": true
           }
         }
       },
-      "End": true
+      "Next": "EvaluateOutcome"
+    },
+    "EvaluateOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        { "Condition": "{% $count($states.input[outcome = 'escalated']) > 0 %}", "Next": "ExecutionFailed" }
+      ],
+      "Default": "ExecutionSucceeded"
     },
     "AnalyzeFailedEscalation": {
       "Type": "Task",
@@ -304,7 +313,7 @@
         "MessageGroupId": "{% $states.input.resource_id & '#analyze' %}",
         "MessageDeduplicationId": "{% 'analyze-failed-' & $states.input.resource_id & '-' & $now() %}"
       },
-      "End": true
+      "Next": "ExecutionFailed"
     },
     "QueryControlsFailedEscalation": {
       "Type": "Task",
@@ -315,7 +324,15 @@
         "MessageGroupId": "{% $states.input.resource_id & '#query-controls' %}",
         "MessageDeduplicationId": "{% 'query-controls-failed-' & $states.input.resource_id & '-' & $now() %}"
       },
-      "End": true
+      "Next": "ExecutionFailed"
+    },
+    "ExecutionSucceeded": {
+      "Type": "Succeed"
+    },
+    "ExecutionFailed": {
+      "Type": "Fail",
+      "Error": "ComplianceEscalation",
+      "Cause": "One or more controls required escalation"
     }
   }
 }

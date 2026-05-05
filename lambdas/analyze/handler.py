@@ -4,8 +4,8 @@ Analyze Lambda Handler (Dynamic Multi-Control, Single Invocation)
 Evaluates ALL applicable controls for a resource in one invocation.
 Returns a list of classification results — one per control.
 
-This Lambda is a pure decision function — no side-effects beyond reads.
-Persistence is handled by the Step Function.
+Resource configuration is fetched dynamically based on `fetch_config`
+stored in the controls DynamoDB table — no hardcoded fetchers.
 """
 
 import boto3
@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
@@ -24,55 +24,48 @@ controls_table = dynamodb.Table(os.environ.get('CONTROLS_TABLE', 'controls'))
 exceptions_table = dynamodb.Table(os.environ.get('EXCEPTIONS_TABLE', 'exceptions'))
 POLICY_BUCKET = os.environ.get('POLICY_BUCKET', '')
 
-
-# --- Resource Config Fetchers (cached per invocation) ---
-
+_boto_clients: Dict[str, Any] = {}
 _config_cache: Dict[str, Any] = {}
 
-def get_bucket_public_access_config(bucket_name: str) -> Dict[str, Any]:
-    key = f'public_access:{bucket_name}'
-    if key in _config_cache:
-        return _config_cache[key]
+
+# --- Generic Resource Fetcher ---
+
+def get_boto_client(service: str):
+    if service not in _boto_clients:
+        _boto_clients[service] = boto3.client(service)
+    return _boto_clients[service]
+
+
+def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dict[str, Any]:
+    """Fetch resource configuration using boto3 call declared in fetch_config."""
+    cache_key = f"{fetch_config['method']}:{resource_id}"
+    if cache_key in _config_cache:
+        return _config_cache[cache_key]
+
+    client = get_boto_client(fetch_config['service'])
+    method = getattr(client, fetch_config['method'])
+
+    # Substitute {resource_id} in params
+    params = json.loads(json.dumps(fetch_config.get('params', {})).replace('{resource_id}', resource_id))
+
     try:
-        resp = s3_client.get_public_access_block(Bucket=bucket_name)
-        cfg = resp['PublicAccessBlockConfiguration']
-        result = {
-            'BlockPublicAcls': cfg.get('BlockPublicAcls', False),
-            'IgnorePublicAcls': cfg.get('IgnorePublicAcls', False),
-            'BlockPublicPolicy': cfg.get('BlockPublicPolicy', False),
-            'RestrictPublicBuckets': cfg.get('RestrictPublicBuckets', False)
-        }
+        result = method(**params)
     except Exception as e:
-        if 'NoSuchPublicAccessBlockConfiguration' in str(e):
-            result = {'BlockPublicAcls': False, 'IgnorePublicAcls': False,
-                      'BlockPublicPolicy': False, 'RestrictPublicBuckets': False}
-        else:
-            raise
-    _config_cache[key] = result
+        error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
+        defaults = fetch_config.get('error_defaults', {})
+        if error_code in defaults:
+            result = defaults[error_code]
+            _config_cache[cache_key] = result
+            return result
+        raise
+
+    # Navigate result_path
+    for key in fetch_config.get('result_path', '').split('.'):
+        if key:
+            result = result[key]
+
+    _config_cache[cache_key] = result
     return result
-
-
-def get_bucket_policy_statements(bucket_name: str) -> Dict[str, Any]:
-    key = f'policy:{bucket_name}'
-    if key in _config_cache:
-        return _config_cache[key]
-    try:
-        resp = s3_client.get_bucket_policy(Bucket=bucket_name)
-        policy = json.loads(resp['Policy'])
-        result = {'policy_statements': policy.get('Statement', [])}
-    except Exception as e:
-        if 'NoSuchBucketPolicy' in str(e):
-            result = {'policy_statements': []}
-        else:
-            raise
-    _config_cache[key] = result
-    return result
-
-
-RESOURCE_FETCHERS = {
-    's3_public_access': get_bucket_public_access_config,
-    's3_ssl_only': get_bucket_policy_statements,
-}
 
 
 # --- OPA Evaluation ---
@@ -80,15 +73,12 @@ RESOURCE_FETCHERS = {
 def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any], rego_s3_key: str = None) -> bool:
     opa_input = {"resource": resource_config}
     policy_path = f'/tmp/policies/{rego_package}.rego'
-    opa_bin = os.path.join(os.path.dirname(__file__), 'opa')
     input_path = '/tmp/opa_input.json'
 
-    # Download rego from S3 if not cached
     if not os.path.exists(policy_path) and rego_s3_key and POLICY_BUCKET:
         os.makedirs('/tmp/policies', exist_ok=True)
         s3_client.download_file(POLICY_BUCKET, rego_s3_key, policy_path)
 
-    # Fallback to bundled rego
     if not os.path.exists(policy_path):
         policy_path = os.path.join(os.path.dirname(__file__), f'{rego_package}.rego')
 
@@ -96,7 +86,7 @@ def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
         json.dump(opa_input, f)
     try:
         result = subprocess.run(
-            [opa_bin, 'eval', '--data', policy_path, '--input', input_path,
+            ['/opt/bin/opa', 'eval', '--data', policy_path, '--input', input_path,
              '--format', 'json', f'data.{rego_package}.allow'],
             capture_output=True, text=True, timeout=5
         )
@@ -138,13 +128,14 @@ def classify_state(is_compliant: bool, exception: Optional[Dict[str, Any]]) -> s
     return "S_exception" if exception else "S_violation"
 
 
-def extract_bucket_name(resource_arn: str) -> str:
-    if not resource_arn.startswith('arn:aws:s3:::'):
-        raise ValueError(f"Invalid S3 ARN: {resource_arn}")
-    name = resource_arn.replace('arn:aws:s3:::', '')
-    if not name:
-        raise ValueError("Empty bucket name")
-    return name
+def extract_resource_id(resource_arn: str) -> str:
+    if resource_arn.startswith('arn:aws:s3:::'):
+        name = resource_arn.replace('arn:aws:s3:::', '')
+        if not name:
+            raise ValueError("Empty bucket name")
+        return name
+    # Generic: last segment after : or /
+    return resource_arn.split(':')[-1].split('/')[-1]
 
 
 # --- Handler ---
@@ -156,7 +147,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     control_ids = event['control_ids']
     account_id = event['account_id']
     region = event['region']
-    bucket_name = extract_bucket_name(resource_arn)
+    resource_id = extract_resource_id(resource_arn)
     now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
     _config_cache.clear()
@@ -171,11 +162,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             rego_package = control['rego_policy_package']
             policy_version = f"{rego_package}:{control.get('policy_version', 'v1.0')}"
 
-            fetcher = RESOURCE_FETCHERS.get(rego_package)
-            if not fetcher:
-                raise ValueError(f"No fetcher for: {rego_package}")
+            fetch_config = control.get('fetch_config')
+            if not fetch_config:
+                raise ValueError(f"No fetch_config for: {control_id}")
 
-            resource_config = fetcher(bucket_name)
+            resource_config = fetch_resource_config(fetch_config, resource_id)
             is_compliant = evaluate_policy_with_opa(rego_package, resource_config, control.get('rego_s3_key'))
             exception = query_exception(control_id, resource_arn)
             state = classify_state(is_compliant, exception)

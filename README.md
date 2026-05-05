@@ -43,6 +43,29 @@ CloudTrail captura a remediação → re-avaliação → S_nominal ✓
 | **S_exception** | Não conforme, mas com exceção aprovada | Nenhuma — monitora até expirar |
 | **S_violation** | Não conforme, sem exceção | Remediação automática |
 
+## Exception Governance
+
+O sistema implementa um modelo de exceções com governança temporal, indo além de um simples flag booleano de supressão. Cada exceção é um registro estruturado com:
+
+| Atributo | Tipo | Função |
+|---|---|---|
+| `exception_id` | string | Identificador único |
+| `control_id` | string | Controle ao qual se aplica |
+| `resource_arn` | string | Recurso específico (escopo granular) |
+| `valid_until` | number (epoch) | TTL — expiração automática |
+| `approved_by` | string | Responsável pela aprovação (auditabilidade) |
+| `reason` | string | Justificativa documentada |
+
+O ciclo de vida de uma exceção:
+
+1. **Criação**: insert na tabela `exceptions` → Lambda `exception-scheduler-sync` cria um EventBridge Schedule para `valid_until + 30s`
+2. **Vigência**: Analyze detecta a exceção ativa → classifica como `S_exception` → sem remediação
+3. **Expiração**: Schedule dispara → Step Function re-avalia → sem exceção válida → `S_violation` → remediação automática
+4. **Modificação**: update do `valid_until` → Schedule é recriado com novo horário
+5. **Remoção**: delete da exceção → Schedule é removido → próxima avaliação remedia
+
+Isso garante que exceções não se tornem permanentes por esquecimento — toda exceção tem prazo e responsável.
+
 ## Arquitetura
 
 | Componente | Tecnologia | Função |
@@ -54,7 +77,7 @@ CloudTrail captura a remediação → re-avaliação → S_nominal ✓
 | Knowledge | DynamoDB (3 tabelas) | Controles, exceções e log de violações |
 | Escalação | SQS FIFO + Lambda + GitHub API | Cria issues para falhas de remediação |
 | Scheduler | EventBridge Scheduler | Re-avalia após expiração de exceções |
-| Controls Sync | Lambda + DynamoDB Stream | Atualiza EventBridge rule ao inserir/modificar controles |
+| Controls Sync | DynamoDB Stream → Lambda | Atualiza EventBridge rule ao inserir/modificar controles |
 
 ## Controles implementados
 
@@ -169,6 +192,8 @@ pytest tests/property/ --hypothesis-show-statistics
 | C4 | Falha na remediação (bucket inexistente) | Escala via GitHub Issue |
 | C5 | Violação originada por IaC externo | Detecta e remedia normalmente |
 | C6 | Recurso já conforme | Confirma em <1s, sem ação |
+| C7 | Exceção expira (TTL) → remediação | Equivalente a C3 (Scheduler dispara) |
+| C8 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync em <10s |
 
 ## Performance
 

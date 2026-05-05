@@ -13,6 +13,10 @@ provider "aws" {
 
 variable "bucket_name" { type = string }
 variable "region" { type = string }
+variable "existing_policy" {
+  type    = string
+  default = ""
+}
 
 locals {
   ssl_statement = {
@@ -28,13 +32,9 @@ locals {
   }
 
   existing_statements = try(
-    [for s in jsondecode(data.aws_s3_bucket_policy.current.policy).Statement : s if lookup(s, "Sid", "") != "DenyNonSSLRequests"],
+    [for s in jsondecode(var.existing_policy).Statement : s if lookup(s, "Sid", "") != "DenyNonSSLRequests"],
     []
   )
-}
-
-data "aws_s3_bucket_policy" "current" {
-  bucket = var.bucket_name
 }
 
 resource "aws_s3_bucket_policy" "ssl_only" {

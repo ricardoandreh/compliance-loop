@@ -1,45 +1,38 @@
 #!/bin/bash
-# Build the Analyze Lambda deployment package
-# Bundles: handler.py, OPA binary (linux/arm64), Rego policies
+# Build the Analyze Lambda deployment package and OPA Layer
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ANALYZE_DIR="$PROJECT_ROOT/lambdas/analyze"
 OPA_VERSION="${OPA_VERSION:-v1.4.2}"
-OUT="$ANALYZE_DIR/analyze.zip"
 
 cd "$ANALYZE_DIR"
 
-# Download OPA binary if not present
+# --- OPA Layer ---
+
 if [ ! -f opa ]; then
   echo "Downloading OPA $OPA_VERSION..."
   curl -sSL -o opa "https://github.com/open-policy-agent/opa/releases/download/${OPA_VERSION}/opa_linux_arm64_static"
   chmod +x opa
 fi
 
-# Validate OPA is arm64
 if ! file opa | grep -q "ARM aarch64"; then
   echo "ERROR: OPA binary is not arm64. Delete ./opa and re-run." >&2
   exit 1
 fi
 
-# Copy policies from controls (single source of truth)
-for dir in "$PROJECT_ROOT/controls"/*/; do
-  [ -f "$dir/policy.rego" ] && cp "$dir/policy.rego" "$(basename "$dir").rego"
-done
+# Layer structure: bin/opa → available at /opt/bin/opa in Lambda
+rm -rf /tmp/opa_layer
+mkdir -p /tmp/opa_layer/bin
+cp opa /tmp/opa_layer/bin/opa
+rm -f opa_layer.zip
+(cd /tmp/opa_layer && zip -r "$ANALYZE_DIR/opa_layer.zip" bin/)
+rm -rf /tmp/opa_layer
+echo "Built: opa_layer.zip ($(du -h opa_layer.zip | cut -f1))"
 
-# Validate at least one rego file exists
-if ! ls *.rego >/dev/null 2>&1; then
-  echo "ERROR: No .rego files found in $PROJECT_ROOT/controls/*/" >&2
-  exit 1
-fi
+# --- Analyze Lambda (handler only) ---
 
-# Package
-rm -f "$OUT"
-zip -j "$OUT" handler.py opa *.rego
-
-# Clean copied rego files (source of truth stays in policies/)
-rm -f *.rego
-
-echo "Built: $OUT ($(du -h "$OUT" | cut -f1))"
+rm -f analyze.zip
+zip -j analyze.zip handler.py
+echo "Built: analyze.zip ($(du -h analyze.zip | cut -f1))"

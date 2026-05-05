@@ -17,9 +17,9 @@ O sistema suporta múltiplos controles de compliance de forma extensível. Dois 
 ### MAPE-K Architecture Mapping
 
 - **Monitor**: CloudTrail + EventBridge Rule (event pattern gerenciado dinamicamente pela Lambda `controls-sync` via DynamoDB Stream na tabela `controls`)
-- **Analyze**: Lambda Python (arm64) + OPA/Rego (binário arm64 empacotado no zip, políticas carregadas do S3 em runtime) + consulta DynamoDB exceptions
+- **Analyze**: Lambda Python (arm64) + OPA/Rego (binário arm64 via Lambda Layer, políticas carregadas do S3 em runtime) + fetcher genérico via `fetch_config` (chamadas boto3 parametrizadas pela tabela `controls`) + consulta DynamoDB exceptions + ABAC nas permissões de leitura
 - **Plan**: Implícito no Step Functions — QueryControls resolve dinamicamente quais controles aplicar baseado no `eventName` do CloudTrail via campo `cloudtrail_events` na tabela `controls`
-- **Execute**: Lambda container (arm64) + OpenTofu com state efêmero local. Templates HCL carregados do S3 em runtime. Provider AWS pré-inicializado no build da imagem e compartilhado via symlink (elimina `tofu init` em runtime)
+- **Execute**: Lambda Python (arm64) + OpenTofu (binário via Lambda Layer) com state efêmero local. Templates HCL carregados do S3 em runtime. Provider AWS pré-inicializado armazenado no S3 como cache, baixado e extraído em `/tmp` no cold start, compartilhado via symlink (elimina `tofu init` em runtime)
 - **Knowledge**: DynamoDB (controls, exceptions, violations_log)
 
 ### State Classification Model
@@ -197,7 +197,9 @@ sequenceDiagram
 - Step Functions Standard workflow (não Express) para histórico de 90 dias
 - Choice states para decisão baseada em `$.state`
 - SDK integrations diretas para DynamoDB (sem Lambda intermediária)
-- Timeout global de 60 segundos
+- Timeout global de 300 segundos
+- Estados terminais explícitos: `ExecutionSucceeded` (Succeed) e `ExecutionFailed` (Fail com `Error: ComplianceEscalation`)
+- Após o Map state, `EvaluateOutcome` verifica se algum controle foi escalado — se sim, a execução termina como FAILED
 
 **State Machine Definition** (simplified):
 ```json
@@ -351,9 +353,11 @@ sequenceDiagram
 **Responsibility**: Classificar estado de conformidade do recurso usando OPA/Rego e consulta de exceções.
 
 **Implementation**:
-- Runtime: Python 3.12
-- OPA embedded via `opa-python` library ou subprocess call to OPA binary
-- Deployment package inclui arquivo `.rego` com política `s3_public_access`
+- Runtime: Python 3.13
+- Architecture: arm64
+- OPA binary via Lambda Layer (`/opt/bin/opa`), políticas Rego carregadas do S3 em runtime
+- Deployment package: handler.py (~2.5KB)
+- Lambda Layer: `opa-binary` (~20MB comprimido, binário OPA arm64 estático)
 - Timeout: 15 segundos
 - Memory: 512 MB
 
@@ -451,69 +455,27 @@ allow if {
 **Responsibility**: Remediar recursos em violação usando OpenTofu com infraestrutura como código declarativa.
 
 **Implementation**:
-- Runtime: Lambda container image (base: `public.ecr.aws/lambda/python:3.12`)
-- OpenTofu binary incluído na imagem (versão 1.6+)
-- HCL configuration pré-inicializado em build time
-- Providers AWS em `/opt/providers` (cache de `tofu init`)
-- Timeout: 45 segundos
-- Memory: 1024 MB
-- Ephemeral storage: 1024 MB (para `/tmp/remediation.tfstate`)
+- Runtime: Python 3.13
+- Architecture: arm64
+- OpenTofu binary via Lambda Layer (`/opt/bin/tofu`)
+- Provider AWS pré-inicializado armazenado no S3 como `tf-dot-terraform.tar.gz` (~128MB), baixado e extraído em `/tmp` no cold start
+- Deployment package: handler.py (~1.3KB)
+- Lambda Layer: `tofu-binary` (~29MB comprimido, binário OpenTofu arm64)
+- Templates HCL carregados do S3 em runtime
+- Timeout: 90 segundos
+- Memory: 2048 MB
+- Ephemeral storage: 1024 MB (para provider cache + tfstate)
 
-**Dockerfile**:
-```dockerfile
-FROM public.ecr.aws/lambda/python:3.12
+**Provider Cache Strategy**:
 
-# Install OpenTofu
-RUN curl -Lo /tmp/tofu.zip https://github.com/opentofu/opentofu/releases/download/v1.6.0/tofu_1.6.0_linux_amd64.zip && \
-    unzip /tmp/tofu.zip -d /usr/local/bin && \
-    chmod +x /usr/local/bin/tofu
+O provider AWS extraído (~628MB) não cabe numa Lambda Layer (limite 250MB descomprimido). A solução usa S3 como cache:
 
-# Copy HCL configuration
-COPY remediation.tf /opt/remediation/
-WORKDIR /opt/remediation
+1. **Build time**: um Dockerfile auxiliar executa `tofu init` uma vez, gerando o `.terraform/` (provider extraído) e o `.terraform.lock.hcl`. Esses artefatos são empacotados como `tf-dot-terraform.tar.gz` (~128MB) e armazenados no S3.
+2. **Cold start**: o handler baixa o tar.gz do S3 (~2-3s) e extrai para `/tmp` (~3-5s) usando `tarfile` do Python.
+3. **Warm start**: `/tmp` persiste entre invocações — o provider já está disponível, custo zero.
+4. **Setup por controle**: o handler cria um symlink (`ln -s /tmp/tf-dot-terraform .terraform`) e copia o lock file (1KB) para o diretório de trabalho de cada controle.
 
-# Pre-cache providers and initialize
-RUN tofu providers mirror /opt/providers
-RUN tofu init -plugin-dir=/opt/providers
-
-# Copy Lambda handler
-COPY handler.py ${LAMBDA_TASK_ROOT}/
-
-CMD ["handler.lambda_handler"]
-```
-
-**HCL Configuration** (`remediation.tf`):
-```hcl
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.region
-}
-
-variable "bucket_name" {
-  type = string
-}
-
-variable "region" {
-  type = string
-}
-
-resource "aws_s3_bucket_public_access_block" "remediation" {
-  bucket = var.bucket_name
-
-  block_public_acls       = true
-  ignore_public_acls      = true
-  block_public_policy     = true
-  restrict_public_buckets = true
-}
-```
+Essa abordagem elimina tanto o `tofu init` em runtime quanto a necessidade de container image (ECR).
 
 **Lambda Handler**:
 ```python
@@ -521,54 +483,77 @@ import subprocess
 import json
 import os
 import shutil
+import tarfile
+import boto3
+
+s3 = boto3.client('s3')
+REMEDIATION_BUCKET = os.environ['REMEDIATION_BUCKET']
+PROVIDER_CACHE_KEY = os.environ.get('PROVIDER_CACHE_KEY', 'provider-cache/tf-dot-terraform.tar.gz')
+TF_CACHE = '/tmp/tf-dot-terraform'
+TF_LOCK = '/tmp/tf-lock.hcl'
+
+
+def ensure_provider_cache():
+    """Download and extract pre-initialized .terraform from S3 on cold start."""
+    if os.path.exists(TF_CACHE):
+        return
+    archive = '/tmp/tf-cache.tar.gz'
+    s3.download_file(REMEDIATION_BUCKET, PROVIDER_CACHE_KEY, archive)
+    with tarfile.open(archive, 'r:gz') as tar:
+        tar.extractall(path='/tmp/')
+    os.remove(archive)
+
+
+def setup_remediation(control_id, s3_key):
+    """Download HCL from S3, link pre-cached provider, return working dir."""
+    work_dir = f'/tmp/{control_id}'
+    tf_path = f'{work_dir}/remediation.tf'
+    if not os.path.exists(tf_path):
+        os.makedirs(work_dir, exist_ok=True)
+        s3.download_file(REMEDIATION_BUCKET, s3_key, tf_path)
+        os.symlink(TF_CACHE, f'{work_dir}/.terraform')
+        shutil.copy(TF_LOCK, f'{work_dir}/.terraform.lock.hcl')
+    return work_dir
+
 
 def lambda_handler(event, context):
     resource_arn = event['resource_arn']
-    bucket_name = extract_bucket_name(resource_arn)
+    bucket_name = resource_arn.split(':::')[1]
     region = event['region']
-    
-    # Copy HCL and .terraform to writable /tmp directory
-    os.makedirs('/tmp/remediation', exist_ok=True)
-    shutil.copy('/opt/remediation/remediation.tf', '/tmp/remediation/')
-    shutil.copytree('/opt/remediation/.terraform', '/tmp/remediation/.terraform')
-    
-    # Write tfvars
-    tfvars = {
-        "bucket_name": bucket_name,
-        "region": region
-    }
-    with open('/tmp/terraform.tfvars.json', 'w') as f:
+    control_id = event['control_id']
+    s3_key = event['remediation_s3_key']
+
+    ensure_provider_cache()
+    work_dir = setup_remediation(control_id, s3_key)
+    state_path = f'/tmp/{control_id}/{bucket_name}.tfstate'
+
+    tfvars = {"bucket_name": bucket_name, "region": region}
+    if control_id == 'ctrl-s3-ssl-only':
+        try:
+            resp = s3.get_bucket_policy(Bucket=bucket_name)
+            tfvars['existing_policy'] = resp['Policy']
+        except Exception:
+            pass
+
+    with open(f'{work_dir}/terraform.tfvars.json', 'w') as f:
         json.dump(tfvars, f)
-    
-    # Execute tofu apply
+
     result = subprocess.run(
-        ['tofu', 'apply', '-refresh=false', '-auto-approve', 
-         '-var-file=/tmp/terraform.tfvars.json',
-         '-state=/tmp/remediation.tfstate',
-         '-plugin-dir=/opt/providers'],
-        cwd='/tmp/remediation',
-        capture_output=True,
-        text=True,
-        timeout=40
+        ['/opt/bin/tofu', 'apply', '-refresh=false', '-auto-approve', '-no-color',
+         f'-var-file={work_dir}/terraform.tfvars.json', f'-state={state_path}'],
+        cwd=work_dir, capture_output=True, text=True, timeout=80
     )
-    
+
     if result.returncode == 0:
-        return {
-            "remediation_status": "success",
-            "output": result.stdout
-        }
-    else:
-        return {
-            "remediation_status": "failed",
-            "error": result.stderr
-        }
+        return {"remediation_status": "success", "output": result.stdout}
+    return {"remediation_status": "failed", "error": result.stderr}
 ```
 
 **Design Rationale**:
 - `-refresh=false`: Analyze já verificou estado atual, evita latência adicional
 - State local efêmero: Remediação é idempotente, não precisa rastrear drift
-- Providers pré-inicializados: Reduz cold start de ~10s para ~2s
-- Container image: Permite incluir binário OpenTofu sem Lambda Layer
+- Lambda Layer + S3 provider cache: Elimina ECR e pipeline de container. Cold start ~11s (vs. ~33s com container). Warm start ~5-7s (provider já em `/tmp`)
+- Symlink para provider: Todos os controles compartilham o mesmo provider sem duplicação em disco
 
 **Output Schema**:
 ```json
@@ -612,11 +597,25 @@ def lambda_handler(event, context):
 {
   "control_id": "ctrl-s3-public-block",
   "description": "Enforce S3 bucket public access block settings",
-  "cloudtrail_events": ["PutBucketPublicAccessBlock"],
+  "cloudtrail_events": ["PutBucketPublicAccessBlock", "DeleteBucketPublicAccessBlock", "CreateBucket"],
   "rego_policy_package": "s3_public_access",
+  "rego_s3_key": "controls/ctrl-s3-public-block/policy.rego",
+  "remediation_s3_key": "controls/ctrl-s3-public-block/remediation.tf",
   "resource_type": "AWS::S3::Bucket",
   "severity": "HIGH",
-  "created_at": "2024-01-01T00:00:00Z"
+  "policy_version": "v1.0",
+  "fetch_config": {
+    "service": "s3",
+    "method": "get_public_access_block",
+    "params": {"Bucket": "{resource_id}"},
+    "result_path": "PublicAccessBlockConfiguration",
+    "error_defaults": {
+      "NoSuchPublicAccessBlockConfiguration": {
+        "BlockPublicAcls": false, "IgnorePublicAcls": false,
+        "BlockPublicPolicy": false, "RestrictPublicBuckets": false
+      }
+    }
+  }
 }
 ```
 
@@ -1313,8 +1312,9 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 - State file corruption: Use fresh ephemeral state (no impact due to declarative config)
 
 **Container Failures**:
-- OOM (>1024MB): Lambda fails, Step Functions retries, escalate if persistent
+- OOM (>2048MB): Lambda fails, Step Functions retries, escalate if persistent
 - Disk full (>/tmp 1024MB): Clean /tmp before execution, fail if insufficient space
+- S3 provider cache download failure: Return setup failure, escalate
 
 **Error Recovery**: Step Functions retry policy (2 attempts, 5s interval). After exhaustion, send to Escalation_Queue.
 
@@ -1556,19 +1556,32 @@ def test_compliant_resource_classification(
 
 ### Dados Observados (2048 MB, us-east-1)
 
+**Arquitetura atual (Lambda Layer + S3 provider cache)**:
+
+| Cenário | Duração | Init Duration | Memória usada |
+|---|---|---|---|
+| Cold start (download + extração provider) | 10.9s | 486ms | 1164 MB |
+| Warm invocation | ~5-7s | — | ~1100 MB |
+
+**Arquitetura anterior (container image ECR)** — dados históricos:
+
 | Cenário | Duração | Init Duration | Memória usada |
 |---|---|---|---|
 | Cold start | 33.4s | 207ms | 1074 MB |
 | Warm container | 6.7s | — | 1090 MB |
 
-Com 1024 MB, o provider AWS (~700MB) causava memory thrashing (55-80s). A 2048 MB,
-o gargalo é exclusivamente I/O do `tofu apply` carregando o provider do disco.
+A migração de container para Layer + S3 reduziu o cold start de **33s para 11s** (~3x).
+O gargalo do cold start é agora o download (~2-3s) e extração (~5-7s) do provider cache
+do S3 para `/tmp`. No warm start, o provider já está em `/tmp` e o custo é zero.
+
+Com 1024 MB, o provider AWS (~628MB extraído) causava memory thrashing (55-80s). A 2048 MB,
+o gargalo é exclusivamente I/O.
 
 ### Decisão: OpenTofu vs. SDK direto
 
 A remediação do controle `ctrl-s3-public-block` poderia ser implementada como uma
-única chamada `s3:PutBucketPublicAccessBlock` via boto3 — reduzindo a Lambda de
-container image (700MB+, 2048 MB RAM, 7-33s) para zip (~1KB, 128 MB RAM, <1s).
+única chamada `s3:PutBucketPublicAccessBlock` via boto3 — reduzindo a Lambda para
+zip (~1KB, 128 MB RAM, <1s) sem necessidade de Layer ou provider cache.
 
 Essa otimização foi conscientemente descartada por três razões:
 
@@ -1586,16 +1599,16 @@ Essa otimização foi conscientemente descartada por três razões:
 
 ### Contexto de adequação
 
-A latência de 7-33s é irrelevante para o domínio: o baseline de comparação é tempo de
+A latência de 5-11s é irrelevante para o domínio: o baseline de comparação é tempo de
 exposição medido em horas ou dias (janela entre violação e detecção manual). Qualquer
 valor abaixo de 60s já representa uma redução de ordem de grandeza no MTTR.
 
 ### Espaço de otimização (não implementado)
 
-- **Provisioned Concurrency**: eliminaria o cold start de 33s, garantindo ~7s
+- **Provisioned Concurrency**: eliminaria o cold start de ~11s, garantindo ~5-7s
   consistente. Mecanismo de SLA para requisitos de MTTR < 10s. Custo fixo (~$15/mês
   por instância) não justificado para MVP acadêmico.
-- **Memória 3008 MB**: 2 vCPUs proporcionais, reduziria cold start para ~15s.
+- **Memória 3008 MB**: 2 vCPUs proporcionais, reduziria extração do provider.
 - **SDK direto por controle**: otimização pontual para controles críticos com SLA
   de latência, mantendo OpenTofu como default para controles novos.
 
@@ -1626,31 +1639,120 @@ O EventBridge passa o `event_name` do CloudTrail para a Step Function. O estado 
 
 O Analyze recebe uma lista de `control_ids` e avalia todos em uma única invocação Lambda, compartilhando o cache de configuração do recurso (ex: `GetBucketPublicAccessBlock` é chamado uma vez e reutilizado). Os resultados são processados individualmente pelo Map state da Step Function.
 
-### Adição de Novo Controle (sem rebuild)
+### Adição de Novo Controle (sem rebuild de Lambda)
 
 1. Criar `controls/<control-id>/policy.rego` + `remediation.tf`
 2. `aws s3 sync controls/ s3://<bucket>/controls/`
-3. Insert na tabela `controls` com `rego_s3_key`, `remediation_s3_key`, `rego_policy_package`, `cloudtrail_events`
+3. Se serviço AWS novo: adicionar permissão IAM em `modules/analyze/main.tf` + `tofu apply`
+4. Insert na tabela `controls` com `fetch_config`, `rego_s3_key`, `remediation_s3_key`, `rego_policy_package`, `cloudtrail_events`
 
-O passo 3 dispara automaticamente a Lambda `controls-sync` via DynamoDB Stream, que:
+O passo 4 dispara automaticamente a Lambda `controls-sync` via DynamoDB Stream, que:
 - Faz scan na tabela `controls` para coletar todos os `cloudtrail_events` distintos
 - Chama `events:PutRule` para atualizar o EventBridge rule com o novo event pattern
 - A API `PutRule` é idempotente (upsert por nome) — não cria rules duplicadas
 - O scan completo a cada trigger garante consistência mesmo com múltiplos updates simultâneos
 
-### Otimização: Eliminação do `tofu init` em Runtime
+### Otimização: Eliminação do `tofu init` em Runtime e do Container Image
 
-O `tofu init` com `-plugin-dir` extraía o provider AWS (~140MB zip → ~657MB binário) a cada cold start, levando 30-50s. A solução implementada:
+O `tofu init` com `-plugin-dir` extraía o provider AWS (~140MB zip → ~628MB binário) a cada cold start, levando 30-50s. A evolução arquitetural passou por duas fases:
 
-1. **Build time**: o Dockerfile executa `tofu init` uma vez, salvando o `.terraform/` (provider extraído) e o `.terraform.lock.hcl` em `/opt/`
-2. **Runtime**: o handler cria um symlink (`ln -s /opt/tf-dot-terraform .terraform`) e copia o lock file (1KB)
-3. **Resultado**: setup de ~100ms em vez de ~30-50s. O `tofu apply` encontra o provider pronto e executa imediatamente
+**Fase 1 — Container image com provider pré-inicializado (eliminada)**:
+1. O Dockerfile executava `tofu init` uma vez, salvando o `.terraform/` e o `.terraform.lock.hcl` em `/opt/`
+2. Em runtime, o handler criava um symlink para a camada read-only da imagem
+3. Cold start: ~33s (dominado pelo pull da imagem ECR de ~700MB)
 
-O symlink aponta para a camada read-only da imagem Docker. Todos os controles compartilham o mesmo provider sem duplicação em disco. Rebuild da imagem só é necessário ao atualizar a versão do provider AWS.
+**Fase 2 — Lambda Layer + S3 provider cache (atual)**:
+1. O binário OpenTofu é distribuído via Lambda Layer (`/opt/bin/tofu`, ~29MB comprimido)
+2. O `.terraform/` pré-inicializado (provider extraído + lock file) é empacotado como `tar.gz` (~128MB) e armazenado no S3
+3. No cold start, o handler baixa o tar.gz do S3 e extrai para `/tmp` usando `tarfile` do Python
+4. Em invocações warm, `/tmp` persiste — custo zero
+5. O symlink funciona igual à fase anterior: `ln -s /tmp/tf-dot-terraform .terraform`
+
+**Resultado**: cold start de ~33s → ~11s. ECR eliminado. Pipeline de build simplificado (sem `docker build` + `docker push`). Deploy do handler é um `zip` de ~1.3KB + `update-function-code`.
+
+O provider cache no S3 só precisa ser regenerado ao atualizar a versão do provider AWS. O binário tofu na Layer só precisa ser atualizado ao mudar a versão do OpenTofu.
 
 ### Remediação SSL com Merge de Policy
 
-O controle `ctrl-s3-ssl-only` faz merge com a bucket policy existente em vez de substituí-la. O template HCL usa `data.aws_s3_bucket_policy` para ler os statements atuais, filtra o `DenyNonSSLRequests` (evita duplicata), e concatena com o novo statement. Isso preserva policies pré-existentes (ex: CloudFront, cross-account access).
+O controle `ctrl-s3-ssl-only` faz merge com a bucket policy existente em vez de substituí-la. O template HCL recebe a policy existente como variável `existing_policy` (passada pelo handler do Execute via `get_bucket_policy`), filtra o statement `DenyNonSSLRequests` (evita duplicata), e concatena com o novo statement. Se o bucket não tem policy, a variável fica vazia e o `try()` no HCL trata o default, criando a policy apenas com o statement SSL. Isso preserva policies pré-existentes (ex: CloudFront, cross-account access) sem depender de `data source` que falha em buckets sem policy.
+
+### Decisão Arquitetural: Fetcher Genérico via `fetch_config`
+
+O Analyze Lambda usa um fetcher genérico que executa chamadas boto3 parametrizadas com base no campo `fetch_config` da tabela `controls`. Cada controle declara como buscar a configuração do recurso:
+
+```json
+{
+  "control_id": "ctrl-s3-public-block",
+  "fetch_config": {
+    "service": "s3",
+    "method": "get_public_access_block",
+    "params": {"Bucket": "{resource_id}"},
+    "result_path": "PublicAccessBlockConfiguration",
+    "error_defaults": {
+      "NoSuchPublicAccessBlockConfiguration": {
+        "BlockPublicAcls": false, "IgnorePublicAcls": false,
+        "BlockPublicPolicy": false, "RestrictPublicBuckets": false
+      }
+    }
+  }
+}
+```
+
+O fetcher genérico:
+1. Instancia `boto3.client(fetch_config['service'])`
+2. Chama `getattr(client, fetch_config['method'])(**params)` com `{resource_id}` substituído
+3. Navega `result_path` para extrair o campo relevante da resposta
+4. Trata erros conhecidos via `error_defaults` (ex: `NoSuchPublicAccessBlockConfiguration` → defaults)
+5. Cacheia resultados por invocação (múltiplos controles compartilham a mesma chamada)
+
+Essa abordagem eliminou os fetchers hardcoded (`RESOURCE_FETCHERS` dict). Novos controles para serviços já suportados não requerem redeploy do Analyze — basta declarar o `fetch_config` no DynamoDB.
+
+**Alternativa avaliada e descartada — Fetchers dinâmicos via S3 (`importlib`)**:
+
+Carregar scripts Python do S3 em runtime eliminaria o último acoplamento de deploy, mas introduziria execução de código não verificado com as permissões da Lambda Analyze. Para um sistema cujo propósito é garantir postura de segurança, isso representa uma contradição arquitetural: o componente de avaliação de compliance teria um vetor de injeção de código arbitrário.
+
+O fetcher genérico via `fetch_config` é o meio-termo: parametriza a chamada boto3 sem executar código arbitrário. O `method` é validado pelo próprio boto3 — não existe injeção de código, apenas chamadas a APIs AWS dentro do escopo das permissões IAM.
+
+### Modelo de Permissões: ABAC + IAM Estático
+
+As permissões de leitura do Analyze Lambda seguem um modelo híbrido:
+
+**ABAC (Attribute-Based Access Control)** para serviços que suportam tag conditions:
+- EC2: `ec2:Describe*` com `Condition: aws:ResourceTag/compliance-managed = true`
+- RDS: `rds:DescribeDBInstances` com `Condition: aws:ResourceTag/compliance-managed = true`
+- CloudTrail: `cloudtrail:GetTrailStatus` com `Condition: aws:ResourceTag/compliance-managed = true`
+
+**IAM estático** para serviços que não suportam ABAC em APIs de leitura:
+- S3: `s3:GetBucket*` (bucket APIs não suportam tag conditions)
+- IAM: `iam:GetAccountPasswordPolicy` (account-level, sem recurso taggeável)
+
+**Decisão: Permissões declarativas no Terraform, não derivadas de dados runtime**
+
+Foi avaliada a possibilidade de derivar permissões IAM automaticamente a partir dos `fetch_config.service` na tabela `controls` (via Lambda `controls-sync` + `iam:PutRolePolicy`). Essa abordagem foi descartada porque transforma a tabela `controls` em um vetor de privilege escalation: quem tem `dynamodb:PutItem` na tabela efetivamente controlaria as permissões da Lambda Analyze. Para um sistema de compliance, o componente que garante segurança não pode ter sua superfície de ataque controlável por dados runtime.
+
+O tradeoff aceito: adicionar um novo controle para um serviço AWS ainda não suportado requer `tofu apply` para atualizar a policy IAM. Controles adicionais para serviços já suportados não requerem nenhum redeploy.
+
+### Checklist: Adição de Novo Controle
+
+| Passo | Artefato | Onde | Redeploy? |
+|---|---|---|---|
+| 1 | `policy.rego` | S3 (`controls/*/policy.rego`) | Não |
+| 2 | `remediation.tf` | S3 (`controls/*/remediation.tf`) | Não |
+| 3 | Permissão IAM (se serviço novo) | `modules/analyze/main.tf` | Sim (`tofu apply`) |
+| 4 | Insert na tabela `controls` com `fetch_config` | DynamoDB | Não |
+
+O passo 4 dispara automaticamente `controls-sync` → EventBridge rule atualizado. Para serviços já suportados (ex: novo controle S3), o passo 3 não existe.
+
+| Artefato | Onde vive | Redeploy ao adicionar controle? |
+|---|---|---|
+| Política Rego | S3 (`controls/*/policy.rego`) | Não |
+| Template HCL | S3 (`controls/*/remediation.tf`) | Não |
+| Metadados + `fetch_config` | DynamoDB (`controls`) | Não |
+| EventBridge rule | Gerenciado por `controls-sync` | Não |
+| Binário OPA | Lambda Layer (`opa-binary`) | Não |
+| Binário OpenTofu | Lambda Layer (`tofu-binary`) | Não |
+| Provider AWS cache | S3 (`provider-cache/tf-dot-terraform.tar.gz`) | Não |
+| Permissão IAM (ABAC) | `modules/analyze/main.tf` | Sim (apenas para novo serviço AWS) |
 
 ## Evidências Experimentais
 
@@ -2052,6 +2154,39 @@ S_nominal — foi demonstrado com precisão de segundos no Teste 5.
 
 ---
 
+
+### Teste 10 (C8): Atualização Dinâmica do EventBridge via Controls Sync
+
+**Objetivo**: Validar que INSERT, MODIFY e DELETE na tabela `controls` atualizam automaticamente o EventBridge rule.
+
+**Procedimento (MODIFY)**:
+1. Verificar event pattern atual (5 eventos)
+2. Adicionar `PutBucketVersioning` ao `cloudtrail_events` do `ctrl-s3-public-block`
+3. Aguardar DynamoDB Stream → Lambda `controls-sync`
+4. Verificar event pattern atualizado (6 eventos)
+5. Remover `PutBucketVersioning`
+6. Verificar event pattern restaurado (5 eventos)
+
+**Resultado (MODIFY)**:
+- Lambda `controls-sync` invocada via Stream em <10s
+- `events:PutRule` atualizou o event pattern corretamente
+- Adição: `['CreateBucket', 'DeleteBucketPolicy', 'DeleteBucketPublicAccessBlock', 'PutBucketPolicy', 'PutBucketPublicAccessBlock', 'PutBucketVersioning']`
+- Remoção: `['CreateBucket', 'DeleteBucketPolicy', 'DeleteBucketPublicAccessBlock', 'PutBucketPolicy', 'PutBucketPublicAccessBlock']`
+- Idempotência confirmada: mesma rule atualizada, sem duplicação
+
+**Procedimento (INSERT + DELETE)**:
+1. Inserir controle fictício `ctrl-test-delete` com `cloudtrail_events: ["PutBucketEncryption"]`
+2. Verificar event pattern (6 eventos — `PutBucketEncryption` adicionado)
+3. Deletar `ctrl-test-delete`
+4. Verificar event pattern restaurado (5 eventos)
+
+**Resultado (INSERT + DELETE)**:
+- INSERT: event pattern atualizado para 6 eventos em <10s — `PutBucketEncryption` presente
+- DELETE: event pattern restaurado para 5 eventos em <10s — `PutBucketEncryption` removido
+- Scan completo da tabela a cada trigger garante consistência: controle deletado não persiste no event pattern
+
+**Propriedades validadas**: extensibilidade sem rebuild, idempotência do `PutRule`, consistência via scan completo, cobertura de INSERT/MODIFY/DELETE (CDC completo).
+
 ## Tabela Comparativa de Métricas por Cenário
 
 | Cenário | Descrição | Estado Final | t_remediation | t_exposure | Execute? | Escalação? | Hipóteses |
@@ -2063,14 +2198,16 @@ S_nominal — foi demonstrado com precisão de segundos no Teste 5.
 | C5 | Violação originada por IaC | S_nominal | 9.6s | ~19s | Sim (success) | Não | H1, H2 |
 | C6 | Recurso já conforme | S_nominal | — | — | Não | Não | H1 |
 | C7 | TTL expira em S_exception | = C3 | = C3 | = C3 | = C3 | = C3 | H2, H3 |
+| C8 | Novo controle → EventBridge atualizado | — | — | <10s | Não | Não | — (propriedade de design) |
 
 *C3 t_exposure: 30s buffer do Scheduler + 36s de execução após disparo.
 
 ### Síntese por Hipótese
 
 **H1 — Redução do MTTR**
-- t_remediation médio (C1, C3, C5): **~12s** (testes iniciais, pré-otimização)
+- t_remediation médio (C1, C3, C5): **~12s** (testes iniciais, container image)
 - t_remediation pós-otimização (symlink, sem init): **~5s** (warm e cold start)
+- t_remediation pós-migração Layer + S3: **~11s** cold start, **~5-7s** warm (sem ECR)
 - Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual
 - Redução: **ordens de grandeza** (segundos vs. dias)
 
