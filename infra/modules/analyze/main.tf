@@ -1,7 +1,5 @@
 variable "project_name" { type = string }
 variable "environment" { type = string }
-variable "controls_table_name" { type = string }
-variable "controls_table_arn" { type = string }
 variable "exceptions_table_name" { type = string }
 variable "exceptions_table_arn" { type = string }
 variable "policy_bucket" { type = string }
@@ -21,7 +19,6 @@ resource "aws_lambda_function" "analyze" {
 
   environment {
     variables = {
-      CONTROLS_TABLE   = var.controls_table_name
       EXCEPTIONS_TABLE = var.exceptions_table_name
       POLICY_BUCKET    = var.policy_bucket
     }
@@ -118,7 +115,6 @@ resource "aws_iam_role_policy" "dynamodb" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = [var.controls_table_arn] },
       { Effect = "Allow", Action = ["dynamodb:Query"], Resource = [var.exceptions_table_arn, "${var.exceptions_table_arn}/index/*"] }
     ]
   })

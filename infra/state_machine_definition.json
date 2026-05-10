@@ -21,7 +21,7 @@
         "region": "{% $states.input.region %}",
         "event_time": "{% $states.input.event_time %}",
         "event_name": "{% $states.input.event_name %}",
-        "control_ids": "{% $append([], $states.result.Items.control_id.S) %}"
+        "controls": "{% $states.result.Items %}"
       },
       "Retry": [
         { "ErrorEquals": ["DynamoDB.ProvisionedThroughputExceededException"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2.0 }
@@ -44,7 +44,7 @@
     "CheckControlsFound": {
       "Type": "Choice",
       "Choices": [
-        { "Condition": "{% $count($states.input.control_ids) > 0 %}", "Next": "InvokeAnalyze" }
+        { "Condition": "{% $count($states.input.controls) > 0 %}", "Next": "InvokeAnalyze" }
       ],
       "Default": "ExecutionSucceeded"
     },
@@ -55,7 +55,7 @@
         "FunctionName": "${analyze_lambda_arn}",
         "Payload": {
           "resource_arn": "{% $states.input.resource_arn %}",
-          "control_ids": "{% $states.input.control_ids %}",
+          "controls": "{% $states.input.controls %}",
           "account_id": "{% $states.input.account_id %}",
           "region": "{% $states.input.region %}",
           "event_time": "{% $states.input.event_time %}"

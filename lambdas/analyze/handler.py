@@ -1,11 +1,8 @@
 """
 Analyze Lambda Handler (Dynamic Multi-Control, Single Invocation)
 
-Evaluates ALL applicable controls for a resource in one invocation.
-Returns a list of classification results — one per control.
-
-Resource configuration is fetched dynamically based on `fetch_config`
-stored in the controls DynamoDB table — no hardcoded fetchers.
+Receives pre-fetched control definitions from Step Function (QueryControls).
+No DynamoDB reads for controls table — only exceptions table is queried.
 """
 
 import boto3
@@ -17,15 +14,21 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
+from boto3.dynamodb.types import TypeDeserializer
+
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
-
-controls_table = dynamodb.Table(os.environ.get('CONTROLS_TABLE', 'controls'))
 exceptions_table = dynamodb.Table(os.environ.get('EXCEPTIONS_TABLE', 'exceptions'))
 POLICY_BUCKET = os.environ.get('POLICY_BUCKET', '')
 
+_deserializer = TypeDeserializer()
 _boto_clients: Dict[str, Any] = {}
 _config_cache: Dict[str, Any] = {}
+
+
+def deserialize_item(item: Dict) -> Dict:
+    """Convert DynamoDB typed item to plain dict."""
+    return {k: _deserializer.deserialize(v) for k, v in item.items()}
 
 
 # --- Generic Resource Fetcher ---
@@ -37,15 +40,12 @@ def get_boto_client(service: str):
 
 
 def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dict[str, Any]:
-    """Fetch resource configuration using boto3 call declared in fetch_config."""
     cache_key = f"{fetch_config['method']}:{resource_id}"
     if cache_key in _config_cache:
         return _config_cache[cache_key]
 
     client = get_boto_client(fetch_config['service'])
     method = getattr(client, fetch_config['method'])
-
-    # Substitute {resource_id} in params
     params = json.loads(json.dumps(fetch_config.get('params', {})).replace('{resource_id}', resource_id))
 
     try:
@@ -54,12 +54,10 @@ def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dic
         error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
         defaults = fetch_config.get('error_defaults', {})
         if error_code in defaults:
-            result = defaults[error_code]
-            _config_cache[cache_key] = result
-            return result
+            _config_cache[cache_key] = defaults[error_code]
+            return _config_cache[cache_key]
         raise
 
-    # Navigate result_path
     for key in fetch_config.get('result_path', '').split('.'):
         if key:
             result = result[key]
@@ -78,9 +76,6 @@ def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
     if not os.path.exists(policy_path) and rego_s3_key and POLICY_BUCKET:
         os.makedirs('/tmp/policies', exist_ok=True)
         s3_client.download_file(POLICY_BUCKET, rego_s3_key, policy_path)
-
-    if not os.path.exists(policy_path):
-        policy_path = os.path.join(os.path.dirname(__file__), f'{rego_package}.rego')
 
     with open(input_path, 'w') as f:
         json.dump(opa_input, f)
@@ -134,7 +129,6 @@ def extract_resource_id(resource_arn: str) -> str:
         if not name:
             raise ValueError("Empty bucket name")
         return name
-    # Generic: last segment after : or /
     return resource_arn.split(':')[-1].split('/')[-1]
 
 
@@ -144,21 +138,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     print(f"Received event: {json.dumps(event)}")
 
     resource_arn = event['resource_arn']
-    control_ids = event['control_ids']
     account_id = event['account_id']
     region = event['region']
     resource_id = extract_resource_id(resource_arn)
     now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
+    # Deserialize controls from DynamoDB typed format
+    raw_controls = event['controls']
+    controls = [deserialize_item(c) for c in raw_controls]
+
     _config_cache.clear()
     results = []
 
-    for control_id in control_ids:
+    for control in controls:
+        control_id = control['control_id']
         try:
-            control = controls_table.get_item(Key={'control_id': control_id}).get('Item')
-            if not control:
-                raise ValueError(f"Control not found: {control_id}")
-
             rego_package = control['rego_policy_package']
             policy_version = f"{rego_package}:{control.get('policy_version', 'v1.0')}"
 

@@ -23,13 +23,15 @@ def get_current_item(exception_id):
 
 
 def build_sfn_input(item, trigger):
+    resource_arn = item.get('resource_arn', '')
+    resource_id = resource_arn.split(':::')[-1] if ':::' in resource_arn else resource_arn
     return json.dumps({
-        'resource_id':  item.get('resource_arn', '').split(':::')[-1] if ':::' in item.get('resource_arn', '') else item.get('resource_arn', ''),
-        'resource_arn': item['resource_arn'],
-        'control_id':   item['control_id'],
+        'resource_id':  resource_id,
+        'resource_arn': resource_arn,
         'account_id':   item.get('account_id', ACCOUNT_ID),
         'region':       item.get('region', REGION),
         'event_time':   datetime.now(timezone.utc).isoformat(),
+        'event_name':   'CreateBucket',
         'trigger':      trigger,
     })
 

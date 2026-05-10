@@ -212,7 +212,7 @@ def test_c3():
         time.sleep(WAIT_CLOUDTRAIL)
 
         # Wait for expiry + scheduler buffer + execution
-        remaining = max(0, ttl - time.time()) + 45
+        remaining = max(0, ttl - time.time()) + 60
         log(f"Waiting {int(remaining)}s for expiry + scheduler + remediation...")
         time.sleep(remaining)
 

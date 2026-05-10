@@ -55,8 +55,6 @@ module "analyze" {
   source                = "./modules/analyze"
   project_name          = var.project_name
   environment           = var.environment
-  controls_table_name   = module.knowledge.controls_table_name
-  controls_table_arn    = module.knowledge.controls_table_arn
   exceptions_table_name = module.knowledge.exceptions_table_name
   exceptions_table_arn  = module.knowledge.exceptions_table_arn
   policy_bucket         = "compliance-mvp-terraform-state"
