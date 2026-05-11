@@ -53,11 +53,17 @@ resource "aws_iam_role_policy" "s3" {
   policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [
-      { Effect = "Allow", Action = ["s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock", "s3:PutBucketPolicy", "s3:GetBucketPolicy"], Resource = "arn:aws:s3:::*" },
+      { Effect = "Allow", Action = [
+        "s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock",
+        "s3:PutBucketPolicy", "s3:GetBucketPolicy",
+        "s3:PutBucketVersioning", "s3:GetBucketVersioning",
+        "s3:PutEncryptionConfiguration", "s3:GetEncryptionConfiguration"
+      ], Resource = "arn:aws:s3:::*" },
       { Effect = "Allow", Action = ["s3:GetObject"], Resource = [
         "arn:aws:s3:::${var.remediation_bucket}/controls/*/remediation.tf",
         "arn:aws:s3:::${var.remediation_bucket}/provider-cache/*"
-      ]}
+      ]},
+      { Effect = "Allow", Action = ["ec2:EnableEbsEncryptionByDefault", "ec2:GetEbsEncryptionByDefault"], Resource = "*" }
     ]
   })
 }

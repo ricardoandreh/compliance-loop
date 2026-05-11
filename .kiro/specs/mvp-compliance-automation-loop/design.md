@@ -4,7 +4,7 @@
 
 O MVP Compliance Automation Loop implementa um sistema de automação de conformidade baseado no padrão arquitetural MAPE-K (Monitor, Analyze, Plan, Execute, Knowledge). O sistema detecta desvios de conformidade em recursos AWS, classifica o estado do recurso, executa remediação automática quando apropriado, e escala violações não resolvidas para operadores humanos.
 
-O sistema suporta múltiplos controles de compliance de forma extensível. Dois controles estão implementados: bloqueio de acesso público em buckets S3 (`ctrl-s3-public-block`) e política SSL-only (`ctrl-s3-ssl-only`). Novos controles podem ser adicionados sem rebuild de imagens — políticas Rego e templates HCL de remediação são armazenados no S3 e carregados em runtime. O sistema monitora eventos CloudTrail, resolve dinamicamente quais controles aplicar via tabela DynamoDB, avalia conformidade usando OPA/Rego, e remedia violações usando OpenTofu.
+O sistema suporta múltiplos controles de compliance de forma extensível e multi-serviço. Cinco controles estão implementados: bloqueio de acesso público S3 (`ctrl-s3-public-block`), política SSL-only (`ctrl-s3-ssl-only`), versionamento S3 (`ctrl-s3-versioning`), encryption S3 (`ctrl-s3-encryption`), e EBS encryption by default (`ctrl-ebs-encryption-default`). Novos controles podem ser adicionados sem rebuild de imagens — políticas Rego e templates HCL de remediação são armazenados no S3 e carregados em runtime. O sistema monitora eventos CloudTrail de múltiplos serviços AWS, resolve dinamicamente quais controles aplicar via tabela DynamoDB, avalia conformidade usando OPA/Rego com fetcher genérico parametrizado por `fetch_config`, e remedia violações usando OpenTofu.
 
 ### Design Goals
 
@@ -153,23 +153,25 @@ sequenceDiagram
 
 ### 1. Monitor (CloudTrail + EventBridge)
 
-**Responsibility**: Detectar eventos de mutação em recursos S3 e extrair metadados relevantes.
+**Responsibility**: Detectar eventos de mutação em recursos AWS e extrair metadados relevantes.
 
 **Implementation**:
-- CloudTrail trail configurado para capturar eventos de gerenciamento S3
-- EventBridge Rule com pattern filter para `PutBucketPublicAccessBlock`
+- CloudTrail trail configurado para capturar eventos de gerenciamento
+- EventBridge Rule com pattern filter dinâmico (gerenciado por `controls-sync`)
+- Input transformer genérico: extrai `request_parameters` do CloudTrail, `ResolveResource` na Step Function deriva `resource_id` e `resource_arn`
 - Target: Step Functions state machine
 
-**Event Pattern**:
+**Event Pattern** (gerenciado dinamicamente):
 ```json
 {
-  "source": ["aws.s3"],
   "detail-type": ["AWS API Call via CloudTrail"],
   "detail": {
-    "eventName": ["PutBucketPublicAccessBlock"]
+    "eventName": ["CreateBucket", "PutBucketPublicAccessBlock", "PutBucketVersioning", "DisableEbsEncryptionByDefault", "..."]
   }
 }
 ```
+
+Nota: o filtro `source` foi removido para suportar eventos de múltiplos serviços (S3, EC2, etc.) em uma única rule. O `eventName` é suficientemente específico para evitar falsos positivos.
 
 **Output Schema**:
 ```json
@@ -1633,11 +1635,11 @@ Os artefatos são armazenados no S3 e referenciados na tabela `controls` via cam
 
 ### Resolução Dinâmica de Controles
 
-O EventBridge passa o `event_name` do CloudTrail para a Step Function. O estado `QueryControls` faz um scan na tabela `controls` filtrando por `contains(cloudtrail_events, :evt)`. Isso resolve dinamicamente quais controles aplicar para cada tipo de evento. Por exemplo, `CreateBucket` ativa ambos os controles, enquanto `PutBucketPolicy` ativa apenas `ctrl-s3-ssl-only`.
+O EventBridge passa o `event_name` e `request_parameters` do CloudTrail para a Step Function. O estado `ResolveResource` extrai `resource_id` e `resource_arn` dos parâmetros do evento (ex: `requestParameters.bucketName` para S3, `account-level` para EBS). O estado `QueryControls` faz um scan na tabela `controls` filtrando por `contains(cloudtrail_events, :evt)`. Isso resolve dinamicamente quais controles aplicar para cada tipo de evento. Por exemplo, `CreateBucket` ativa todos os controles S3, enquanto `DisableEbsEncryptionByDefault` ativa apenas `ctrl-ebs-encryption-default`.
 
 ### Multi-Control em Invocação Única
 
-O Analyze recebe uma lista de `control_ids` e avalia todos em uma única invocação Lambda, compartilhando o cache de configuração do recurso (ex: `GetBucketPublicAccessBlock` é chamado uma vez e reutilizado). Os resultados são processados individualmente pelo Map state da Step Function.
+O Analyze recebe os items completos da tabela `controls` (passados pela Step Function via `QueryControls`), eliminando a necessidade de consultar DynamoDB. Avalia todos os controles em uma única invocação Lambda, compartilhando o cache de configuração do recurso (ex: `GetBucketPublicAccessBlock` é chamado uma vez e reutilizado por múltiplos controles). Os resultados são processados individualmente pelo Map state da Step Function.
 
 ### Adição de Novo Controle (sem rebuild de Lambda)
 
@@ -2191,23 +2193,30 @@ S_nominal — foi demonstrado com precisão de segundos no Teste 5.
 
 | Cenário | Descrição | Estado Final | t_remediation | t_exposure | Execute? | Escalação? | Hipóteses |
 |---|---|---|---|---|---|---|---|
-| C1 | Violação simples via console | S_nominal | 18s | 24s | Sim (success) | Não | H1, H3 |
+| C1 | Violação simples via console | S_nominal | 14.32s | 22.54s | Sim (success) | Não | H1, H3 |
 | C2 | Violação com exceção ativa | S_exception | — | — | Não | Não | H2 |
-| C3 | Exceção expira → remediação | S_nominal | 8s | 66s* | Sim (success) | Não | H2, H3 |
+| C3 | Exceção expira → remediação | S_nominal | 0.57s | 51.28s* | Sim (success) | Não | H2, H3 |
 | C4 | Bucket inexistente → escalação | Escalado | — | — | Não | Sim (GitHub Issue) | H2 |
-| C5 | Violação originada por IaC | S_nominal | 9.6s | ~19s | Sim (success) | Não | H1, H2 |
+| C5 | Violação originada por IaC | S_nominal | 5.52s | 15.77s | Sim (success) | Não | H1, H2 |
 | C6 | Recurso já conforme | S_nominal | — | — | Não | Não | H1 |
-| C7 | TTL expira em S_exception | = C3 | = C3 | = C3 | = C3 | = C3 | H2, H3 |
-| C8 | Novo controle → EventBridge atualizado | — | — | <10s | Não | Não | — (propriedade de design) |
 
-*C3 t_exposure: 30s buffer do Scheduler + 36s de execução após disparo.
+*C3 t_exposure: 30s buffer do Scheduler + execução após disparo.
+
+### Validação por Controle
+
+| Teste | Controle | Serviço | Resultado | Tempo |
+|---|---|---|---|---|
+| CTRL-01 | ctrl-s3-public-block | S3 | All 4 settings = true | ~36s |
+| CTRL-02 | ctrl-s3-ssl-only | S3 | DenyNonSSLRequests present | ~33s |
+| CTRL-03 | ctrl-s3-versioning | S3 | Versioning = Enabled | ~30s |
+| CTRL-04 | ctrl-s3-encryption | S3 | SSEAlgorithm = AES256 | ~26s |
+| CTRL-05 | ctrl-ebs-encryption-default | EC2 | EbsEncryptionByDefault = true | ~35s |
 
 ### Síntese por Hipótese
 
 **H1 — Redução do MTTR**
-- t_remediation médio (C1, C3, C5): **~12s** (testes iniciais, container image)
-- t_remediation pós-otimização (symlink, sem init): **~5s** (warm e cold start)
-- t_remediation pós-migração Layer + S3: **~11s** cold start, **~5-7s** warm (sem ECR)
+- t_remediation médio (C1, C3, C5): **6.8s** (última execução automatizada)
+- t_remediation cold start: ~14s | warm start: ~5s
 - Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual
 - Redução: **ordens de grandeza** (segundos vs. dias)
 
@@ -2218,6 +2227,6 @@ S_nominal — foi demonstrado com precisão de segundos no Teste 5.
 - `state=S_violation` preservado mesmo após falha de remediação (C4)
 
 **H3 — Tempo de exposição**
-- t_exposure médio para violações simples (C1, C5): **~22s**
-- Janela de risco pós-expiração de exceção (C3): **~66s** (controlado pelo buffer de 30s do Scheduler)
-- Precisão do Scheduler: `valid_until + 30s` (determinístico, vs. até 48h do mecanismo anterior)
+- t_exposure médio para violações simples (C1, C5): **19.16s**
+- Janela de risco pós-expiração de exceção (C3): **~51s** (30s buffer + execução)
+- Precisão do Scheduler: `valid_until + 30s` (determinístico)

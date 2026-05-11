@@ -1,9 +1,21 @@
 {
   "Comment": "MAPE-K Compliance Loop — Single Analyze, Map over results",
-  "StartAt": "QueryControls",
+  "StartAt": "ResolveResource",
   "TimeoutSeconds": 300,
   "QueryLanguage": "JSONata",
   "States": {
+    "ResolveResource": {
+      "Type": "Pass",
+      "Output": {
+        "resource_id": "{% $states.input.request_parameters.bucketName ? $states.input.request_parameters.bucketName : ($states.input.resource_id ? $states.input.resource_id : 'account-level') %}",
+        "resource_arn": "{% $states.input.request_parameters.bucketName ? 'arn:aws:s3:::' & $states.input.request_parameters.bucketName : ($states.input.resource_arn ? $states.input.resource_arn : 'arn:aws:' & $states.input.region & ':' & $states.input.account_id) %}",
+        "account_id": "{% $states.input.account_id %}",
+        "region": "{% $states.input.region %}",
+        "event_time": "{% $states.input.event_time %}",
+        "event_name": "{% $states.input.event_name %}"
+      },
+      "Next": "QueryControls"
+    },
     "QueryControls": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:scan",

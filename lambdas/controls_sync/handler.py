@@ -16,7 +16,6 @@ def lambda_handler(event, context):
             all_events.add(evt)
 
     pattern = json.dumps({
-        "source": ["aws.s3"],
         "detail-type": ["AWS API Call via CloudTrail"],
         "detail": {"eventName": sorted(all_events)}
     })

@@ -35,21 +35,20 @@ resource "aws_cloudwatch_event_target" "step_functions" {
 
   input_transformer {
     input_paths = {
-      bucket_name = "$.detail.requestParameters.bucketName"
       account_id  = "$.detail.userIdentity.accountId"
       region      = "$.detail.awsRegion"
       event_time  = "$.detail.eventTime"
       event_name  = "$.detail.eventName"
+      request_params = "$.detail.requestParameters"
     }
 
     input_template = <<-EOT
     {
-      "resource_id": <bucket_name>,
-      "resource_arn": "arn:aws:s3:::<bucket_name>",
       "account_id": <account_id>,
       "region": <region>,
       "event_time": <event_time>,
-      "event_name": <event_name>
+      "event_name": <event_name>,
+      "request_parameters": <request_params>
     }
     EOT
   }

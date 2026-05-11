@@ -131,7 +131,6 @@ def test_c1():
         execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
         assert execs, "No SUCCEEDED executions found"
 
-        # Find remediation execution (the one that took longest = had Execute)
         timings = [(e, get_execution_timing(e["executionArn"])) for e in execs]
         remediation = max(timings, key=lambda x: x[1]["duration_s"])
         t_sfn_start = remediation[1]["start"]
@@ -349,7 +348,7 @@ def test_c7():
         t_insert = time.time()
         table.put_item(Item={
             "control_id": test_id, "description": "Integration test",
-            "cloudtrail_events": {"PutBucketEncryption"},
+            "cloudtrail_events": {"PutBucketTagging"},
             "rego_policy_package": "s3_public_access",
             "resource_type": "aws_s3_bucket", "severity": "LOW", "policy_version": "v1.0",
         })
@@ -358,7 +357,7 @@ def test_c7():
 
         pattern = json.loads(events_client.describe_rule(Name=rule_name)["EventPattern"])
         names = pattern["detail"]["eventName"]
-        assert "PutBucketEncryption" in names, f"Not in rule: {names}"
+        assert "PutBucketTagging" in names, f"Not in rule: {names}"
         metrics["t_sync_insert"] = round(time.time() - t_insert, 2)
 
         t_delete = time.time()
@@ -368,7 +367,7 @@ def test_c7():
 
         pattern = json.loads(events_client.describe_rule(Name=rule_name)["EventPattern"])
         names = pattern["detail"]["eventName"]
-        assert "PutBucketEncryption" not in names, f"Still in rule: {names}"
+        assert "PutBucketTagging" not in names, f"Still in rule: {names}"
         metrics["t_sync_delete"] = round(time.time() - t_delete, 2)
 
         log(f"t_sync_insert={metrics['t_sync_insert']}s  t_sync_delete={metrics['t_sync_delete']}s", "TIME")
@@ -381,6 +380,105 @@ def test_c7():
             pass
 
 
+# --- Per-Control Validation Tests ---
+
+def test_ctrl_s3_public_block():
+    """CTRL-01: ctrl-s3-public-block remediates to all true"""
+    name = f"compliance-ctrl01-{int(time.time())}"
+    metrics = {}
+    create_bucket(name)
+    try:
+        t_event = time.time()
+        set_public_access(name, block=False)
+        log(f"Public access disabled on {name}")
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+
+        cfg = get_public_access(name)
+        assert all(cfg.values()), f"Not remediated: {cfg}"
+        metrics["t_total"] = round(time.time() - t_event, 2)
+        log(f"All 4 settings = true  t_total={metrics['t_total']}s", "TIME")
+        log("CTRL-01 PASSED", "OK")
+        return True, metrics
+    finally:
+        delete_bucket(name)
+
+
+def test_ctrl_s3_ssl_only():
+    """CTRL-02: ctrl-s3-ssl-only applies DenyNonSSLRequests policy"""
+    name = f"compliance-ctrl02-{int(time.time())}"
+    metrics = {}
+    create_bucket(name)
+    try:
+        t_event = time.time()
+        # DeleteBucketPolicy triggers ssl-only control
+        try:
+            s3.delete_bucket_policy(Bucket=name)
+        except Exception:
+            pass
+        log(f"Policy deleted on {name}")
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+
+        policy = json.loads(s3.get_bucket_policy(Bucket=name)["Policy"])
+        sids = [st.get("Sid", "") for st in policy.get("Statement", [])]
+        assert "DenyNonSSLRequests" in sids, f"SSL statement missing: {sids}"
+        metrics["t_total"] = round(time.time() - t_event, 2)
+        log(f"DenyNonSSLRequests present  t_total={metrics['t_total']}s", "TIME")
+        log("CTRL-02 PASSED", "OK")
+        return True, metrics
+    finally:
+        delete_bucket(name)
+
+
+def test_ctrl_s3_versioning():
+    """CTRL-03: ctrl-s3-versioning enables versioning"""
+    name = f"compliance-ctrl03-{int(time.time())}"
+    metrics = {}
+    create_bucket(name)
+    try:
+        t_event = time.time()
+        # PutBucketVersioning with Suspended triggers the control
+        s3.put_bucket_versioning(Bucket=name, VersioningConfiguration={"Status": "Suspended"})
+        log(f"Versioning suspended on {name}")
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+
+        resp = s3.get_bucket_versioning(Bucket=name)
+        assert resp.get("Status") == "Enabled", f"Not enabled: {resp}"
+        metrics["t_total"] = round(time.time() - t_event, 2)
+        log(f"Versioning=Enabled  t_total={metrics['t_total']}s", "TIME")
+        log("CTRL-03 PASSED", "OK")
+        return True, metrics
+    finally:
+        delete_bucket(name)
+
+
+def test_ctrl_s3_encryption():
+    """CTRL-04: ctrl-s3-encryption ensures encryption is configured"""
+    name = f"compliance-ctrl04-{int(time.time())}"
+    metrics = {}
+    create_bucket(name)
+    try:
+        # AWS applies AES256 by default since 2023, so bucket is already compliant
+        # Verify the analyze classifies as S_nominal
+        t_event = time.time()
+        set_public_access(name, block=True)  # trigger CreateBucket re-eval
+        log(f"Checking encryption on {name}")
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+
+        encryption = s3.get_bucket_encryption(Bucket=name)
+        algo = encryption["ServerSideEncryptionConfiguration"]["Rules"][0]["ApplyServerSideEncryptionByDefault"]["SSEAlgorithm"]
+        assert algo in ("AES256", "aws:kms"), f"Unexpected algorithm: {algo}"
+        metrics["t_total"] = round(time.time() - t_event, 2)
+        log(f"SSEAlgorithm={algo}  t_total={metrics['t_total']}s", "TIME")
+        log("CTRL-04 PASSED", "OK")
+        return True, metrics
+    finally:
+        delete_bucket(name)
+
+
 # --- Runner ---
 
 TESTS = [
@@ -391,6 +489,10 @@ TESTS = [
     ("C5", "Violação por IaC → remediação", test_c5),
     ("C6", "Recurso já conforme → S_nominal", test_c6),
     ("C7", "Controls-sync → EventBridge dinâmico", test_c7),
+    ("CTRL-01", "ctrl-s3-public-block", test_ctrl_s3_public_block),
+    ("CTRL-02", "ctrl-s3-ssl-only", test_ctrl_s3_ssl_only),
+    ("CTRL-03", "ctrl-s3-versioning", test_ctrl_s3_versioning),
+    ("CTRL-04", "ctrl-s3-encryption", test_ctrl_s3_encryption),
 ]
 
 

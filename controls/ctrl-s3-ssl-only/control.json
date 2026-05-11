@@ -1,0 +1,22 @@
+{
+  "control_id": {"S": "ctrl-s3-ssl-only"},
+  "description": {"S": "S3 bucket must have a policy denying non-SSL requests"},
+  "cloudtrail_events": {"SS": ["CreateBucket", "DeleteBucketPolicy", "PutBucketPolicy"]},
+  "rego_policy_package": {"S": "s3_ssl_only"},
+  "rego_s3_key": {"S": "controls/ctrl-s3-ssl-only/policy.rego"},
+  "remediation_s3_key": {"S": "controls/ctrl-s3-ssl-only/remediation.tf"},
+  "resource_type": {"S": "aws_s3_bucket"},
+  "severity": {"S": "HIGH"},
+  "policy_version": {"S": "v1.0"},
+  "fetch_config": {"M": {
+    "service": {"S": "s3"},
+    "method": {"S": "get_bucket_policy"},
+    "params": {"M": {"Bucket": {"S": "{resource_id}"}}},
+    "result_path": {"S": ""},
+    "error_defaults": {"M": {
+      "NoSuchBucketPolicy": {"M": {
+        "Policy": {"S": "{\"Version\":\"2012-10-17\",\"Statement\":[]}"}
+      }}
+    }}
+  }}
+}
