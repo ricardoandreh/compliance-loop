@@ -5,11 +5,17 @@ variable "exceptions_table_arn" { type = string }
 variable "policy_bucket" { type = string }
 variable "opa_layer_arn" { type = string }
 
+data "archive_file" "handler" {
+  type        = "zip"
+  source_file = "${path.module}/../../../lambdas/analyze/handler.py"
+  output_path = "${path.module}/../../../lambdas/analyze/analyze.zip"
+}
+
 resource "aws_lambda_function" "analyze" {
   function_name    = "${var.project_name}-analyze-${var.environment}"
   role             = aws_iam_role.analyze_lambda.arn
-  filename         = "${path.module}/../../../lambdas/analyze/analyze.zip"
-  source_code_hash = filebase64sha256("${path.module}/../../../lambdas/analyze/analyze.zip")
+  filename         = data.archive_file.handler.output_path
+  source_code_hash = data.archive_file.handler.output_base64sha256
   handler          = "handler.lambda_handler"
   runtime          = "python3.13"
   architectures    = ["arm64"]
@@ -25,8 +31,6 @@ resource "aws_lambda_function" "analyze" {
   }
 
   tags = { Name = "${var.project_name}-analyze", Environment = var.environment }
-
-  lifecycle { ignore_changes = [filename, source_code_hash] }
 }
 
 resource "aws_iam_role" "analyze_lambda" {
@@ -62,10 +66,10 @@ resource "aws_iam_role_policy" "resource_read" {
       },
       # EC2 — describe with ABAC tag condition
       {
-        Sid      = "EC2DescribeABAC"
-        Effect   = "Allow"
-        Action   = ["ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:GetEbsEncryptionByDefault"]
-        Resource = "*"
+        Sid       = "EC2DescribeABAC"
+        Effect    = "Allow"
+        Action    = ["ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:GetEbsEncryptionByDefault"]
+        Resource  = "*"
         Condition = { StringEquals = { "aws:ResourceTag/compliance-managed" = "true" } }
       },
       # EC2 — describe calls that don't support ABAC (account-level)
@@ -77,18 +81,18 @@ resource "aws_iam_role_policy" "resource_read" {
       },
       # RDS — describe with ABAC tag condition
       {
-        Sid      = "RDSDescribeABAC"
-        Effect   = "Allow"
-        Action   = ["rds:DescribeDBInstances"]
-        Resource = "arn:aws:rds:*:*:db:*"
+        Sid       = "RDSDescribeABAC"
+        Effect    = "Allow"
+        Action    = ["rds:DescribeDBInstances"]
+        Resource  = "arn:aws:rds:*:*:db:*"
         Condition = { StringEquals = { "aws:ResourceTag/compliance-managed" = "true" } }
       },
       # CloudTrail — read with ABAC tag condition
       {
-        Sid      = "CloudTrailReadABAC"
-        Effect   = "Allow"
-        Action   = ["cloudtrail:GetTrailStatus", "cloudtrail:DescribeTrails"]
-        Resource = "arn:aws:cloudtrail:*:*:trail/*"
+        Sid       = "CloudTrailReadABAC"
+        Effect    = "Allow"
+        Action    = ["cloudtrail:GetTrailStatus", "cloudtrail:DescribeTrails"]
+        Resource  = "arn:aws:cloudtrail:*:*:trail/*"
         Condition = { StringEquals = { "aws:ResourceTag/compliance-managed" = "true" } }
       },
       # IAM — account-level (no ABAC possible)

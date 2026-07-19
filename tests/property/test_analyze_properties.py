@@ -39,7 +39,7 @@ sys.modules['analyze_handler'] = handler
 _spec.loader.exec_module(handler)
 
 classify_state = handler.classify_state
-extract_bucket_name = handler.extract_bucket_name
+extract_resource_id = handler.extract_resource_id
 evaluate_policy_with_opa = handler.evaluate_policy_with_opa
 query_exception = handler.query_exception
 lambda_handler = handler.lambda_handler
@@ -403,16 +403,16 @@ def test_property_8_exception_query_correctness(
     call_kwargs = mock_table.query.call_args[1]
     
     # Verify GSI usage
-    assert call_kwargs['IndexName'] == 'control_id-index', \
-        "Query must use control_id-index GSI"
+    assert call_kwargs['IndexName'] == 'resource-control-index', \
+        "Query must use resource-control-index GSI"
     
-    # Verify KeyConditionExpression
-    assert call_kwargs['KeyConditionExpression'] == 'control_id = :cid', \
-        "Query must filter by control_id"
+    # Verify KeyConditionExpression (point query on the resource+control pair)
+    assert call_kwargs['KeyConditionExpression'] == 'resource_arn = :arn AND control_id = :cid', \
+        "Query must key on resource_arn and control_id"
     
-    # Verify FilterExpression includes resource_arn and valid_until
-    assert call_kwargs['FilterExpression'] == 'resource_arn = :arn AND valid_until > :now', \
-        "Query must filter by resource_arn and valid_until > now"
+    # Verify FilterExpression narrows to still-valid exceptions
+    assert call_kwargs['FilterExpression'] == 'valid_until > :now', \
+        "Query must filter by valid_until > now"
     
     # Verify ExpressionAttributeValues
     assert call_kwargs['ExpressionAttributeValues'][':cid'] == control_id

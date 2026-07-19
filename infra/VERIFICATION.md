@@ -38,8 +38,8 @@ All three DynamoDB tables have been successfully implemented with OpenTofu confi
 
 **Configuration**:
 - ✅ Partition key: `exception_id` (String)
-- ✅ GSI: `control_id-index` with `control_id` as hash key
-- ✅ GSI projection type: `ALL` (includes all attributes)
+- ✅ GSI: `resource-control-index` (hash `resource_arn`, range `control_id`)
+- ✅ GSI projection type: `INCLUDE` (`valid_until`, `exception_id`, `approved_by`)
 - ✅ TTL attribute: `valid_until` (enabled)
 - ✅ Billing mode: `PAY_PER_REQUEST`
 - ✅ Attributes supported:

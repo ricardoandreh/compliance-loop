@@ -26,6 +26,21 @@ _boto_clients: Dict[str, Any] = {}
 _config_cache: Dict[str, Any] = {}
 
 
+# --- Canonical audit timestamp ---
+#
+# INVARIANT: every value written to violations_log.timestamp (the range key of
+# resource_arn-timestamp-index) MUST come from this function. The audit GSI
+# relies on ISO-8601 sorting lexicographically == chronologically, which only
+# holds if ALL writers use an identical format: UTC, millisecond precision,
+# zero-padded, with a literal 'Z' suffix (never '+00:00'). Mixing formats
+# (microseconds, no padding, offset suffix) silently corrupts the per-resource
+# timeline. This Lambda is the sole logical writer today (Step Functions copies
+# analyze_result.timestamp verbatim into putItem); keep it that way and any new
+# writer must reuse this canonical form.
+def canonical_timestamp() -> str:
+    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+
+
 def deserialize_item(item: Dict) -> Dict:
     """Convert DynamoDB typed item to plain dict."""
     return {k: _deserializer.deserialize(v) for k, v in item.items()}
@@ -97,22 +112,34 @@ def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
 
 # --- Exception Query ---
 
+class ExceptionQueryError(Exception):
+    """Raised when the exceptions table query fails (vs. no exception found)."""
+    pass
+
+
 def query_exception(control_id: str, resource_arn: str) -> Optional[Dict[str, Any]]:
+    """Return the active exception for the resource/control, or None if none exists.
+
+    Raises ExceptionQueryError on query failure — the caller must NOT treat a
+    failed query as 'no exception', because that would remediate a resource
+    that may have a valid approved exception (fail-secure for compliance, but
+    destructive for an authorized resource). On query failure, escalate.
+    """
     try:
         resp = exceptions_table.query(
-            IndexName='control_id-index',
-            KeyConditionExpression='control_id = :cid',
-            FilterExpression='resource_arn = :arn AND valid_until > :now',
+            IndexName='resource-control-index',
+            KeyConditionExpression='resource_arn = :arn AND control_id = :cid',
+            FilterExpression='valid_until > :now',
             ExpressionAttributeValues={
-                ':cid': control_id, ':arn': resource_arn, ':now': int(time.time())
+                ':arn': resource_arn, ':cid': control_id, ':now': int(time.time())
             },
             Limit=1
         )
         items = resp.get('Items', [])
         return items[0] if items else None
     except Exception as e:
-        print(f"DynamoDB query error: {e}")
-        return None
+        print(f"DynamoDB exception query error: {e}")
+        raise ExceptionQueryError(str(e))
 
 
 # --- Classification ---
@@ -141,7 +168,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     account_id = event['account_id']
     region = event['region']
     resource_id = extract_resource_id(resource_arn)
-    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    now = canonical_timestamp()
 
     # Deserialize controls from DynamoDB typed format
     raw_controls = event['controls']
@@ -162,7 +189,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
             resource_config = fetch_resource_config(fetch_config, resource_id)
             is_compliant = evaluate_policy_with_opa(rego_package, resource_config, control.get('rego_s3_key'))
-            exception = query_exception(control_id, resource_arn)
+
+            # Only query exceptions for non-compliant resources. A query failure
+            # here must escalate (S_error), never silently remediate an
+            # authorized resource.
+            exception = None
+            if not is_compliant:
+                exception = query_exception(control_id, resource_arn)
             state = classify_state(is_compliant, exception)
 
             results.append({

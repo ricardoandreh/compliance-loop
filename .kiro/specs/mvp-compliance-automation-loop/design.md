@@ -203,150 +203,34 @@ Nota: o filtro `source` foi removido para suportar eventos de múltiplos serviç
 - Estados terminais explícitos: `ExecutionSucceeded` (Succeed) e `ExecutionFailed` (Fail com `Error: ComplianceEscalation`)
 - Após o Map state, `EvaluateOutcome` verifica se algum controle foi escalado — se sim, a execução termina como FAILED
 
-**State Machine Definition** (simplified):
-```json
-{
-  "StartAt": "InvokeAnalyze",
-  "States": {
-    "InvokeAnalyze": {
-      "Type": "Task",
-      "Resource": "arn:aws:lambda:REGION:ACCOUNT:function:analyze",
-      "TimeoutSeconds": 15,
-      "Next": "ClassifyState"
-    },
-    "ClassifyState": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.state",
-          "StringEquals": "S_nominal",
-          "Next": "RegisterNominal"
-        },
-        {
-          "Variable": "$.state",
-          "StringEquals": "S_exception",
-          "Next": "RegisterException"
-        },
-        {
-          "Variable": "$.state",
-          "StringEquals": "S_violation",
-          "Next": "InvokeExecute"
-        }
-      ]
-    },
-    "RegisterNominal": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::dynamodb:putItem",
-      "Parameters": {
-        "TableName": "violations_log",
-        "Item": {
-          "violation_id": {"S.$": "$.violation_id"},
-          "state": {"S": "S_nominal"},
-          "timestamp": {"S.$": "$.timestamp"}
-        }
-      },
-      "End": true
-    },
-    "RegisterException": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::dynamodb:putItem",
-      "Parameters": {
-        "TableName": "violations_log",
-        "Item": {
-          "violation_id": {"S.$": "$.violation_id"},
-          "state": {"S": "S_exception"},
-          "exception_id": {"S.$": "$.exception_id"},
-          "timestamp": {"S.$": "$.timestamp"}
-        }
-      },
-      "End": true
-    },
-    "InvokeExecute": {
-      "Type": "Task",
-      "Resource": "arn:aws:lambda:REGION:ACCOUNT:function:execute",
-      "TimeoutSeconds": 45,
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.error",
-          "Next": "UpdateLogFailed"
-        }
-      ],
-      "Next": "CheckRemediationStatus"
-    },
-    "CheckRemediationStatus": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.remediation_status",
-          "StringEquals": "success",
-          "Next": "UpdateLogSuccess"
-        }
-      ],
-      "Default": "UpdateLogFailed"
-    },
-    "UpdateLogSuccess": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::dynamodb:updateItem",
-      "Parameters": {
-        "TableName": "violations_log",
-        "Key": {
-          "violation_id": {"S.$": "$.violation_id"}
-        },
-        "UpdateExpression": "SET remediation_status = :status, remediation_timestamp = :ts",
-        "ExpressionAttributeValues": {
-          ":status": {"S": "success"},
-          ":ts": {"S.$": "$$.State.EnteredTime"}
-        }
-      },
-      "End": true
-    },
-    "UpdateLogFailed": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::dynamodb:updateItem",
-      "Parameters": {
-        "TableName": "violations_log",
-        "Key": {
-          "violation_id": {"S.$": "$.violation_id"}
-        },
-        "UpdateExpression": "SET remediation_status = :status, remediation_error = :error, remediation_timestamp = :ts",
-        "ExpressionAttributeValues": {
-          ":status": {"S": "failed"},
-          ":error": {"S.$": "$.error"},
-          ":ts": {"S.$": "$$.State.EnteredTime"}
-        }
-      },
-      "Next": "EnqueueEscalation"
-    },
-    "EnqueueEscalation": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::sqs:sendMessage",
-      "Parameters": {
-        "QueueUrl": "https://sqs.REGION.amazonaws.com/ACCOUNT/escalation-queue.fifo",
-        "MessageBody.$": "States.JsonToString($)",
-        "MessageGroupId.$": "$.resource_arn",
-        "MessageDeduplicationId.$": "$.violation_id"
-      },
-      "End": true
-    }
-  }
-}
+**State Machine Definition** (estrutura real):
+
+A máquina de estados usa JSONata e processa múltiplos controles via Map state. Fluxo:
+
+```
+ResolveResource          # extrai resource_id/resource_arn dos request_parameters do CloudTrail
+  → QueryControls        # scan na tabela controls por cloudtrail_events; passa os items completos
+  → CheckControlsFound   # Choice: há controles? senão → ExecutionSucceeded
+  → InvokeAnalyze        # Lambda; recebe controls completos, retorna results[] (um por controle)
+       (Catch States.ALL → AnalyzeFailedEscalation → ExecutionFailed)
+  → ProcessResults       # Map sobre results[], MaxConcurrency=1
+       └─ ClassifyState  # Choice por analyze_result.state
+            ├─ S_nominal   → RegisterNominal   (putItem) → outcome=nominal
+            ├─ S_exception → RegisterException (putItem) → outcome=exception
+            ├─ S_violation → RegisterViolation (putItem) → InvokeExecute
+            │     → CheckRemediationStatus
+            │          ├─ success → UpdateLogSuccess (updateItem) → outcome=remediated
+            │          └─ failed  → UpdateLogFailed  (updateItem) → EnqueueEscalation → outcome=escalated
+            │     (Catch States.ALL → UpdateLogFailed → EnqueueEscalation)
+            └─ default (S_error) → ControlErrorEscalation → outcome=escalated
+  → EvaluateOutcome      # Choice: algum outcome=escalated? → ExecutionFailed; senão → ExecutionSucceeded
 ```
 
-**Input Schema**:
-```json
-{
-  "resource_arn": "arn:aws:s3:::bucket-name",
-  "control_id": "ctrl-s3-public-block",
-  "account_id": "123456789012",
-  "region": "us-east-1",
-  "event_time": "2024-01-15T10:30:00Z"
-}
-```
+Estados terminais explícitos:
+- `ExecutionSucceeded` (`Succeed`)
+- `ExecutionFailed` (`Fail`, `Error: ComplianceEscalation`) — execuções que escalam terminam como FAILED no console
 
-**Interface Contract**:
-- Analyze returns: `{state, violation_id, exception_id?, approved_by?}`
-- Execute returns: `{remediation_status: "success"|"failed", error?}`
+Persistência no `violations_log`: o **Step Functions é o único componente que grava** (o Analyze é função pura, sem side-effects). `RegisterNominal/Exception/Violation` fazem `putItem` com todos os campos obrigatórios; `UpdateLogSuccess/Failed` fazem `updateItem` (não sobrescrevem o registro, apenas adicionam `remediation_status`/`remediation_output`/`remediation_error`).
 
 
 
@@ -409,12 +293,12 @@ def analyze(event):
 def query_exception(control_id, resource_arn):
     response = dynamodb.query(
         TableName='exceptions',
-        IndexName='control_id-index',
-        KeyConditionExpression='control_id = :cid',
-        FilterExpression='resource_arn = :arn AND valid_until > :now',
+        IndexName='resource-control-index',
+        KeyConditionExpression='resource_arn = :arn AND control_id = :cid',
+        FilterExpression='valid_until > :now',
         ExpressionAttributeValues={
-            ':cid': control_id,
             ':arn': resource_arn,
+            ':cid': control_id,
             ':now': int(time.time())
         }
     )
@@ -507,29 +391,37 @@ def ensure_provider_cache():
 
 
 def setup_remediation(control_id, s3_key):
-    """Download HCL from S3, link pre-cached provider, return working dir."""
+    """Prepara um diretório de trabalho LIMPO a cada invocação.
+
+    O work_dir (e o tfstate dentro dele) é recriado a cada execução. Isso é
+    crítico para corretude: combinado com -refresh=false, um tfstate obsoleto
+    de uma invocação warm anterior faria o OpenTofu reportar 'No changes' para
+    um recurso re-violado, pulando a remediação silenciosamente.
+    """
     work_dir = f'/tmp/{control_id}'
-    tf_path = f'{work_dir}/remediation.tf'
-    if not os.path.exists(tf_path):
-        os.makedirs(work_dir, exist_ok=True)
-        s3.download_file(REMEDIATION_BUCKET, s3_key, tf_path)
-        os.symlink(TF_CACHE, f'{work_dir}/.terraform')
-        shutil.copy(TF_LOCK, f'{work_dir}/.terraform.lock.hcl')
+    shutil.rmtree(work_dir, ignore_errors=True)
+    os.makedirs(work_dir, exist_ok=True)
+    s3.download_file(REMEDIATION_BUCKET, s3_key, f'{work_dir}/remediation.tf')
+    os.symlink(TF_CACHE, f'{work_dir}/.terraform')
+    shutil.copy(TF_LOCK, f'{work_dir}/.terraform.lock.hcl')
     return work_dir
 
 
 def lambda_handler(event, context):
     resource_arn = event['resource_arn']
-    bucket_name = resource_arn.split(':::')[1]
     region = event['region']
     control_id = event['control_id']
     s3_key = event['remediation_s3_key']
+    resource_id = event.get('resource_id', '')
+    # ARN parsing genérico: S3 usa arn:aws:s3:::name; outros serviços usam resource_id
+    bucket_name = resource_arn.split(':::')[1] if ':::' in resource_arn else resource_id
 
     ensure_provider_cache()
     work_dir = setup_remediation(control_id, s3_key)
-    state_path = f'/tmp/{control_id}/{bucket_name}.tfstate'
+    state_path = f'/tmp/{control_id}/{bucket_name}.tfstate'  # work_dir limpo → state sempre fresh
 
-    tfvars = {"bucket_name": bucket_name, "region": region}
+    tfvars = {"bucket_name": bucket_name, "region": region, "resource_id": resource_id}
+    # Edge case: ssl-only precisa da policy existente para merge
     if control_id == 'ctrl-s3-ssl-only':
         try:
             resp = s3.get_bucket_policy(Bucket=bucket_name)
@@ -543,7 +435,7 @@ def lambda_handler(event, context):
     result = subprocess.run(
         ['/opt/bin/tofu', 'apply', '-refresh=false', '-auto-approve', '-no-color',
          f'-var-file={work_dir}/terraform.tfvars.json', f'-state={state_path}'],
-        cwd=work_dir, capture_output=True, text=True, timeout=80
+        cwd=work_dir, capture_output=True, text=True, timeout=65
     )
 
     if result.returncode == 0:
@@ -553,8 +445,9 @@ def lambda_handler(event, context):
 
 **Design Rationale**:
 - `-refresh=false`: Analyze já verificou estado atual, evita latência adicional
-- State local efêmero: Remediação é idempotente, não precisa rastrear drift
+- **tfstate efêmero por invocação**: o `work_dir` é recriado a cada execução (`shutil.rmtree`). Isso garante que `-refresh=false` nunca compare contra um state obsoleto de warm start — sem isso, um recurso re-violado seria reportado como "No changes" e não remediado
 - Lambda Layer + S3 provider cache: Elimina ECR e pipeline de container. Cold start ~11s (vs. ~33s com container). Warm start ~5-7s (provider já em `/tmp`)
+- ARN parsing genérico: S3 deriva `bucket_name` do ARN, outros serviços usam `resource_id` (suporte multi-serviço)
 - Symlink para provider: Todos os controles compartilham o mesmo provider sem duplicação em disco
 
 **Output Schema**:
@@ -640,15 +533,20 @@ def lambda_handler(event, context):
   ],
   "AttributeDefinitions": [
     {"AttributeName": "exception_id", "AttributeType": "S"},
+    {"AttributeName": "resource_arn", "AttributeType": "S"},
     {"AttributeName": "control_id", "AttributeType": "S"}
   ],
   "GlobalSecondaryIndexes": [
     {
-      "IndexName": "control_id-index",
+      "IndexName": "resource-control-index",
       "KeySchema": [
-        {"AttributeName": "control_id", "KeyType": "HASH"}
+        {"AttributeName": "resource_arn", "KeyType": "HASH"},
+        {"AttributeName": "control_id", "KeyType": "RANGE"}
       ],
-      "Projection": {"ProjectionType": "ALL"}
+      "Projection": {
+        "ProjectionType": "INCLUDE",
+        "NonKeyAttributes": ["valid_until", "exception_id", "approved_by"]
+      }
     }
   ],
   "TimeToLiveSpecification": {
@@ -829,18 +727,20 @@ A deleção física de itens expirados pelo DynamoDB TTL é **não-determinísti
 
 **Design Rationale**:
 - FIFO: Preserves order of violations for same resource
-- MessageDeduplicationId = violation_id: Prevents duplicate escalations
-- MessageGroupId = resource_arn: Parallel processing for different resources, ordered processing for same resource
+- MessageDeduplicationId = `resource_arn#control_id`: deduplica escalações do mesmo recurso/controle dentro da janela de 5min do SQS FIFO, evitando spam de issues por re-triggers do CloudTrail. (Não usa `violation_id`, que é um UUID novo a cada avaliação e portanto nunca deduplicaria o caso real.) Complementarmente, a Escalation Lambda verifica se já existe uma issue aberta com o mesmo título antes de criar uma nova
+- MessageGroupId = `resource_id#control_id`: processamento paralelo para recursos diferentes, ordenado para o mesmo recurso/controle
 
 
 
 #### Escalation Lambda
 
 **Implementation**:
-- Runtime: Python 3.12
+- Runtime: Python 3.13 (arm64)
 - Trigger: SQS FIFO queue (batch size: 1)
 - Timeout: 30 seconds
-- Environment variables: GITHUB_TOKEN, GITHUB_REPO
+- HTTP via `urllib.request` (sem dependência externa `requests`)
+- Credenciais GitHub lidas do SSM Parameter Store (`/compliance/github/*`)
+- Deduplicação: verifica issue aberta com mesmo título antes de criar
 
 **Algorithm**:
 ```python
@@ -1099,6 +999,8 @@ stateDiagram-v2
 
 A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.
 
+> **Nota**: As Properties 4, 7 e 19 foram especificadas para o controle inicial (`ctrl-s3-public-block`) e usam-no como exemplo concreto. O sistema evoluiu para multi-controle e multi-serviço (S3, EC2) — essas propriedades generalizam para qualquer controle: a avaliação de conformidade é delegada à política Rego do controle, e a remediação ao seu template HCL. A Property 25 foi atualizada para refletir o event pattern dinâmico multi-serviço.
+
 ### Property 1: CloudTrail Event Parsing Completeness
 
 For any valid CloudTrail PutBucketPublicAccessBlock event, the Monitor SHALL successfully extract all required metadata fields (bucket ARN, account ID, region) and construct a valid output schema.
@@ -1245,7 +1147,7 @@ For any Execute failure, the violations_log entry SHALL maintain state as S_viol
 
 ### Property 25: EventBridge Rule Event Filtering
 
-For any CloudTrail event with eventName != "PutBucketPublicAccessBlock", the EventBridge Rule SHALL NOT match the event and SHALL NOT trigger the Orchestrator.
+For any CloudTrail event whose `eventName` is NOT in the union of `cloudtrail_events` across all registered controls, the EventBridge Rule SHALL NOT match the event and SHALL NOT trigger the Orchestrator. O event pattern é gerenciado dinamicamente pela Lambda `controls-sync` e cobre múltiplos serviços (S3, EC2). O filtro `source` foi removido para suportar multi-serviço; o `eventName` (específico por API) evita falsos positivos.
 
 **Validates: Requirements 1.6**
 
@@ -1263,7 +1165,7 @@ For any bucket name extracted from a CloudTrail event, the Monitor SHALL constru
 
 ### Property 28: Timeout Error Handling
 
-For any component timeout (Analyze > 15s, Execute > 45s, Orchestrator > 60s), the Orchestrator SHALL log a timeout error and terminate the workflow.
+For any component timeout (Analyze task > 30s, Execute task > 90s, Orchestrator global > 300s), the Orchestrator SHALL log a timeout error and terminate the workflow. A cadeia de timeouts é monotônica com folga para o cold start: subprocess do tofu (65s) + cold start (~11s) ≈ 76s ≤ Execute Lambda (90s) ≤ Execute task SFN (90s) ≤ Orchestrator global (300s). A folga garante que um timeout do tofu sempre retorne erro estruturado (`subprocess.TimeoutExpired`) antes de o Lambda ser morto com `States.Timeout` genérico.
 
 **Validates: Requirements 17.4**
 
@@ -1294,14 +1196,13 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 ### Analyze Error Handling
 
 **AWS API Failures**:
-- S3 GetPublicAccessBlock fails (NoSuchBucket, AccessDenied): Return error to Step Functions, trigger escalation
-- DynamoDB query timeout: Proceed without exception data (fail-secure: treat as no exception)
-- DynamoDB write failure: Retry with exponential backoff (Lambda default), escalate if persistent
+- Resource fetch fails (NoSuchBucket, AccessDenied): tratado via `error_defaults` no `fetch_config` quando aplicável; senão propaga como `S_error` → escalação
+- DynamoDB exception query timeout: **escala (S_error)** — NÃO assume "sem exceção". Assumir ausência de exceção remediaria um recurso potencialmente autorizado (destrutivo). A query de exceção só ocorre para recursos não-conformes
+- DynamoDB write failure: o Step Functions (não o Analyze) grava; retry built-in da SDK integration
 
 **OPA Evaluation Errors**:
-- Policy file missing: Lambda initialization fails, CloudWatch alarm triggers
-- Rego syntax error: Lambda initialization fails, CloudWatch alarm triggers
-- OPA runtime error: Log to CloudWatch, return S_violation (fail-secure)
+- Policy file missing / Rego syntax error: log, retorna não-conforme (fail-secure)
+- OPA runtime error: Log to CloudWatch, trata como não-conforme (fail-secure)
 
 **Error Recovery**: Step Functions retry policy with exponential backoff (3 attempts, 2s initial interval, 2x multiplier). After exhaustion, trigger escalation.
 
@@ -1310,7 +1211,7 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 **OpenTofu Failures**:
 - IAM permission denied: Return failure status with error details, escalate to GitHub Issue
 - Bucket not found: Return failure status (bucket may have been deleted), escalate
-- OpenTofu timeout (>40s): Kill process, return failure status, escalate
+- OpenTofu timeout (>65s no subprocess): Kill process, return failure status estruturado, escalate. O timeout de 65s deixa folga (~14s) sobre os 90s do Lambda para acomodar o cold start (~11s) e garantir retorno limpo
 - State file corruption: Use fresh ephemeral state (no impact due to declarative config)
 
 **Container Failures**:
@@ -1326,7 +1227,7 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 - Lambda invocation failure: Retry per Lambda error handling policy
 - DynamoDB SDK integration failure: Retry with exponential backoff (3 attempts)
 - SQS SendMessage failure: Retry with exponential backoff (3 attempts)
-- Global timeout (60s): Terminate workflow, log timeout error, send to Escalation_Queue
+- Global timeout (300s): Terminate workflow, log timeout error, send to Escalation_Queue
 
 **Error Recovery**: Built-in Step Functions retry and catch mechanisms. All unhandled errors result in escalation.
 
@@ -1345,8 +1246,8 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 
 ### Fail-Secure Principles
 
-- **Unknown exception state**: Treat as no exception (classify as S_violation if non-compliant)
-- **OPA evaluation error**: Classify as S_violation (enforce remediation)
+- **Unknown exception state**: falha na **leitura** de exceção (timeout DynamoDB) escala (S_error), não remedia — evita derrubar recurso com autorização legítima
+- **OPA evaluation error**: trata como não-conforme (enforce remediation)
 - **Timeout in Analyze**: Escalate (do not assume compliant)
 - **Timeout in Execute**: Escalate (do not assume remediated)
 
@@ -1519,9 +1420,9 @@ def test_compliant_resource_classification(
 
 **Latency Requirements**:
 - Monitor to Orchestrator: <5 seconds (requirement 1.1)
-- Analyze execution: <15 seconds (requirement 17.1)
-- Execute execution: <45 seconds (requirement 17.2)
-- End-to-end loop: <60 seconds (requirement 2.7)
+- Analyze execution: <30 seconds (timeout da task InvokeAnalyze)
+- Execute execution: <90 seconds (timeout da task InvokeExecute; subprocess tofu 80s)
+- End-to-end loop: <300 seconds (timeout global do Orchestrator)
 
 **Performance Tests**:
 - Measure cold start latency for Lambda functions
@@ -1759,6 +1660,8 @@ O passo 4 dispara automaticamente `controls-sync` → EventBridge rule atualizad
 ## Evidências Experimentais
 
 ### Teste 1: Ciclo Completo de Exception Governance com Convergência
+
+> **Nota histórica**: Este teste foi executado com o mecanismo original (EventBridge Pipe + DynamoDB TTL `REMOVE`), posteriormente substituído pelo EventBridge Scheduler devido à latência não determinística do TTL (até 48h). Veja o Teste 5 (C3) para o mecanismo atual. O trace é mantido como registro da evolução arquitetural; a propriedade de convergência demonstrada permanece válida.
 
 **Data**: 2026-04-11 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::test-compliance-bucket-1775622472`
@@ -2000,7 +1903,7 @@ confirmação. É o argumento empírico central de H2 (rastreabilidade/completud
 | Precisão do Scheduler | valid_until + 30s (exato) | H3 |
 | t_remediation (Scheduler fire → success) | **~8s** | H1 |
 | Janela de risco pós-expiração | **~66s** (30s buffer + 36s execução) | H3 |
-| Ciclo completo S_exception → S_nominal | **~4 min** (controlado pelo TTL) | H3 |
+| Ciclo completo S_exception → S_nominal | **~4 min** (controlado pelo buffer do Scheduler + execução) | H3 |
 
 #### Verificações
 
@@ -2117,6 +2020,12 @@ resource "aws_s3_bucket_public_access_block" "non_compliant" {
 
 - **Execução 2 (confirmação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:ba2b64db-efb0-1708-312f-c45616e3bd1b_b46505b0-cc7a-7821-05af-89e97763989b`
   - Duração: <1s | Resultado: `S_nominal`
+
+**Limitação conhecida — Conflito de propriedade recorrente**
+
+O Teste C5 demonstra apenas um ciclo: apply externo → detecção → remediação → confirmação. O sistema não diferencia drift pontual de console de conflito recorrente com outro sistema IaC que reivindica o mesmo atributo. Toda violação recebe tratamento idêntico: remediação automática. Em cenários onde um pipeline externo com tfstate próprio continua reaplicando a configuração violadora após cada remediação (ex.: um deploy periódico de outro time), o sistema entra em ciclo de reversão silenciosa sem ponto de convergência — cada lado desfazendo o outro indefinidamente, sem custo associado à persistência.
+
+O GSI `resource_arn-timestamp-index` já existente na tabela `violations_log` permitiria implementar detecção de reincidência: contar violações do mesmo `(resource_arn, control_id)` numa janela de tempo T e, acima de um limiar N, escalar em vez de remediar automaticamente — sinalizando conflito de propriedade para resolução humana via o mecanismo de exceções já existente, em vez de reverter silenciosamente a cada ocorrência. Deixado como trabalho futuro; não implementado nem validado empiricamente neste MVP.
 
 ### Teste 8 (C6): Recurso Já Conforme
 

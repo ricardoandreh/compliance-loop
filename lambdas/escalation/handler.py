@@ -20,6 +20,33 @@ def get_github_params():
     return {p['Name'].split('/')[-1]: p['Value'] for p in resp['Parameters']}
 
 
+def find_open_issue(pat, owner, repo, title):
+    """Return number of an existing open issue with the same title, or None.
+
+    Prevents duplicate issues for the same resource+control when the SQS FIFO
+    deduplication window (5 min) is exceeded by repeated re-triggers.
+    """
+    import urllib.parse
+    query = urllib.parse.quote(f'repo:{owner}/{repo} is:issue is:open in:title "{title}"')
+    req = Request(
+        f'https://api.github.com/search/issues?q={query}',
+        headers={
+            'Authorization': f'Bearer {pat}',
+            'Accept': 'application/vnd.github+json',
+        },
+        method='GET',
+    )
+    try:
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        for item in data.get('items', []):
+            if item.get('title') == title:
+                return item['number']
+    except Exception as e:
+        print(f"Issue search failed (will create new): {e}")
+    return None
+
+
 def create_github_issue(pat, owner, repo, title, body):
     payload = json.dumps({
         'title': title,
@@ -51,6 +78,12 @@ def lambda_handler(event, context):
             resource_id = body['resource_arn'].split(':')[-1]
 
             title = f"[VIOLATION] {body['control_id']} — {resource_id}"
+
+            existing = find_open_issue(params['pat'], params['owner'], params['repo'], title)
+            if existing:
+                print(f"Open issue #{existing} already exists for {title}, skipping")
+                continue
+
             issue_body = (
                 f"- **Recurso**: {body['resource_arn']}\n"
                 f"- **Controle**: {body['control_id']}\n"

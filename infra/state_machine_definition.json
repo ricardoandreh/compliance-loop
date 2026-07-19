@@ -288,7 +288,7 @@
               "QueueUrl": "${escalation_queue_url}",
               "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'error': $string($states.input.execute_result.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
               "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
-              "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
+              "MessageDeduplicationId": "{% $states.input.resource_arn & '#' & $states.input.analyze_result.control_id %}"
             },
             "Output": { "outcome": "escalated" },
             "End": true
@@ -300,7 +300,7 @@
               "QueueUrl": "${escalation_queue_url}",
               "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'error': 'Analyze returned: ' & $states.input.analyze_result.state & ' - ' & ($states.input.analyze_result.error ? $states.input.analyze_result.error : 'unknown'), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
               "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
-              "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
+              "MessageDeduplicationId": "{% $states.input.resource_arn & '#' & $states.input.analyze_result.control_id %}"
             },
             "Output": { "outcome": "escalated" },
             "End": true

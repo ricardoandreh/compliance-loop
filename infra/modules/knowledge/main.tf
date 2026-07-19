@@ -28,14 +28,28 @@ resource "aws_dynamodb_table" "exceptions" {
   }
 
   attribute {
+    name = "resource_arn"
+    type = "S"
+  }
+
+  attribute {
     name = "control_id"
     type = "S"
   }
 
+  # Targeted lookup: query the exception(s) for a specific (resource, control)
+  # pair instead of scanning every exception of a control and filtering by
+  # resource_arn afterwards. hash_key=resource_arn + range_key=control_id makes
+  # query_exception a point query (reads only the 1-N items for the pair),
+  # eliminating RCU amplification on popular controls. exception_id remains the
+  # table PK, so each grant keeps its own immutable audit record (H2) and the
+  # scheduler-sync (keyed by exception_id) is unaffected.
   global_secondary_index {
-    name            = "control_id-index"
-    hash_key        = "control_id"
-    projection_type = "ALL"
+    name               = "resource-control-index"
+    hash_key           = "resource_arn"
+    range_key          = "control_id"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["valid_until", "exception_id", "approved_by"]
   }
 
   stream_enabled   = true

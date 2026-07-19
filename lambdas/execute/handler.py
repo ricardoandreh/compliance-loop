@@ -24,13 +24,19 @@ def ensure_provider_cache():
 
 
 def setup_remediation(control_id: str, s3_key: str) -> str:
+    """Prepara um diretório de trabalho limpo para o tofu apply.
+
+    O work_dir é recriado a cada invocação. Isso elimina qualquer tfstate
+    de uma invocação warm anterior — combinado com -refresh=false, um state
+    obsoleto faria o OpenTofu reportar 'No changes' para um recurso
+    re-violado, pulando a remediação silenciosamente.
+    """
     work_dir = f'/tmp/{control_id}'
-    tf_path = f'{work_dir}/remediation.tf'
-    if not os.path.exists(tf_path):
-        os.makedirs(work_dir, exist_ok=True)
-        s3.download_file(REMEDIATION_BUCKET, s3_key, tf_path)
-        os.symlink(TF_CACHE, f'{work_dir}/.terraform')
-        shutil.copy(TF_LOCK, f'{work_dir}/.terraform.lock.hcl')
+    shutil.rmtree(work_dir, ignore_errors=True)
+    os.makedirs(work_dir, exist_ok=True)
+    s3.download_file(REMEDIATION_BUCKET, s3_key, f'{work_dir}/remediation.tf')
+    os.symlink(TF_CACHE, f'{work_dir}/.terraform')
+    shutil.copy(TF_LOCK, f'{work_dir}/.terraform.lock.hcl')
     return work_dir
 
 
@@ -66,7 +72,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         result = subprocess.run(
             ['/opt/bin/tofu', 'apply', '-refresh=false', '-auto-approve', '-no-color',
              f'-var-file={work_dir}/terraform.tfvars.json', f'-state={state_path}'],
-            cwd=work_dir, capture_output=True, text=True, timeout=80
+            cwd=work_dir, capture_output=True, text=True, timeout=65
         )
         if result.returncode == 0:
             return {"remediation_status": "success", "output": result.stdout}
