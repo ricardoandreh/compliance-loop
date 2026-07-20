@@ -2,6 +2,7 @@ import json
 import boto3
 import os
 from urllib.request import urlopen, Request
+from botocore.exceptions import ClientError
 
 ssm = boto3.client('ssm')
 dynamodb = boto3.resource('dynamodb')
@@ -100,14 +101,27 @@ def lambda_handler(event, context):
             )
             print(f"Created issue #{issue['number']}: {issue['html_url']}")
 
-            violations_table.update_item(
-                Key={'violation_id': body['violation_id']},
-                UpdateExpression='SET github_issue_id = :id, github_issue_url = :url',
-                ExpressionAttributeValues={
-                    ':id': str(issue['number']),
-                    ':url': issue['html_url'],
-                },
-            )
+            try:
+                violations_table.update_item(
+                    Key={'violation_id': body['violation_id']},
+                    UpdateExpression='SET github_issue_id = :id, github_issue_url = :url',
+                    ExpressionAttributeValues={
+                        ':id': str(issue['number']),
+                        ':url': issue['html_url'],
+                    },
+                    ConditionExpression='attribute_exists(violation_id)',
+                )
+            except ClientError as ce:
+                if ce.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                    # Execution-level escalations (analyze-failed / query-controls-failed)
+                    # carry synthetic violation_ids that were never written to
+                    # violations_log. update_item is an upsert, so without this guard
+                    # it would create a phantom row holding only the GitHub fields.
+                    # The issue itself was created; there is just no row to back-link.
+                    print(f"No violations_log row for {body['violation_id']}; "
+                          f"issue #{issue['number']} created, skipping back-link")
+                else:
+                    raise
         except Exception as e:
             print(f"Failed to process {item_id}: {e}")
             failures.append({'itemIdentifier': item_id})
