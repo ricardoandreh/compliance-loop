@@ -79,7 +79,7 @@ resource "aws_lambda_event_source_mapping" "exceptions_stream" {
 
   filter_criteria {
     filter {
-      pattern = jsonencode({ eventName = ["INSERT", "MODIFY"] })
+      pattern = jsonencode({ eventName = ["INSERT", "MODIFY", "REMOVE"] })
     }
   }
 
