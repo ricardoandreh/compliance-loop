@@ -3,11 +3,17 @@ variable "environment" { type = string }
 variable "tofu_layer_arn" { type = string }
 variable "remediation_bucket" { type = string }
 
+data "archive_file" "handler" {
+  type        = "zip"
+  source_file = "${path.module}/../../../lambdas/execute/handler.py"
+  output_path = "${path.module}/../../../lambdas/execute/execute.zip"
+}
+
 resource "aws_lambda_function" "execute" {
   function_name    = "${var.project_name}-execute-${var.environment}"
   role             = aws_iam_role.execute_lambda.arn
-  filename         = "${path.module}/../../../lambdas/execute/execute.zip"
-  source_code_hash = filebase64sha256("${path.module}/../../../lambdas/execute/execute.zip")
+  filename         = data.archive_file.handler.output_path
+  source_code_hash = data.archive_file.handler.output_base64sha256
   handler          = "handler.lambda_handler"
   runtime          = "python3.13"
   architectures    = ["arm64"]
@@ -25,8 +31,6 @@ resource "aws_lambda_function" "execute" {
   }
 
   tags = { Name = "${var.project_name}-execute", Environment = var.environment }
-
-  lifecycle { ignore_changes = [filename, source_code_hash] }
 }
 
 resource "aws_iam_role" "execute_lambda" {
