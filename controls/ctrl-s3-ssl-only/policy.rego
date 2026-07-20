@@ -19,6 +19,7 @@ allow if {
 	denies_insecure_transport(statement)
 	action_covers_all(statement.Action)
 	principal_is_all(statement.Principal)
+	resource_covers_bucket(statement)
 }
 
 # Condition Bool aws:SecureTransport is false — tolerate the string "false"
@@ -53,3 +54,30 @@ principal_is_all(principal) if {
 	is_array(principal.AWS)
 	"*" in principal.AWS
 }
+
+# The Deny must reach every request: some Resource pattern must cover the
+# bucket itself (arn:aws:s3:::bucket — e.g. ListBucket) AND some pattern must
+# cover its objects (arn:aws:s3:::bucket/*). A Deny scoped to a prefix or to
+# only one of the two ARN forms leaves plaintext paths open.
+#
+# When the caller supplies no context (older Analyze input shape without
+# context.resource_arn), the coverage check is skipped — same behavior the
+# policy had before this check existed. Remove this tolerance once every
+# caller sends context.
+resource_covers_bucket(_) if not input.context.resource_arn
+
+resource_covers_bucket(statement) if {
+	bucket_arn := input.context.resource_arn
+	some bucket_pattern in resource_list(statement.Resource)
+	pattern_matches(bucket_pattern, bucket_arn)
+	some object_pattern in resource_list(statement.Resource)
+	pattern_matches(object_pattern, concat("", [bucket_arn, "/*"]))
+}
+
+resource_list(r) := [r] if is_string(r)
+
+resource_list(r) := r if is_array(r)
+
+# IAM Resource wildcards: '*' matches any sequence (including '/'), '?' one
+# character. glob.match with no delimiters has exactly that semantics.
+pattern_matches(pattern, target) if glob.match(pattern, [], target)

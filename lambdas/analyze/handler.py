@@ -83,8 +83,16 @@ def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dic
 
 # --- OPA Evaluation ---
 
-def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any], rego_s3_key: str = None) -> bool:
+def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any], rego_s3_key: str = None,
+                             context: Dict[str, Any] = None) -> bool:
+    # "resource" is the raw AWS API response for the resource; "context" is
+    # evaluation metadata (resource_id/arn, account, region) kept in its own
+    # namespace so it can never collide with resource_config keys. Policies
+    # that don't need it just ignore it (e.g. ssl-only uses context.resource_arn
+    # to validate that a Deny's Resource covers the whole bucket).
     opa_input = {"resource": resource_config}
+    if context:
+        opa_input["context"] = context
     policy_path = f'/tmp/policies/{rego_package}.rego'
     input_path = '/tmp/opa_input.json'
 
@@ -194,7 +202,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 raise ValueError(f"No fetch_config for: {control_id}")
 
             resource_config = fetch_resource_config(fetch_config, resource_id)
-            is_compliant = evaluate_policy_with_opa(rego_package, resource_config, control.get('rego_s3_key'))
+            is_compliant = evaluate_policy_with_opa(
+                rego_package, resource_config, control.get('rego_s3_key'),
+                context={
+                    'resource_id':  resource_id,
+                    'resource_arn': resource_arn,
+                    'account_id':   account_id,
+                    'region':       region,
+                },
+            )
 
             # Only query exceptions for non-compliant resources. A query failure
             # here must escalate (S_error), never silently remediate an

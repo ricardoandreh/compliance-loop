@@ -76,3 +76,51 @@ test_narrow_action_list if {
 test_specific_principal if {
 	not s3_ssl_only.allow with input as bucket_input([object.union(deny, {"Principal": {"AWS": "arn:aws:iam::123456789012:root"}})])
 }
+
+# --- Resource coverage (requires context.resource_arn) ---------------------
+
+bucket_arn := "arn:aws:s3:::my-bucket"
+
+ctx_input(stmts) := object.union(bucket_input(stmts), {"context": {
+	"resource_id": "my-bucket",
+	"resource_arn": bucket_arn,
+	"account_id": "123456789012",
+	"region": "us-east-1",
+}})
+
+test_ctx_resource_star if {
+	s3_ssl_only.allow with input as ctx_input([deny])
+}
+
+test_ctx_resource_exact_pair if {
+	s3_ssl_only.allow with input as ctx_input([object.union(deny, {"Resource": [bucket_arn, concat("", [bucket_arn, "/*"])]})])
+}
+
+test_ctx_resource_bucket_wildcard if {
+	s3_ssl_only.allow with input as ctx_input([object.union(deny, {"Resource": concat("", [bucket_arn, "*"])})])
+}
+
+# Bucket ARN only: objects still reachable over plaintext.
+test_ctx_resource_missing_objects if {
+	not s3_ssl_only.allow with input as ctx_input([object.union(deny, {"Resource": bucket_arn})])
+}
+
+# Objects only: bucket-level operations (ListBucket) still reachable.
+test_ctx_resource_missing_bucket if {
+	not s3_ssl_only.allow with input as ctx_input([object.union(deny, {"Resource": concat("", [bucket_arn, "/*"])})])
+}
+
+# Prefix-scoped Deny does not cover the whole bucket.
+test_ctx_resource_prefix_only if {
+	not s3_ssl_only.allow with input as ctx_input([object.union(deny, {"Resource": [bucket_arn, concat("", [bucket_arn, "/logs/*"])]})])
+}
+
+test_ctx_resource_wrong_bucket if {
+	not s3_ssl_only.allow with input as ctx_input([object.union(deny, {"Resource": ["arn:aws:s3:::other-bucket", "arn:aws:s3:::other-bucket/*"]})])
+}
+
+# Without context the coverage check is skipped (legacy input shape) — the
+# narrow-Resource policy above is tolerated, matching pre-context behavior.
+test_no_ctx_narrow_resource_tolerated if {
+	s3_ssl_only.allow with input as bucket_input([object.union(deny, {"Resource": bucket_arn})])
+}

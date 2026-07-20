@@ -267,6 +267,25 @@ class TestEvaluatePolicyWithOPA(unittest.TestCase):
             handler.evaluate_policy_with_opa('s3_public_access', {'x': 1}, None)
         )
 
+    def _written_opa_input(self):
+        with open('/tmp/opa_input.json') as f:
+            return json.load(f)
+
+    @patch('analyze_handler_unit.subprocess.run')
+    def test_context_is_injected_into_opa_input(self, mock_run):
+        mock_run.return_value = Mock(returncode=0, stdout=self._opa_stdout(True))
+        ctx = {'resource_id': 'b', 'resource_arn': 'arn:aws:s3:::b',
+               'account_id': '1', 'region': 'us-east-1'}
+        handler.evaluate_policy_with_opa('s3_ssl_only', {'x': 1}, None, context=ctx)
+        self.assertEqual(self._written_opa_input(),
+                         {'resource': {'x': 1}, 'context': ctx})
+
+    @patch('analyze_handler_unit.subprocess.run')
+    def test_no_context_keeps_legacy_input_shape(self, mock_run):
+        mock_run.return_value = Mock(returncode=0, stdout=self._opa_stdout(True))
+        handler.evaluate_policy_with_opa('s3_ssl_only', {'x': 1}, None)
+        self.assertEqual(self._written_opa_input(), {'resource': {'x': 1}})
+
 
 class TestQueryException(unittest.TestCase):
     @patch('analyze_handler_unit.exceptions_table')
