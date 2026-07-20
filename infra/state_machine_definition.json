@@ -12,9 +12,52 @@
         "account_id": "{% $states.input.account_id %}",
         "region": "{% $states.input.region %}",
         "event_time": "{% $states.input.event_time %}",
-        "event_name": "{% $states.input.event_name %}"
+        "event_name": "{% $states.input.event_name ? $states.input.event_name : '' %}",
+        "control_id": "{% $states.input.control_id ? $states.input.control_id : '' %}"
       },
-      "Next": "QueryControls"
+      "Next": "CheckTrigger"
+    },
+    "CheckTrigger": {
+      "Type": "Choice",
+      "Comment": "Scheduler-triggered re-evaluation (TTL expiry / revocation) carries a control_id → re-check exactly that control. CloudTrail-triggered events have no control_id (defaulted to '') → fan out by event_name.",
+      "Choices": [
+        { "Condition": "{% $states.input.control_id != '' %}", "Next": "GetControl" }
+      ],
+      "Default": "QueryControls"
+    },
+    "GetControl": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
+      "Arguments": {
+        "TableName": "${controls_table}",
+        "Key": { "control_id": { "S": "{% $states.input.control_id %}" } }
+      },
+      "Output": {
+        "resource_arn": "{% $states.input.resource_arn %}",
+        "resource_id": "{% $states.input.resource_id %}",
+        "account_id": "{% $states.input.account_id %}",
+        "region": "{% $states.input.region %}",
+        "event_time": "{% $states.input.event_time %}",
+        "event_name": "{% $states.input.event_name %}",
+        "controls": "{% $exists($states.result.Item) ? [$states.result.Item] : [] %}"
+      },
+      "Retry": [
+        { "ErrorEquals": ["DynamoDB.ProvisionedThroughputExceededException"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2.0 }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Output": {
+            "resource_arn": "{% $states.input.resource_arn %}",
+            "resource_id": "{% $states.input.resource_id %}",
+            "account_id": "{% $states.input.account_id %}",
+            "region": "{% $states.input.region %}",
+            "error": "{% $states.errorOutput %}"
+          },
+          "Next": "QueryControlsFailedEscalation"
+        }
+      ],
+      "Next": "CheckControlsFound"
     },
     "QueryControls": {
       "Type": "Task",

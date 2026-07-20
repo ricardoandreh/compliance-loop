@@ -72,6 +72,11 @@ resource "aws_lambda_event_source_mapping" "exceptions_stream" {
   bisect_batch_on_function_error         = true
   maximum_retry_attempts                 = 3
 
+  # Honor the handler's {"batchItemFailures": [...]} return so a single failed
+  # record is retried/checkpointed instead of being silently dropped with the
+  # rest of the batch.
+  function_response_types = ["ReportBatchItemFailures"]
+
   filter_criteria {
     filter {
       pattern = jsonencode({ eventName = ["INSERT", "MODIFY"] })

@@ -126,14 +126,20 @@ def query_exception(control_id: str, resource_arn: str) -> Optional[Dict[str, An
     destructive for an authorized resource). On query failure, escalate.
     """
     try:
+        # No Limit: the FilterExpression (valid_until > now) is applied AFTER
+        # DynamoDB reads items, so Limit=N could return fewer than N post-filter.
+        # If an expired exception for this pair sorts before a still-valid one,
+        # Limit=1 would read only the expired item, filter it out, and return
+        # empty — dropping a valid grant. The (resource_arn, control_id) pair is
+        # the exact GSI key, so the candidate set is tiny; read all and let the
+        # filter keep the valid ones.
         resp = exceptions_table.query(
             IndexName='resource-control-index',
             KeyConditionExpression='resource_arn = :arn AND control_id = :cid',
             FilterExpression='valid_until > :now',
             ExpressionAttributeValues={
                 ':arn': resource_arn, ':cid': control_id, ':now': int(time.time())
-            },
-            Limit=1
+            }
         )
         items = resp.get('Items', [])
         return items[0] if items else None

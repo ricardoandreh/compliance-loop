@@ -229,7 +229,7 @@ def test_property_4_compliant_resource_classification(config):
             stdout='{"result": [{"expressions": [{"value": true}]}]}'
         )
         
-        is_compliant = evaluate_policy_with_opa(config)
+        is_compliant = evaluate_policy_with_opa('s3_public_access', config, None)
     
     # Must be compliant
     assert is_compliant is True, f"Compliant config {config} evaluated as non-compliant"
@@ -462,25 +462,50 @@ def test_property_end_to_end_classification(event, config, has_exception, except
     else:
         expected_state = "S_violation"
     
-    # Mock AWS services
-    with patch('analyze_handler.s3_client') as mock_s3, \
+    # Current handler contract: controls arrive as a list of DynamoDB-typed
+    # items from the state machine, and the handler returns {'results': [...]}.
+    # It does not read S3 directly (generic fetch_resource_config) nor write
+    # violations_log (the state machine does that).
+    control_item = {
+        'control_id': {'S': event['control_id']},
+        'rego_policy_package': {'S': 's3_public_access'},
+        'policy_version': {'S': 'v1.0'},
+        'rego_s3_key': {'S': 'controls/ctrl-s3-public-block/policy.rego'},
+        'remediation_s3_key': {'S': 'controls/ctrl-s3-public-block/remediation.tf'},
+        'fetch_config': {'M': {
+            'service': {'S': 's3'},
+            'method': {'S': 'get_public_access_block'},
+            'params': {'M': {'Bucket': {'S': '{resource_id}'}}},
+            'result_path': {'S': 'PublicAccessBlockConfiguration'},
+            'error_defaults': {'M': {}},
+        }},
+    }
+    handler_event = {
+        'resource_arn': event['resource_arn'],
+        'account_id': event['account_id'],
+        'region': event['region'],
+        'controls': [control_item],
+    }
+
+    with patch('analyze_handler.get_boto_client') as mock_get_client, \
          patch('analyze_handler.exceptions_table') as mock_exceptions, \
-         patch('analyze_handler.violations_log_table') as mock_log, \
          patch('analyze_handler.subprocess.run') as mock_opa:
-        
-        # Mock S3 GetPublicAccessBlock
-        mock_s3.get_public_access_block.return_value = {
+
+        # Generic fetcher hits this client; return the generated config.
+        client = MagicMock()
+        client.get_public_access_block.return_value = {
             'PublicAccessBlockConfiguration': config
         }
-        
+        mock_get_client.return_value = client
+
         # Mock OPA evaluation
         opa_result = "true" if is_compliant else "false"
         mock_opa.return_value = Mock(
             returncode=0,
             stdout=f'{{"result": [{{"expressions": [{{"value": {opa_result}}}]}}]}}'
         )
-        
-        # Mock DynamoDB exception query
+
+        # Mock DynamoDB exception query (only reached when non-compliant)
         if has_exception and exception_valid:
             exception_item = {
                 'exception_id': f"exc-{uuid.uuid4()}",
@@ -492,21 +517,19 @@ def test_property_end_to_end_classification(event, config, has_exception, except
             mock_exceptions.query.return_value = {'Items': [exception_item]}
         else:
             mock_exceptions.query.return_value = {'Items': []}
-        
-        # Mock violations_log put_item
-        mock_log.put_item.return_value = {}
-        
-        # Execute handler
-        result = lambda_handler(event, None)
-    
+
+        out = lambda_handler(handler_event, None)
+
+    result = out['results'][0]
+
     # Verify classification
     assert result['state'] == expected_state, \
         f"Expected state {expected_state} but got {result['state']} " \
         f"for compliant={is_compliant}, has_exception={has_exception}, valid={exception_valid}"
-    
+
     # Verify violation_id is UUID
     assert len(result['violation_id']) == 36, "violation_id should be UUID format"
-    
+
     # Verify exception_id presence
     if expected_state == "S_exception":
         assert result['exception_id'] is not None, \
@@ -514,14 +537,8 @@ def test_property_end_to_end_classification(event, config, has_exception, except
     elif expected_state == "S_violation":
         assert result['exception_id'] is None, \
             "S_violation state should not include exception_id"
-    # Note: S_nominal may or may not have exception_id depending on whether
-    # an exception exists in the database (it's queried but not used for classification)
-    
-    # Verify violations_log was written
-    mock_log.put_item.assert_called_once()
-    logged_item = mock_log.put_item.call_args[1]['Item']
-    assert logged_item['state'] == expected_state
-    assert logged_item['violation_id'] == result['violation_id']
+    # S_nominal carries exception_id=None: exceptions are only queried for
+    # non-compliant resources, so a compliant one never looks one up.
 
 
 if __name__ == '__main__':

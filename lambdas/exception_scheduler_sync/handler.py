@@ -25,15 +25,24 @@ def get_current_item(exception_id):
 def build_sfn_input(item, trigger):
     resource_arn = item.get('resource_arn', '')
     resource_id = resource_arn.split(':::')[-1] if ':::' in resource_arn else resource_arn
-    return json.dumps({
+    payload = {
         'resource_id':  resource_id,
         'resource_arn': resource_arn,
         'account_id':   item.get('account_id', ACCOUNT_ID),
         'region':       item.get('region', REGION),
         'event_time':   datetime.now(timezone.utc).isoformat(),
-        'event_name':   'CreateBucket',
         'trigger':      trigger,
-    })
+    }
+    # Re-evaluation on TTL expiry / revocation targets the ONE control this
+    # exception covered — not an event-name fan-out. Passing control_id makes
+    # the state machine GetItem that specific control (see CheckTrigger /
+    # GetControl), instead of scanning by a hardcoded event_name (which failed
+    # for non-S3 controls like ctrl-ebs-encryption-default and ran unrelated S3
+    # controls against the resource, producing spurious S_error).
+    control_id = item.get('control_id')
+    if control_id:
+        payload['control_id'] = control_id
+    return json.dumps(payload)
 
 
 def upsert_schedule(item):

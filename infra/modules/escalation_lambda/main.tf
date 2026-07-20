@@ -31,7 +31,14 @@ resource "aws_lambda_event_source_mapping" "escalation_sqs" {
   function_name    = aws_lambda_function.escalation.arn
   batch_size       = 1
   enabled          = true
-  depends_on       = [aws_iam_role_policy.sqs]
+
+  # Honor the handler's {"batchItemFailures": [...]} return. Without this, a
+  # GitHub API failure (caught and reported per-message) is ignored and the
+  # message is deleted, silently losing the escalation. With it, the failed
+  # message is redelivered (maxReceiveCount=3) and then lands in the DLQ.
+  function_response_types = ["ReportBatchItemFailures"]
+
+  depends_on = [aws_iam_role_policy.sqs]
 }
 
 resource "aws_iam_role" "escalation_lambda" {
