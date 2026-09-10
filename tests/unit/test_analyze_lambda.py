@@ -123,6 +123,9 @@ class TestExtractResourceId:
     def test_s3_arn(self):
         assert extract_resource_id('arn:aws:s3:::my-bucket') == 'my-bucket'
 
+    def test_s3_arn_with_dots(self):
+        assert extract_resource_id('arn:aws:s3:::my.test.bucket') == 'my.test.bucket'
+
     def test_empty_s3_arn_raises(self):
         with pytest.raises(ValueError):
             extract_resource_id('arn:aws:s3:::')
@@ -264,6 +267,30 @@ class TestEvaluatePolicyWithOpa:
             evaluate_policy_with_opa('s3_public_access', {'x': 1}, policy_version='v2.3')
         assert captured['policy_path'] == '/tmp/policies/s3_public_access@v2.3.rego'
 
+    def read_opa_input(self):
+        with open('/tmp/opa_input.json') as f:
+            return json.load(f)
+
+    def test_context_is_injected_into_opa_input(self):
+        """ctrl-s3-ssl-only validates that the Deny covers the whole bucket by
+        reading input.context.resource_arn. The rego tolerates a missing
+        context (older callers), so dropping it here would silently turn that
+        coverage check into a no-op rather than fail."""
+        ctx = {'resource_id': 'b', 'resource_arn': 'arn:aws:s3:::b',
+               'account_id': '1', 'region': 'us-east-1'}
+        with patch.object(handler.subprocess, 'run',
+                          return_value=self.completed(0, self.opa_output(True))), \
+             patch.object(handler.os.path, 'exists', return_value=True):
+            evaluate_policy_with_opa('s3_ssl_only', {'x': 1}, context=ctx)
+        assert self.read_opa_input() == {'resource': {'x': 1}, 'context': ctx}
+
+    def test_no_context_keeps_legacy_input_shape(self):
+        with patch.object(handler.subprocess, 'run',
+                          return_value=self.completed(0, self.opa_output(True))), \
+             patch.object(handler.os.path, 'exists', return_value=True):
+            evaluate_policy_with_opa('s3_ssl_only', {'x': 1})
+        assert self.read_opa_input() == {'resource': {'x': 1}}
+
 
 class TestQueryException:
     def test_returns_active_exception(self):
@@ -332,6 +359,23 @@ class TestLambdaHandler:
         assert uuid.UUID(r['violation_id'])
         assert r['policy_version'] == 's3_public_access:v1.0'
         assert r['remediation_s3_key'] == 'controls/ctrl-s3-public-block/remediation.tf'
+
+    def test_handler_passes_evaluation_context_to_opa(self):
+        """Regression guard for the call site, not the function: the handler
+        must hand OPA the resource identity. Without it ctrl-s3-ssl-only's
+        bucket-coverage check silently degrades to a no-op."""
+        evaluate = MagicMock(return_value=True)
+        with patch.object(handler, 'fetch_resource_config',
+                          MagicMock(return_value={'BlockPublicAcls': True})), \
+             patch.object(handler, 'evaluate_policy_with_opa', evaluate), \
+             patch.object(handler, 'query_exception', MagicMock(return_value=None)):
+            lambda_handler(base_event(), None)
+
+        ctx = evaluate.call_args.kwargs['context']
+        assert ctx['resource_arn'] == 'arn:aws:s3:::my-test-bucket'
+        assert ctx['resource_id'] == 'my-test-bucket'
+        assert ctx['account_id'] == '123456789012'
+        assert ctx['region'] == 'us-east-1'
 
     def test_compliant_resource_skips_exception_query(self):
         """Exceptions only matter for non-compliant resources; querying for

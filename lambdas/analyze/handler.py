@@ -106,8 +106,16 @@ class PolicyEvaluationError(Exception):
 
 
 def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
-                             rego_s3_key: str = None, policy_version: str = 'v1.0') -> bool:
+                             rego_s3_key: str = None, policy_version: str = 'v1.0',
+                             context: Dict[str, Any] = None) -> bool:
+    # "resource" is the raw AWS API response for the resource; "context" is
+    # evaluation metadata (resource_id/arn, account, region) kept in its own
+    # namespace so it can never collide with resource_config keys. Policies
+    # that don't need it just ignore it (e.g. ssl-only uses context.resource_arn
+    # to validate that a Deny's Resource covers the whole bucket).
     opa_input = {"resource": resource_config}
+    if context:
+        opa_input["context"] = context
     # Version-keyed cache: warm containers must not keep evaluating a stale
     # .rego after the control's policy_version changes in DynamoDB — the log
     # would then claim a policy_version that was never actually executed.
@@ -155,9 +163,13 @@ def query_exception(control_id: str, resource_arn: str) -> Optional[Dict[str, An
     destructive for an authorized resource). On query failure, escalate.
     """
     try:
-        # No Limit here: DynamoDB applies Limit BEFORE FilterExpression, so
-        # Limit=1 could read only an expired exception and miss a valid one
-        # for the same resource+control pair.
+        # No Limit: the FilterExpression (valid_until > now) is applied AFTER
+        # DynamoDB reads items, so Limit=N could return fewer than N post-filter.
+        # If an expired exception for this pair sorts before a still-valid one,
+        # Limit=1 would read only the expired item, filter it out, and return
+        # empty — dropping a valid grant. The (resource_arn, control_id) pair is
+        # the exact GSI key, so the candidate set is tiny; read all and let the
+        # filter keep the valid ones.
         resp = exceptions_table.query(
             IndexName='resource-control-index',
             KeyConditionExpression='resource_arn = :arn AND control_id = :cid',
@@ -221,7 +233,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             resource_config = fetch_resource_config(fetch_config, resource_id)
             is_compliant = evaluate_policy_with_opa(
                 rego_package, resource_config,
-                control.get('rego_s3_key'), control.get('policy_version', 'v1.0'))
+                control.get('rego_s3_key'), control.get('policy_version', 'v1.0'),
+                context={
+                    'resource_id':  resource_id,
+                    'resource_arn': resource_arn,
+                    'account_id':   account_id,
+                    'region':       region,
+                },
+            )
 
             # Only query exceptions for non-compliant resources. A query failure
             # here must escalate (S_error), never silently remediate an

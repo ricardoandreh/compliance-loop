@@ -19,6 +19,7 @@
     },
     "RouteControlLookup": {
       "Type": "Choice",
+      "Comment": "Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events have no control_id (defaulted to '') → fan out by event_name.",
       "Choices": [
         { "Condition": "{% $states.input.control_id != '' %}", "Next": "GetControlById" }
       ],
@@ -29,9 +30,7 @@
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
       "Arguments": {
         "TableName": "${controls_table}",
-        "Key": {
-          "control_id": { "S": "{% $states.input.control_id %}" }
-        }
+        "Key": { "control_id": { "S": "{% $states.input.control_id %}" } }
       },
       "Output": {
         "resource_arn": "{% $states.input.resource_arn %}",
@@ -41,7 +40,7 @@
         "event_time": "{% $states.input.event_time %}",
         "event_name": "{% $states.input.event_name %}",
         "control_id": "{% $states.input.control_id %}",
-        "controls": "{% $states.result.Item ? [$states.result.Item] : [] %}"
+        "controls": "{% $exists($states.result.Item) ? [$states.result.Item] : [] %}"
       },
       "Retry": [
         { "ErrorEquals": ["DynamoDB.ProvisionedThroughputExceededException"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2.0 }
@@ -206,6 +205,14 @@
               }
             },
             "Output": "{% $states.input %}",
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "Comment": "The audit write must never suppress the alert: if putItem fails, still enqueue the escalation (the S_error row is lost, but the GitHub issue is raised).",
+                "Output": "{% $states.input %}",
+                "Next": "ControlErrorEscalation"
+              }
+            ],
             "Next": "ControlErrorEscalation"
           },
           "RegisterNominal": {
