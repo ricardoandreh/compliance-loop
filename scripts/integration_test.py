@@ -13,6 +13,7 @@ Usage:
 import argparse
 import boto3
 import json
+import os
 import sys
 import time
 import uuid
@@ -529,6 +530,8 @@ def main():
     parser.add_argument("--env", default="dev")
     parser.add_argument("--test", help="Run specific test (e.g., C1)")
     parser.add_argument("--json", action="store_true", help="Output metrics as JSON")
+    parser.add_argument("--json-out", metavar="PATH",
+                        help="Write the metrics JSON to PATH (consumed by benchmark.py)")
     args = parser.parse_args()
 
     init(args.region, args.prefix, args.env)
@@ -614,8 +617,14 @@ def main():
     print(f"\n{passed_count}/{len(results)} passed")
     print(f"{'='*70}\n")
 
+    payload = {"results": results, "metrics": all_metrics}
     if args.json:
-        print(json.dumps({"results": results, "metrics": all_metrics}, indent=2))
+        print(json.dumps(payload, indent=2))
+    if args.json_out:
+        os.makedirs(os.path.dirname(os.path.abspath(args.json_out)), exist_ok=True)
+        with open(args.json_out, "w") as f:
+            json.dump(payload, f, indent=2)
+        log(f"metrics written to {args.json_out}", "OK")
 
     sys.exit(1 if failed else 0)
 
