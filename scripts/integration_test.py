@@ -50,7 +50,29 @@ def create_bucket(name):
     s3.create_bucket(Bucket=name)
 
 
+def wait_quiesce(timeout=60):
+    """Wait until no executions are RUNNING.
+
+    Teardown must not delete a bucket while re-evaluations (triggered by the
+    remediation's own CloudTrail events) are in flight — they would hit
+    NoSuchBucket, classify S_error and open spurious GitHub issues.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        resp = sfn.list_executions(stateMachineArn=SFN_ARN, statusFilter="RUNNING", maxResults=5)
+        if not resp["executions"]:
+            return True
+        time.sleep(3)
+    log("wait_quiesce timed out; executions still RUNNING", "WARN")
+    return False
+
+
 def delete_bucket(name):
+    wait_quiesce()
+    # In-flight CloudTrail events may still spawn executions for a few
+    # seconds after the last one finished; give them a chance to appear.
+    time.sleep(8)
+    wait_quiesce()
     try:
         s3.delete_bucket(Bucket=name)
     except Exception:
@@ -455,24 +477,28 @@ def test_ctrl_s3_versioning():
 
 
 def test_ctrl_s3_encryption():
-    """CTRL-04: ctrl-s3-encryption ensures encryption is configured"""
+    """CTRL-04: ctrl-s3-encryption classifies via the SYSTEM (not the runner)"""
     name = f"compliance-ctrl04-{int(time.time())}"
+    arn = f"arn:aws:s3:::{name}"
     metrics = {}
-    create_bucket(name)
+    t_event = time.time()
+    create_bucket(name)  # CreateBucket triggers ctrl-s3-encryption evaluation
     try:
-        # AWS applies AES256 by default since 2023, so bucket is already compliant
-        # Verify the analyze classifies as S_nominal
-        t_event = time.time()
-        set_public_access(name, block=True)  # trigger CreateBucket re-eval
         log(f"Checking encryption on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
         wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
 
-        encryption = s3.get_bucket_encryption(Bucket=name)
-        algo = encryption["ServerSideEncryptionConfiguration"]["Rules"][0]["ApplyServerSideEncryptionByDefault"]["SSEAlgorithm"]
-        assert algo in ("AES256", "aws:kms"), f"Unexpected algorithm: {algo}"
+        # Assert through the system's own classification, not a direct API
+        # call from the runner's (admin) credentials — a direct call passes
+        # even when the Analyze role cannot read the encryption config.
+        violations = query_violations(arn)
+        enc = [v for v in violations if v["control_id"] == "ctrl-s3-encryption"]
+        assert enc, f"ctrl-s3-encryption never evaluated: {[v['control_id'] for v in violations]}"
+        assert enc[-1]["state"] == "S_nominal", \
+            f"Expected S_nominal (AES256 default), got {enc[-1]['state']}: {enc[-1].get('error', '')}"
+
         metrics["t_total"] = round(time.time() - t_event, 2)
-        log(f"SSEAlgorithm={algo}  t_total={metrics['t_total']}s", "TIME")
+        log(f"system classified S_nominal  t_total={metrics['t_total']}s", "TIME")
         log("CTRL-04 PASSED", "OK")
         return True, metrics
     finally:
@@ -518,6 +544,7 @@ def main():
     print(f"MAPE-K Integration Tests — {args.prefix}-{args.env}")
     print(f"{'='*70}\n")
 
+    suite_start = time.time()
     results = {}
     all_metrics = {}
 
@@ -561,7 +588,30 @@ def main():
         print(f"    avg = {avg}s")
 
     failed = sum(1 for r in results.values() if r == "FAIL")
-    print(f"\n{len(results) - failed}/{len(results)} passed")
+
+    # Audit: the suite must also assert the ABSENCE of unexpected failures.
+    # A regression that only ADDS failed executions (e.g. teardown races,
+    # broken side paths) would otherwise pass unnoticed — scenario asserts
+    # only check for expected successes.
+    wait_quiesce()
+    failed_execs = []
+    resp = sfn.list_executions(stateMachineArn=SFN_ARN, statusFilter="FAILED", maxResults=100)
+    failed_execs = [e for e in resp["executions"] if e["startDate"].timestamp() > suite_start]
+    expected_failed = 1 if "C4" in results else 0  # C4 ends FAILED by design
+    unexpected = len(failed_execs) - expected_failed
+    if unexpected > 0:
+        log(f"AUDIT: {unexpected} unexpected FAILED execution(s) during the run "
+            f"({len(failed_execs)} total, {expected_failed} expected)", "FAIL")
+        for e in failed_execs[:10]:
+            log(f"  {e['name']}", "FAIL")
+        failed += 1
+        results["AUDIT"] = "FAIL"
+    else:
+        log(f"AUDIT: no unexpected FAILED executions ({expected_failed} expected)", "OK")
+        results["AUDIT"] = "PASS"
+
+    passed_count = sum(1 for r in results.values() if r == "PASS")
+    print(f"\n{passed_count}/{len(results)} passed")
     print(f"{'='*70}\n")
 
     if args.json:

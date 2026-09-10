@@ -14,7 +14,7 @@ Cria EventBridge Schedulers para re-avaliação automática após expiração de
 2. Lambda lê o item atual da tabela
 3. Se `status=active` e `valid_until > now`: cria Scheduler one-time para `valid_until + 30s`
 4. Se `status=revoked`: deleta Scheduler e dispara re-avaliação imediata
-5. Scheduler dispara Step Function com `event_name=CreateBucket` (ativa todos os controles S3)
+5. Scheduler dispara Step Function com o `control_id` da exceção — o estado `RouteControlLookup` resolve o controle exato via `GetControlById`, sem re-avaliar controles alheios
 6. Scheduler se auto-deleta após disparo (`ActionAfterCompletion=DELETE`)
 
 ## Build e Deploy

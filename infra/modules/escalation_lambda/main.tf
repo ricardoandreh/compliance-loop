@@ -6,11 +6,17 @@ variable "escalation_queue_arn" { type = string }
 variable "violations_log_table_name" { type = string }
 variable "violations_log_table_arn" { type = string }
 
+data "archive_file" "handler" {
+  type        = "zip"
+  source_file = "${path.module}/../../../lambdas/escalation/handler.py"
+  output_path = "${path.module}/../../../lambdas/escalation/escalation.zip"
+}
+
 resource "aws_lambda_function" "escalation" {
   function_name    = "${var.project_name}-escalation-${var.environment}"
   role             = aws_iam_role.escalation_lambda.arn
-  filename         = "${path.module}/../../../lambdas/escalation/escalation.zip"
-  source_code_hash = filebase64sha256("${path.module}/../../../lambdas/escalation/escalation.zip")
+  filename         = data.archive_file.handler.output_path
+  source_code_hash = data.archive_file.handler.output_base64sha256
   handler          = "handler.lambda_handler"
   runtime          = "python3.13"
   architectures    = ["arm64"]
@@ -22,8 +28,6 @@ resource "aws_lambda_function" "escalation" {
   }
 
   tags = { Name = "${var.project_name}-escalation", Environment = var.environment }
-
-  lifecycle { ignore_changes = [filename, source_code_hash] }
 }
 
 resource "aws_lambda_event_source_mapping" "escalation_sqs" {
@@ -31,7 +35,10 @@ resource "aws_lambda_event_source_mapping" "escalation_sqs" {
   function_name    = aws_lambda_function.escalation.arn
   batch_size       = 1
   enabled          = true
-  depends_on       = [aws_iam_role_policy.sqs]
+  # Without this, the handler's batchItemFailures return is ignored and a
+  # failed GitHub call still deletes the message — escalation silently lost.
+  function_response_types = ["ReportBatchItemFailures"]
+  depends_on              = [aws_iam_role_policy.sqs]
 }
 
 resource "aws_iam_role" "escalation_lambda" {

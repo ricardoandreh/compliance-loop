@@ -57,13 +57,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     state_path = f'/tmp/{control_id}/{bucket_name}.tfstate'
     tfvars = {"bucket_name": bucket_name, "region": region, "resource_id": resource_id}
 
-    # Edge case: ssl-only needs existing policy for merge
+    # Edge case: ssl-only merges the SSL statement into the existing policy.
+    # Only NoSuchBucketPolicy may be treated as "no policy" — any other error
+    # (AccessDenied, throttling, timeout) MUST abort: proceeding without the
+    # existing policy would overwrite it with just the SSL statement,
+    # silently destroying the customer's statements.
     if control_id == 'ctrl-s3-ssl-only':
         try:
             resp = s3.get_bucket_policy(Bucket=bucket_name)
             tfvars['existing_policy'] = resp['Policy']
-        except Exception:
-            pass
+        except Exception as e:
+            code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
+            if code != 'NoSuchBucketPolicy':
+                return {"remediation_status": "failed",
+                        "error": f"Cannot read existing bucket policy ({code or e}); "
+                                 f"refusing to remediate without it"}
 
     with open(f'{work_dir}/terraform.tfvars.json', 'w') as f:
         json.dump(tfvars, f)

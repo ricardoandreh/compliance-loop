@@ -8,6 +8,30 @@ dynamodb = boto3.resource('dynamodb')
 violations_table = dynamodb.Table(os.environ.get('VIOLATIONS_TABLE', 'violations_log'))
 
 
+def link_issue(violation_id, issue_number, issue_url):
+    """Attach the GitHub issue to an EXISTING violations_log entry.
+
+    UpdateItem on a missing key would CREATE a phantom item holding only the
+    issue fields — no state, no resource, invisible to the audit GSI. The
+    condition prevents that; synthetic ids (analyze-failed-*, control-not-
+    found-*) legitimately have no log row, so a failed condition is only
+    logged, never retried.
+    """
+    try:
+        violations_table.update_item(
+            Key={'violation_id': violation_id},
+            UpdateExpression='SET github_issue_id = :id, github_issue_url = :url',
+            ConditionExpression='attribute_exists(violation_id)',
+            ExpressionAttributeValues={':id': str(issue_number), ':url': issue_url},
+        )
+    except Exception as e:
+        code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
+        if code == 'ConditionalCheckFailedException':
+            print(f"No violations_log entry for {violation_id}; issue not linked")
+        else:
+            raise
+
+
 def get_github_params():
     resp = ssm.get_parameters(
         Names=[
@@ -81,7 +105,11 @@ def lambda_handler(event, context):
 
             existing = find_open_issue(params['pat'], params['owner'], params['repo'], title)
             if existing:
-                print(f"Open issue #{existing} already exists for {title}, skipping")
+                # Still link this violation to the existing issue — the audit
+                # trail (H2) must show which issue tracks each violation.
+                print(f"Open issue #{existing} already exists for {title}, linking")
+                link_issue(body['violation_id'], existing,
+                           f"https://github.com/{params['owner']}/{params['repo']}/issues/{existing}")
                 continue
 
             issue_body = (
@@ -100,14 +128,7 @@ def lambda_handler(event, context):
             )
             print(f"Created issue #{issue['number']}: {issue['html_url']}")
 
-            violations_table.update_item(
-                Key={'violation_id': body['violation_id']},
-                UpdateExpression='SET github_issue_id = :id, github_issue_url = :url',
-                ExpressionAttributeValues={
-                    ':id': str(issue['number']),
-                    ':url': issue['html_url'],
-                },
-            )
+            link_issue(body['violation_id'], issue['number'], issue['html_url'])
         except Exception as e:
             print(f"Failed to process {item_id}: {e}")
             failures.append({'itemIdentifier': item_id})

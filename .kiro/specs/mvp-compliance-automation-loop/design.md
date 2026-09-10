@@ -209,8 +209,15 @@ A máquina de estados usa JSONata e processa múltiplos controles via Map state.
 
 ```
 ResolveResource          # extrai resource_id/resource_arn dos request_parameters do CloudTrail
-  → QueryControls        # scan na tabela controls por cloudtrail_events; passa os items completos
-  → CheckControlsFound   # Choice: há controles? senão → ExecutionSucceeded
+  → RouteControlLookup   # Choice: input tem control_id (re-avaliação de exceção)?
+       ├─ sim → GetControlById            # getItem na tabela controls pelo control_id exato
+       │          → CheckRequestedControlFound
+       │               ├─ achou → InvokeAnalyze
+       │               └─ não   → RequestedControlNotFound (SQS) → ExecutionFailed
+       │                          # controle referenciado por exceção foi renomeado/removido:
+       │                          # erro de governança, NUNCA sucesso silencioso
+       └─ não → QueryControls             # scan na tabela controls por cloudtrail_events
+                  → CheckControlsFound    # Choice: há controles? senão → ExecutionSucceeded
   → InvokeAnalyze        # Lambda; recebe controls completos, retorna results[] (um por controle)
        (Catch States.ALL → AnalyzeFailedEscalation → ExecutionFailed)
   → ProcessResults       # Map sobre results[], MaxConcurrency=1
@@ -222,7 +229,7 @@ ResolveResource          # extrai resource_id/resource_arn dos request_parameter
             │          ├─ success → UpdateLogSuccess (updateItem) → outcome=remediated
             │          └─ failed  → UpdateLogFailed  (updateItem) → EnqueueEscalation → outcome=escalated
             │     (Catch States.ALL → UpdateLogFailed → EnqueueEscalation)
-            └─ default (S_error) → ControlErrorEscalation → outcome=escalated
+            └─ default (S_error) → RegisterError (putItem) → ControlErrorEscalation → outcome=escalated
   → EvaluateOutcome      # Choice: algum outcome=escalated? → ExecutionFailed; senão → ExecutionSucceeded
 ```
 
@@ -230,7 +237,9 @@ Estados terminais explícitos:
 - `ExecutionSucceeded` (`Succeed`)
 - `ExecutionFailed` (`Fail`, `Error: ComplianceEscalation`) — execuções que escalam terminam como FAILED no console
 
-Persistência no `violations_log`: o **Step Functions é o único componente que grava** (o Analyze é função pura, sem side-effects). `RegisterNominal/Exception/Violation` fazem `putItem` com todos os campos obrigatórios; `UpdateLogSuccess/Failed` fazem `updateItem` (não sobrescrevem o registro, apenas adicionam `remediation_status`/`remediation_output`/`remediation_error`).
+Persistência no `violations_log`: o **Step Functions é o único componente que grava** (o Analyze é função pura, sem side-effects). `RegisterNominal/Exception/Violation/Error` fazem `putItem` com todos os campos obrigatórios; `UpdateLogSuccess/Failed` fazem `updateItem` (não sobrescrevem o registro, apenas adicionam `remediation_status`/`remediation_output`/`remediation_error`).
+
+**Invariante de completude (H2)**: toda avaliação — inclusive as que terminam em `S_error` — gera um registro completo no `violations_log` ANTES de qualquer escalação. O `RegisterError` grava `state`, `error`, `resource_arn`, `control_id`, `timestamp` e `policy_version`; sem ele, a Escalation Lambda vinculava `github_issue_id` a um `violation_id` inexistente e o `UpdateItem` criava um item fantasma (só com os campos da issue, invisível ao GSI de auditoria). A Escalation Lambda usa `ConditionExpression attribute_exists(violation_id)` como segunda linha de defesa: nunca cria registros, apenas anota os existentes.
 
 
 
@@ -585,6 +594,8 @@ def lambda_handler(event, context):
 
 O DynamoDB Streams está habilitado na tabela exceptions com `NEW_AND_OLD_IMAGES`. Uma Lambda (`exception-scheduler-sync`) processa eventos `INSERT` e `MODIFY` do Stream. Para cada exceção ativa com `valid_until` no futuro, a Lambda cria um EventBridge Scheduler one-time programado para `valid_until + 30s`. Quando o Scheduler dispara, a exceção já expirou logicamente, e o Step Functions é acionado para re-avaliação completa (Analyze → Execute se necessário). O Scheduler se auto-deleta após o disparo (`ActionAfterCompletion=DELETE`).
 
+O input enviado ao Step Functions carrega o `control_id` da exceção (não um `event_name` sintético). O estado `RouteControlLookup` detecta a presença de `control_id` e resolve o controle exato via `GetControlById` (getItem), em vez do scan por `cloudtrail_events`. Isso garante que a re-avaliação atinja precisamente o controle da exceção expirada — inclusive controles não-S3 (ex: `ctrl-ebs-encryption-default`), cujos eventos CloudTrail não se relacionam com nenhum evento S3 — sem disparar controles alheios contra o recurso.
+
 Este mecanismo substituiu a abordagem anterior baseada em EventBridge Pipe + DynamoDB TTL, que dependia da deleção física de itens expirados — operação com latência não determinística de até 48h. O novo mecanismo oferece precisão de segundos (evidenciado no Teste 5/C3) e comportamento determinístico.
 
 Isso garante que, após expiração de uma exceção, o recurso seja automaticamente re-avaliado pelo loop MAPE-K completo, mantendo o invariante arquitetural de que o Analyze é sempre o componente decisor.
@@ -833,7 +844,12 @@ Labels: compliance-violation, auto-escalation
 ```
 
 **Error Handling**:
-- GitHub API failure: Lambda retries via SQS visibility timeout
+- GitHub API failure: Lambda retries via SQS visibility timeout. Requer
+  `function_response_types = ["ReportBatchItemFailures"]` no event source
+  mapping — sem isso o retorno `batchItemFailures` é ignorado e a mensagem é
+  deletada mesmo em falha (escalação perdida silenciosamente, sem DLQ)
+- Issue duplicada: antes de criar, busca issue aberta com mesmo título; se
+  existir, vincula o `violations_log` à issue existente em vez de criar outra
 - DynamoDB update failure: Log error, continue (issue already created)
 - Invalid message format: Send to DLQ
 
@@ -1201,8 +1217,8 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 - DynamoDB write failure: o Step Functions (não o Analyze) grava; retry built-in da SDK integration
 
 **OPA Evaluation Errors**:
-- Policy file missing / Rego syntax error: log, retorna não-conforme (fail-secure)
-- OPA runtime error: Log to CloudWatch, trata como não-conforme (fail-secure)
+- Policy file missing / Rego syntax error / OPA runtime error: **escala (S_error)** via `PolicyEvaluationError`. Falha de avaliação NÃO é o mesmo que não-conformidade: classificar como `S_violation` dispararia remediação sem nenhuma decisão de política — para controles que reescrevem configuração (ex: bucket policy do ssl-only), isso seria destrutivo. Mesma lógica aplicada à falha de leitura de exceções
+- Cache de políticas Rego em `/tmp` é **versionado** (`{package}@{policy_version}.rego`): container warm nunca avalia um `.rego` obsoleto após bump de `policy_version` na tabela controls — sem isso, o log afirmaria uma `policy_version` que não foi a executada
 
 **Error Recovery**: Step Functions retry policy with exponential backoff (3 attempts, 2s initial interval, 2x multiplier). After exhaustion, trigger escalation.
 
@@ -1210,6 +1226,7 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 
 **OpenTofu Failures**:
 - IAM permission denied: Return failure status with error details, escalate to GitHub Issue
+- Leitura de policy existente falha (ssl-only): **aborta** com failure. Apenas `NoSuchBucketPolicy` é tratado como "sem policy"; qualquer outro erro (AccessDenied, throttling) interrompe a remediação — prosseguir sem a policy existente a sobrescreveria apenas com a statement SSL, destruindo silenciosamente as statements do cliente
 - Bucket not found: Return failure status (bucket may have been deleted), escalate
 - OpenTofu timeout (>65s no subprocess): Kill process, return failure status estruturado, escalate. O timeout de 65s deixa folga (~14s) sobre os 90s do Lambda para acomodar o cold start (~11s) e garantir retorno limpo
 - State file corruption: Use fresh ephemeral state (no impact due to declarative config)
@@ -1247,7 +1264,7 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 ### Fail-Secure Principles
 
 - **Unknown exception state**: falha na **leitura** de exceção (timeout DynamoDB) escala (S_error), não remedia — evita derrubar recurso com autorização legítima
-- **OPA evaluation error**: trata como não-conforme (enforce remediation)
+- **OPA evaluation error**: escala (S_error) — não remedia sem decisão de política avaliada; remediação sem avaliação seria destrutiva para controles que reescrevem configuração
 - **Timeout in Analyze**: Escalate (do not assume compliant)
 - **Timeout in Execute**: Escalate (do not assume remediated)
 
@@ -1537,6 +1554,8 @@ Os artefatos são armazenados no S3 e referenciados na tabela `controls` via cam
 ### Resolução Dinâmica de Controles
 
 O EventBridge passa o `event_name` e `request_parameters` do CloudTrail para a Step Function. O estado `ResolveResource` extrai `resource_id` e `resource_arn` dos parâmetros do evento (ex: `requestParameters.bucketName` para S3, `account-level` para EBS). O estado `QueryControls` faz um scan na tabela `controls` filtrando por `contains(cloudtrail_events, :evt)`. Isso resolve dinamicamente quais controles aplicar para cada tipo de evento. Por exemplo, `CreateBucket` ativa todos os controles S3, enquanto `DisableEbsEncryptionByDefault` ativa apenas `ctrl-ebs-encryption-default`.
+
+**Limitação conhecida — pseudo-ARN de recursos account-level**: para eventos sem recurso nomeável (ex: EBS encryption by default), o `ResolveResource` sintetiza `arn:aws:{region}:{account_id}` — um identificador interno, não um ARN AWS válido. Esse pseudo-ARN é a chave usada na consulta de exceções e no `violations_log`; uma exceção cadastrada com qualquer outro formato (ex: um ARN "correto" inventado pelo operador) é silenciosamente ignorada e o recurso é remediado apesar da aprovação. Ao cadastrar exceções para controles account-level, o `resource_arn` DEVE ser exatamente o pseudo-ARN sintetizado. Formalizar esse identificador (ou derivá-lo do controle) é melhoria futura.
 
 ### Multi-Control em Invocação Única
 

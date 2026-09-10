@@ -12,9 +12,72 @@
         "account_id": "{% $states.input.account_id %}",
         "region": "{% $states.input.region %}",
         "event_time": "{% $states.input.event_time %}",
-        "event_name": "{% $states.input.event_name %}"
+        "event_name": "{% $states.input.event_name ? $states.input.event_name : '' %}",
+        "control_id": "{% $states.input.control_id ? $states.input.control_id : '' %}"
       },
-      "Next": "QueryControls"
+      "Next": "RouteControlLookup"
+    },
+    "RouteControlLookup": {
+      "Type": "Choice",
+      "Choices": [
+        { "Condition": "{% $states.input.control_id != '' %}", "Next": "GetControlById" }
+      ],
+      "Default": "QueryControls"
+    },
+    "GetControlById": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
+      "Arguments": {
+        "TableName": "${controls_table}",
+        "Key": {
+          "control_id": { "S": "{% $states.input.control_id %}" }
+        }
+      },
+      "Output": {
+        "resource_arn": "{% $states.input.resource_arn %}",
+        "resource_id": "{% $states.input.resource_id %}",
+        "account_id": "{% $states.input.account_id %}",
+        "region": "{% $states.input.region %}",
+        "event_time": "{% $states.input.event_time %}",
+        "event_name": "{% $states.input.event_name %}",
+        "control_id": "{% $states.input.control_id %}",
+        "controls": "{% $states.result.Item ? [$states.result.Item] : [] %}"
+      },
+      "Retry": [
+        { "ErrorEquals": ["DynamoDB.ProvisionedThroughputExceededException"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2.0 }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Output": {
+            "resource_arn": "{% $states.input.resource_arn %}",
+            "resource_id": "{% $states.input.resource_id %}",
+            "account_id": "{% $states.input.account_id %}",
+            "region": "{% $states.input.region %}",
+            "error": "{% $states.errorOutput %}"
+          },
+          "Next": "QueryControlsFailedEscalation"
+        }
+      ],
+      "Next": "CheckRequestedControlFound"
+    },
+    "CheckRequestedControlFound": {
+      "Type": "Choice",
+      "Choices": [
+        { "Condition": "{% $count($states.input.controls) > 0 %}", "Next": "InvokeAnalyze" }
+      ],
+      "Default": "RequestedControlNotFound"
+    },
+    "RequestedControlNotFound": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Arguments": {
+        "QueueUrl": "${escalation_queue_url}",
+        "MessageBody": "{% $string({'violation_id': 'control-not-found-' & $states.input.control_id & '-' & $states.input.resource_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.control_id, 'error': 'Requested control not found in controls table: ' & $states.input.control_id & ' (exception re-evaluation cannot proceed; control renamed or deleted with live exceptions?)', 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+        "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.control_id %}",
+        "MessageDeduplicationId": "{% 'control-not-found-' & $states.input.control_id & '-' & $states.input.resource_id %}"
+      },
+      "Next": "ExecutionFailed"
     },
     "QueryControls": {
       "Type": "Task",
@@ -123,7 +186,27 @@
               { "Condition": "{% $states.input.analyze_result.state = 'S_exception' %}", "Next": "RegisterException" },
               { "Condition": "{% $states.input.analyze_result.state = 'S_violation' %}", "Next": "RegisterViolation" }
             ],
-            "Default": "ControlErrorEscalation"
+            "Default": "RegisterError"
+          },
+          "RegisterError": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Arguments": {
+              "TableName": "${violations_log_table}",
+              "Item": {
+                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
+                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
+                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
+                "state": { "S": "{% $states.input.analyze_result.state %}" },
+                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
+                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
+                "error": { "S": "{% $states.input.analyze_result.error ? $states.input.analyze_result.error : 'unknown' %}" },
+                "account_id": { "S": "{% $states.input.account_id %}" },
+                "region": { "S": "{% $states.input.region %}" }
+              }
+            },
+            "Output": "{% $states.input %}",
+            "Next": "ControlErrorEscalation"
           },
           "RegisterNominal": {
             "Type": "Task",

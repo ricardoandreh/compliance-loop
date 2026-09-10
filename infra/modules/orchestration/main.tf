@@ -139,7 +139,7 @@ resource "aws_iam_role_policy" "sfn_dynamodb" {
   policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem"], Resource = [var.violations_log_table_arn] },
-                 { Effect = "Allow", Action = ["dynamodb:Scan"], Resource = [var.controls_table_arn] }]
+                 { Effect = "Allow", Action = ["dynamodb:Scan", "dynamodb:GetItem"], Resource = [var.controls_table_arn] }]
   })
 }
 

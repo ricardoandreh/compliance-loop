@@ -28,10 +28,13 @@ def build_sfn_input(item, trigger):
     return json.dumps({
         'resource_id':  resource_id,
         'resource_arn': resource_arn,
+        # control_id makes the state machine resolve THIS control via GetItem,
+        # instead of guessing an event_name — a synthetic event would re-run
+        # unrelated controls (and miss non-S3 ones entirely).
+        'control_id':   item['control_id'],
         'account_id':   item.get('account_id', ACCOUNT_ID),
         'region':       item.get('region', REGION),
         'event_time':   datetime.now(timezone.utc).isoformat(),
-        'event_name':   'CreateBucket',
         'trigger':      trigger,
     })
 

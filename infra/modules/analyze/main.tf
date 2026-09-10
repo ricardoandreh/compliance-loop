@@ -61,7 +61,11 @@ resource "aws_iam_role_policy" "resource_read" {
       {
         Sid      = "S3BucketRead"
         Effect   = "Allow"
-        Action   = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy", "s3:GetBucketEncryption", "s3:GetBucketVersioning", "s3:GetBucketLogging"]
+        # NOTE: the IAM action for the GetBucketEncryption API is
+        # s3:GetEncryptionConfiguration — "s3:GetBucketEncryption" does not
+        # exist and grants nothing (every ctrl-s3-encryption eval failed
+        # AccessDenied until this was fixed).
+        Action   = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy", "s3:GetEncryptionConfiguration", "s3:GetBucketVersioning", "s3:GetBucketLogging"]
         Resource = "arn:aws:s3:::*"
       },
       # EC2 — describe with ABAC tag condition

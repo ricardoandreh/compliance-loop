@@ -65,12 +65,15 @@ resource "aws_lambda_function" "exception_scheduler_sync" {
 
 # --- Event Source Mapping ---
 resource "aws_lambda_event_source_mapping" "exceptions_stream" {
-  event_source_arn                       = var.exceptions_stream_arn
-  function_name                          = aws_lambda_function.exception_scheduler_sync.arn
-  starting_position                      = "LATEST"
-  batch_size                             = 10
-  bisect_batch_on_function_error         = true
-  maximum_retry_attempts                 = 3
+  event_source_arn               = var.exceptions_stream_arn
+  function_name                  = aws_lambda_function.exception_scheduler_sync.arn
+  starting_position              = "LATEST"
+  batch_size                     = 10
+  bisect_batch_on_function_error = true
+  maximum_retry_attempts         = 3
+  # The handler returns batchItemFailures; without this the return is ignored
+  # and failed records are dropped instead of retried.
+  function_response_types = ["ReportBatchItemFailures"]
 
   filter_criteria {
     filter {

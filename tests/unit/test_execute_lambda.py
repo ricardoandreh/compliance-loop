@@ -1,387 +1,271 @@
 """
-Unit tests for Execute Lambda handler.
+Unit tests for the Execute Lambda handler (zip + tofu layer + S3 templates).
 
-Tests remediation logic with mocked subprocess calls to OpenTofu.
-Validates success cases, failure cases, idempotency, and error handling.
-
-Requirements tested: 7.5, 7.6, 7.7, 9.1
+Covers:
+- Remediation success / failure / timeout paths and OpenTofu invocation flags
+- Setup failures (provider cache, template download) returning structured errors
+- Clean work_dir per invocation (regression: a stale tfstate from a warm
+  container + -refresh=false made tofu report 'No changes' for a re-violated
+  resource, skipping remediation while reporting success)
+- ssl-only edge case: existing bucket policy passed for merge
+- Bucket name resolution from ARN vs resource_id fallback
 """
 
-import pytest
+import importlib.util
 import json
 import os
 import shutil
-from unittest.mock import Mock, patch, MagicMock, call
-from subprocess import CompletedProcess, TimeoutExpired
-
-# Import the handler module
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../lambdas/execute'))
-import handler
-from handler import lambda_handler, extract_bucket_name
+import uuid
+import pytest
+from unittest.mock import MagicMock, patch
+from subprocess import TimeoutExpired
+
+os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
+os.environ.setdefault('AWS_ACCESS_KEY_ID', 'testing')
+os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
+os.environ.setdefault('REMEDIATION_BUCKET', 'test-remediation-bucket')
+
+# Load under a unique module name: both lambdas ship a module called
+# `handler`, and a plain `import handler` would collide across test files.
+_spec = importlib.util.spec_from_file_location(
+    'execute_handler_unit',
+    os.path.join(os.path.dirname(__file__), '../../lambdas/execute/handler.py'),
+)
+handler = importlib.util.module_from_spec(_spec)
+sys.modules['execute_handler_unit'] = handler
+_spec.loader.exec_module(handler)
+
+lambda_handler = handler.lambda_handler
+setup_remediation = handler.setup_remediation
 
 
-class TestExtractBucketName:
-    """Test bucket name extraction from ARN."""
-    
-    def test_extract_bucket_name_standard(self):
-        """Test extraction from standard S3 ARN."""
-        arn = "arn:aws:s3:::my-test-bucket"
-        assert handler.extract_bucket_name(arn) == "my-test-bucket"
-    
-    def test_extract_bucket_name_with_dots(self):
-        """Test extraction from ARN with dots in bucket name."""
-        arn = "arn:aws:s3:::my.test.bucket"
-        assert handler.extract_bucket_name(arn) == "my.test.bucket"
-    
-    def test_extract_bucket_name_with_dashes(self):
-        """Test extraction from ARN with dashes in bucket name."""
-        arn = "arn:aws:s3:::my-test-bucket-123"
-        assert handler.extract_bucket_name(arn) == "my-test-bucket-123"
+def base_event(control_id='ctrl-s3-public-block', **overrides):
+    event = {
+        'resource_arn': 'arn:aws:s3:::my-test-bucket',
+        'resource_id': 'my-test-bucket',
+        'control_id': control_id,
+        'region': 'us-east-1',
+        'violation_id': 'vio-123',
+        'remediation_s3_key': f'controls/{control_id}/remediation.tf',
+    }
+    event.update(overrides)
+    return event
 
 
-class TestExecuteLambdaHandler:
-    """Test Execute Lambda handler with mocked subprocess calls."""
-    
-    @pytest.fixture
-    def mock_event(self):
-        """Standard event fixture."""
-        return {
-            "resource_arn": "arn:aws:s3:::non-compliant-bucket",
-            "region": "us-east-1"
-        }
-    
-    @pytest.fixture
-    def mock_context(self):
-        """Mock Lambda context."""
-        context = Mock()
-        context.function_name = "execute-lambda"
-        context.request_id = "test-request-id"
-        return context
-    
-    @pytest.fixture(autouse=True)
-    def setup_teardown(self):
-        """Setup and teardown for each test."""
-        # Setup: ensure /tmp/remediation doesn't exist
-        if os.path.exists('/tmp/remediation'):
-            shutil.rmtree('/tmp/remediation')
-        
-        yield
-        
-        # Teardown: clean up /tmp/remediation
-        if os.path.exists('/tmp/remediation'):
-            shutil.rmtree('/tmp/remediation')
-        if os.path.exists('/tmp/terraform.tfvars.json'):
-            os.remove('/tmp/terraform.tfvars.json')
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_non_compliant_bucket_remediated_successfully(
-        self, mock_run, mock_copy, mock_copytree, mock_event, mock_context
-    ):
-        """
-        Test: bucket não-compliant é remediado com sucesso.
-        
-        Requirement 7.5: Execute SHALL return success status when OpenTofu apply succeeds.
-        """
-        # Mock successful tofu apply
-        mock_run.return_value = CompletedProcess(
-            args=['tofu', 'apply'],
-            returncode=0,
-            stdout="aws_s3_bucket_public_access_block.remediation: Creation complete after 2s",
-            stderr=""
-        )
-        
-        # Execute handler
-        result = lambda_handler(mock_event, mock_context)
-        
-        # Verify result
-        assert result['remediation_status'] == 'success'
-        assert 'Creation complete' in result['output']
-        assert 'error' not in result
-        
-        # Verify subprocess.run was called with correct arguments
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        assert call_args[0][0] == [
-            'tofu', 'apply',
-            '-refresh=false',
-            '-auto-approve',
-            '-var-file=/tmp/terraform.tfvars.json',
-            '-state=/tmp/remediation.tfstate',
-            '-plugin-dir=/opt/providers'
-        ]
-        assert call_args[1]['cwd'] == '/tmp/remediation'
-        assert call_args[1]['timeout'] == 40
-        
-        # Verify tfvars file was created
-        assert os.path.exists('/tmp/terraform.tfvars.json')
-        with open('/tmp/terraform.tfvars.json', 'r') as f:
+def completed(returncode, stdout='', stderr=''):
+    m = MagicMock()
+    m.returncode = returncode
+    m.stdout = stdout
+    m.stderr = stderr
+    return m
+
+
+@pytest.fixture
+def work_dir(tmp_path):
+    d = tmp_path / 'work'
+    d.mkdir()
+    return str(d)
+
+
+@pytest.fixture
+def patched_setup(work_dir):
+    """Bypass S3/provider setup; hand the handler a ready work_dir."""
+    with patch.object(handler, 'ensure_provider_cache'), \
+         patch.object(handler, 'setup_remediation', return_value=work_dir) as setup:
+        yield setup
+
+
+class TestLambdaHandlerSuccess:
+    def test_success_returns_output(self, patched_setup):
+        with patch.object(handler.subprocess, 'run',
+                          return_value=completed(0, 'Apply complete!')) as run:
+            result = lambda_handler(base_event(), None)
+        assert result == {'remediation_status': 'success', 'output': 'Apply complete!'}
+        run.assert_called_once()
+
+    def test_tofu_invocation_flags(self, patched_setup, work_dir):
+        with patch.object(handler.subprocess, 'run', return_value=completed(0)) as run:
+            lambda_handler(base_event(), None)
+        args, kwargs = run.call_args
+        cmd = args[0]
+        assert cmd[0] == '/opt/bin/tofu'
+        assert 'apply' in cmd
+        assert '-refresh=false' in cmd
+        assert '-auto-approve' in cmd
+        assert f'-state=/tmp/ctrl-s3-public-block/my-test-bucket.tfstate' in cmd
+        assert kwargs['cwd'] == work_dir
+        assert kwargs['timeout'] == 65
+
+    def test_tfvars_written_with_bucket_and_region(self, patched_setup, work_dir):
+        with patch.object(handler.subprocess, 'run', return_value=completed(0)):
+            lambda_handler(base_event(), None)
+        with open(f'{work_dir}/terraform.tfvars.json') as f:
             tfvars = json.load(f)
-            assert tfvars['bucket_name'] == 'non-compliant-bucket'
-            assert tfvars['region'] == 'us-east-1'
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_compliant_bucket_returns_success_idempotency(
-        self, mock_run, mock_copy, mock_copytree, mock_event, mock_context
-    ):
-        """
-        Test: bucket já compliant retorna success (idempotência).
-        
-        Requirement 7.7: Execute SHALL operate idempotently on the same resource.
-        Requirement 9.1: Execute SHALL produce the same final resource state when invoked multiple times.
-        """
-        # Mock tofu apply on already compliant bucket (no changes)
-        mock_run.return_value = CompletedProcess(
-            args=['tofu', 'apply'],
-            returncode=0,
-            stdout="aws_s3_bucket_public_access_block.remediation: Refreshing state...\n\nNo changes. Your infrastructure matches the configuration.",
-            stderr=""
+        assert tfvars['bucket_name'] == 'my-test-bucket'
+        assert tfvars['region'] == 'us-east-1'
+        assert tfvars['resource_id'] == 'my-test-bucket'
+
+    def test_non_s3_arn_falls_back_to_resource_id(self, patched_setup, work_dir):
+        event = base_event(
+            control_id='ctrl-ebs-encryption-default',
+            resource_arn='arn:aws:us-east-1:123456789012',
+            resource_id='account-level',
+            remediation_s3_key='controls/ctrl-ebs-encryption-default/remediation.tf',
         )
-        
-        # Execute handler
-        result = lambda_handler(mock_event, mock_context)
-        
-        # Verify result indicates success (idempotent operation)
-        assert result['remediation_status'] == 'success'
-        assert 'No changes' in result['output']
-        
-        # Execute again to verify idempotency
-        result2 = lambda_handler(mock_event, mock_context)
-        assert result2['remediation_status'] == 'success'
-        assert result2['output'] == result['output']
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_nonexistent_bucket_returns_failure(
-        self, mock_run, mock_copy, mock_copytree, mock_context
-    ):
-        """
-        Test: bucket inexistente retorna failure.
-        
-        Requirement 7.6: Execute SHALL return failure status with error details when OpenTofu apply fails.
-        """
-        event = {
-            "resource_arn": "arn:aws:s3:::nonexistent-bucket",
-            "region": "us-east-1"
-        }
-        
-        # Mock tofu apply failure for nonexistent bucket
-        mock_run.return_value = CompletedProcess(
-            args=['tofu', 'apply'],
-            returncode=1,
-            stdout="",
-            stderr="Error: error creating S3 Bucket Public Access Block: NoSuchBucket: The specified bucket does not exist"
-        )
-        
-        # Execute handler
-        result = lambda_handler(event, mock_context)
-        
-        # Verify result indicates failure
+        with patch.object(handler.subprocess, 'run', return_value=completed(0)):
+            lambda_handler(event, None)
+        with open(f'{work_dir}/terraform.tfvars.json') as f:
+            tfvars = json.load(f)
+        assert tfvars['bucket_name'] == 'account-level'
+
+
+class TestLambdaHandlerFailure:
+    def test_nonzero_exit_returns_failed_with_stderr(self, patched_setup):
+        with patch.object(handler.subprocess, 'run',
+                          return_value=completed(1, '', 'AccessDenied: nope')):
+            result = lambda_handler(base_event(), None)
         assert result['remediation_status'] == 'failed'
-        assert 'error' in result
-        assert 'NoSuchBucket' in result['error']
-        assert 'does not exist' in result['error']
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_iam_permission_error_returns_failure(
-        self, mock_run, mock_copy, mock_copytree, mock_event, mock_context
-    ):
-        """
-        Test: erro de permissão IAM retorna failure com erro.
-        
-        Requirement 7.6: Execute SHALL return failure status with error details when OpenTofu apply fails.
-        """
-        # Mock tofu apply failure due to IAM permissions
-        mock_run.return_value = CompletedProcess(
-            args=['tofu', 'apply'],
-            returncode=1,
-            stdout="",
-            stderr="Error: error creating S3 Bucket Public Access Block: AccessDenied: Access Denied\n\tstatus code: 403"
-        )
-        
-        # Execute handler
-        result = lambda_handler(mock_event, mock_context)
-        
-        # Verify result indicates failure with permission error
-        assert result['remediation_status'] == 'failed'
-        assert 'error' in result
         assert 'AccessDenied' in result['error']
-        assert '403' in result['error']
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_opentofu_timeout_returns_failure(
-        self, mock_run, mock_copy, mock_copytree, mock_event, mock_context
-    ):
-        """
-        Test: timeout de OpenTofu retorna failure.
-        
-        Requirement 7.6: Execute SHALL return failure status with error details when OpenTofu apply fails.
-        """
-        # Mock tofu apply timeout
-        mock_run.side_effect = TimeoutExpired(
-            cmd=['tofu', 'apply'],
-            timeout=40
-        )
-        
-        # Execute handler
-        result = lambda_handler(mock_event, mock_context)
-        
-        # Verify result indicates failure with timeout error
+
+    def test_timeout_returns_failed(self, patched_setup):
+        with patch.object(handler.subprocess, 'run',
+                          side_effect=TimeoutExpired('tofu', 65)):
+            result = lambda_handler(base_event(), None)
         assert result['remediation_status'] == 'failed'
-        assert 'error' in result
-        assert 'timed out' in result['error'].lower()
-        assert '40 seconds' in result['error']
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_warm_container_cleanup(
-        self, mock_run, mock_copy, mock_copytree, mock_event, mock_context
-    ):
-        """
-        Test: warm container cleanup removes existing /tmp/remediation/.
-        
-        Verifies that handler cleans up previous execution state.
-        """
-        # Create existing /tmp/remediation directory (simulating warm container)
-        os.makedirs('/tmp/remediation', exist_ok=True)
-        with open('/tmp/remediation/old_file.txt', 'w') as f:
-            f.write('old content')
-        
-        # Mock successful tofu apply
-        mock_run.return_value = CompletedProcess(
-            args=['tofu', 'apply'],
-            returncode=0,
-            stdout="Success",
-            stderr=""
-        )
-        
-        # Execute handler
-        result = lambda_handler(mock_event, mock_context)
-        
-        # Verify old file was removed
-        assert not os.path.exists('/tmp/remediation/old_file.txt')
-        assert result['remediation_status'] == 'success'
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_tfvars_contains_correct_values(
-        self, mock_run, mock_copy, mock_copytree, mock_context
-    ):
-        """
-        Test: terraform.tfvars.json contains correct bucket_name and region.
-        
-        Verifies that variables are correctly passed to OpenTofu.
-        """
-        event = {
-            "resource_arn": "arn:aws:s3:::test-bucket-with-dots.example",
-            "region": "eu-west-1"
-        }
-        
-        # Mock successful tofu apply
-        mock_run.return_value = CompletedProcess(
-            args=['tofu', 'apply'],
-            returncode=0,
-            stdout="Success",
-            stderr=""
-        )
-        
-        # Execute handler
-        lambda_handler(event, mock_context)
-        
-        # Verify tfvars file contents
-        assert os.path.exists('/tmp/terraform.tfvars.json')
-        with open('/tmp/terraform.tfvars.json', 'r') as f:
+        assert 'timed out' in result['error']
+
+    def test_setup_failure_returns_failed_without_running_tofu(self, work_dir):
+        with patch.object(handler, 'ensure_provider_cache'), \
+             patch.object(handler, 'setup_remediation',
+                          side_effect=RuntimeError('S3 download failed')), \
+             patch.object(handler.subprocess, 'run') as run:
+            result = lambda_handler(base_event(), None)
+        assert result['remediation_status'] == 'failed'
+        assert 'Setup failed' in result['error']
+        run.assert_not_called()
+
+    def test_provider_cache_failure_returns_failed(self):
+        with patch.object(handler, 'ensure_provider_cache',
+                          side_effect=RuntimeError('no cache')), \
+             patch.object(handler.subprocess, 'run') as run:
+            result = lambda_handler(base_event(), None)
+        assert result['remediation_status'] == 'failed'
+        assert 'Setup failed' in result['error']
+        run.assert_not_called()
+
+
+class TestSslOnlyPolicyMerge:
+    def test_existing_policy_passed_to_tfvars(self, patched_setup, work_dir):
+        policy = json.dumps({'Version': '2012-10-17', 'Statement': [{'Sid': 'Keep'}]})
+        s3 = MagicMock()
+        s3.get_bucket_policy.return_value = {'Policy': policy}
+        event = base_event(control_id='ctrl-s3-ssl-only',
+                           remediation_s3_key='controls/ctrl-s3-ssl-only/remediation.tf')
+        with patch.object(handler, 's3', s3), \
+             patch.object(handler.subprocess, 'run', return_value=completed(0)):
+            lambda_handler(event, None)
+        with open(f'{work_dir}/terraform.tfvars.json') as f:
             tfvars = json.load(f)
-            assert tfvars['bucket_name'] == 'test-bucket-with-dots.example'
-            assert tfvars['region'] == 'eu-west-1'
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_subprocess_called_with_refresh_false(
-        self, mock_run, mock_copy, mock_copytree, mock_event, mock_context
-    ):
-        """
-        Test: subprocess.run is called with -refresh=false flag.
-        
-        Requirement 7.3: Execute SHALL use -refresh=false flag.
-        """
-        # Mock successful tofu apply
-        mock_run.return_value = CompletedProcess(
-            args=['tofu', 'apply'],
-            returncode=0,
-            stdout="Success",
-            stderr=""
-        )
-        
-        # Execute handler
-        lambda_handler(mock_event, mock_context)
-        
-        # Verify -refresh=false is in the command
-        call_args = mock_run.call_args[0][0]
-        assert '-refresh=false' in call_args
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_unexpected_exception_returns_failure(
-        self, mock_run, mock_copy, mock_copytree, mock_event, mock_context
-    ):
-        """
-        Test: unexpected exception during remediation returns failure.
-        
-        Verifies error handling for unexpected errors.
-        """
-        # Mock unexpected exception
-        mock_run.side_effect = Exception("Unexpected error occurred")
-        
-        # Execute handler
-        result = lambda_handler(mock_event, mock_context)
-        
-        # Verify result indicates failure
+        assert tfvars['existing_policy'] == policy
+
+    def test_missing_policy_is_tolerated(self, patched_setup, work_dir):
+        from botocore.exceptions import ClientError
+        s3 = MagicMock()
+        s3.get_bucket_policy.side_effect = ClientError(
+            {'Error': {'Code': 'NoSuchBucketPolicy', 'Message': 'x'}}, 'GetBucketPolicy')
+        event = base_event(control_id='ctrl-s3-ssl-only',
+                           remediation_s3_key='controls/ctrl-s3-ssl-only/remediation.tf')
+        with patch.object(handler, 's3', s3), \
+             patch.object(handler.subprocess, 'run', return_value=completed(0)):
+            result = lambda_handler(event, None)
+        assert result['remediation_status'] == 'success'
+        with open(f'{work_dir}/terraform.tfvars.json') as f:
+            tfvars = json.load(f)
+        assert 'existing_policy' not in tfvars
+
+    def test_policy_read_error_aborts_instead_of_overwriting(self, patched_setup):
+        """Regression: AccessDenied/throttling on GetBucketPolicy must abort —
+        proceeding would rewrite the bucket policy with only the SSL statement,
+        silently destroying the customer's statements."""
+        from botocore.exceptions import ClientError
+        s3 = MagicMock()
+        s3.get_bucket_policy.side_effect = ClientError(
+            {'Error': {'Code': 'AccessDenied', 'Message': 'nope'}}, 'GetBucketPolicy')
+        event = base_event(control_id='ctrl-s3-ssl-only',
+                           remediation_s3_key='controls/ctrl-s3-ssl-only/remediation.tf')
+        with patch.object(handler, 's3', s3), \
+             patch.object(handler.subprocess, 'run', return_value=completed(0)) as run:
+            result = lambda_handler(event, None)
         assert result['remediation_status'] == 'failed'
-        assert 'error' in result
-        assert 'Unexpected error' in result['error']
-    
-    @patch('handler.shutil.copytree')
-    @patch('handler.shutil.copy')
-    @patch('handler.subprocess.run')
-    def test_multiple_invocations_same_resource_idempotent(
-        self, mock_run, mock_copy, mock_copytree, mock_event, mock_context
-    ):
-        """
-        Test: multiple invocations for same resource produce same final state.
-        
-        Requirement 9.1: Execute SHALL produce the same final resource state when invoked multiple times.
-        """
-        # Mock successful tofu apply
-        mock_run.return_value = CompletedProcess(
-            args=['tofu', 'apply'],
-            returncode=0,
-            stdout="aws_s3_bucket_public_access_block.remediation: Creation complete",
-            stderr=""
+        assert 'AccessDenied' in result['error']
+        run.assert_not_called()
+
+    def test_other_controls_do_not_fetch_bucket_policy(self, patched_setup):
+        s3 = MagicMock()
+        with patch.object(handler, 's3', s3), \
+             patch.object(handler.subprocess, 'run', return_value=completed(0)):
+            lambda_handler(base_event(), None)
+        s3.get_bucket_policy.assert_not_called()
+
+
+class TestSetupRemediationCleanWorkdir:
+    """Regression for the stale-state bug: setup_remediation must recreate the
+    work_dir from scratch so no tfstate survives a warm invocation."""
+
+    @pytest.fixture
+    def env(self, tmp_path):
+        tf_cache = tmp_path / 'tf-dot-terraform'
+        tf_cache.mkdir()
+        tf_lock = tmp_path / 'tf-lock.hcl'
+        tf_lock.write_text('# lock')
+        control_id = f'test-{uuid.uuid4().hex[:8]}'
+        yield {'tf_cache': str(tf_cache), 'tf_lock': str(tf_lock),
+               'control_id': control_id}
+        shutil.rmtree(f'/tmp/{control_id}', ignore_errors=True)
+
+    def test_stale_tfstate_is_removed(self, env):
+        control_id = env['control_id']
+        work_dir = f'/tmp/{control_id}'
+        os.makedirs(work_dir)
+        stale_state = f'{work_dir}/my-bucket.tfstate'
+        with open(stale_state, 'w') as f:
+            f.write('{"resources": ["stale"]}')
+
+        s3 = MagicMock()
+        with patch.object(handler, 's3', s3), \
+             patch.object(handler, 'TF_CACHE', env['tf_cache']), \
+             patch.object(handler, 'TF_LOCK', env['tf_lock']):
+            returned = setup_remediation(control_id, f'controls/{control_id}/remediation.tf')
+
+        assert returned == work_dir
+        assert not os.path.exists(stale_state), \
+            'stale tfstate must not survive into a new invocation'
+
+    def test_workdir_rebuilt_with_cache_links(self, env):
+        control_id = env['control_id']
+        s3 = MagicMock()
+        with patch.object(handler, 's3', s3), \
+             patch.object(handler, 'TF_CACHE', env['tf_cache']), \
+             patch.object(handler, 'TF_LOCK', env['tf_lock']):
+            work_dir = setup_remediation(control_id, f'controls/{control_id}/remediation.tf')
+
+        assert os.path.islink(f'{work_dir}/.terraform')
+        assert os.readlink(f'{work_dir}/.terraform') == env['tf_cache']
+        assert os.path.exists(f'{work_dir}/.terraform.lock.hcl')
+        s3.download_file.assert_called_once_with(
+            handler.REMEDIATION_BUCKET,
+            f'controls/{control_id}/remediation.tf',
+            f'{work_dir}/remediation.tf',
         )
-        
-        # Execute handler multiple times
-        result1 = lambda_handler(mock_event, mock_context)
-        result2 = lambda_handler(mock_event, mock_context)
-        result3 = lambda_handler(mock_event, mock_context)
-        
-        # Verify all invocations return success
-        assert result1['remediation_status'] == 'success'
-        assert result2['remediation_status'] == 'success'
-        assert result3['remediation_status'] == 'success'
-        
-        # Verify subprocess was called 3 times
-        assert mock_run.call_count == 3
+
+    def test_repeated_calls_are_idempotent(self, env):
+        control_id = env['control_id']
+        s3 = MagicMock()
+        with patch.object(handler, 's3', s3), \
+             patch.object(handler, 'TF_CACHE', env['tf_cache']), \
+             patch.object(handler, 'TF_LOCK', env['tf_lock']):
+            setup_remediation(control_id, 'key')
+            work_dir = setup_remediation(control_id, 'key')
+        assert os.path.islink(f'{work_dir}/.terraform')
+        assert s3.download_file.call_count == 2

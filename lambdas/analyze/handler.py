@@ -54,6 +54,18 @@ def get_boto_client(service: str):
     return _boto_clients[service]
 
 
+def _substitute_params(obj: Any, resource_id: str) -> Any:
+    """Replace the {resource_id} placeholder structurally — string-replacing
+    the serialized JSON would corrupt it for ids containing quotes/backslashes."""
+    if isinstance(obj, str):
+        return obj.replace('{resource_id}', resource_id)
+    if isinstance(obj, dict):
+        return {k: _substitute_params(v, resource_id) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_substitute_params(v, resource_id) for v in obj]
+    return obj
+
+
 def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dict[str, Any]:
     cache_key = f"{fetch_config['method']}:{resource_id}"
     if cache_key in _config_cache:
@@ -61,7 +73,7 @@ def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dic
 
     client = get_boto_client(fetch_config['service'])
     method = getattr(client, fetch_config['method'])
-    params = json.loads(json.dumps(fetch_config.get('params', {})).replace('{resource_id}', resource_id))
+    params = _substitute_params(fetch_config.get('params', {}), resource_id)
 
     try:
         result = method(**params)
@@ -83,31 +95,48 @@ def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dic
 
 # --- OPA Evaluation ---
 
-def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any], rego_s3_key: str = None) -> bool:
+class PolicyEvaluationError(Exception):
+    """Raised when OPA cannot evaluate the policy (vs. a policy that denies).
+
+    Evaluation failure must NOT be conflated with non-compliance: classifying
+    an unevaluated resource as S_violation triggers remediation based on no
+    policy decision at all. The caller escalates (S_error) instead.
+    """
+    pass
+
+
+def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
+                             rego_s3_key: str = None, policy_version: str = 'v1.0') -> bool:
     opa_input = {"resource": resource_config}
-    policy_path = f'/tmp/policies/{rego_package}.rego'
+    # Version-keyed cache: warm containers must not keep evaluating a stale
+    # .rego after the control's policy_version changes in DynamoDB — the log
+    # would then claim a policy_version that was never actually executed.
+    policy_path = f'/tmp/policies/{rego_package}@{policy_version}.rego'
     input_path = '/tmp/opa_input.json'
 
     if not os.path.exists(policy_path) and rego_s3_key and POLICY_BUCKET:
         os.makedirs('/tmp/policies', exist_ok=True)
         s3_client.download_file(POLICY_BUCKET, rego_s3_key, policy_path)
 
-    with open(input_path, 'w') as f:
-        json.dump(opa_input, f)
     try:
+        # default=str: boto3 responses may carry datetime objects (RDS,
+        # CloudTrail, ...); without it the dump raises before OPA even runs.
+        with open(input_path, 'w') as f:
+            json.dump(opa_input, f, default=str)
+
         result = subprocess.run(
             ['/opt/bin/opa', 'eval', '--data', policy_path, '--input', input_path,
              '--format', 'json', f'data.{rego_package}.allow'],
             capture_output=True, text=True, timeout=5
         )
         if result.returncode != 0:
-            print(f"OPA error ({rego_package}): {result.stderr}")
-            return False
+            raise PolicyEvaluationError(f"OPA eval failed ({rego_package}): {result.stderr}")
         output = json.loads(result.stdout)
         return bool(output.get('result', [{}])[0].get('expressions', [{}])[0].get('value', False))
+    except PolicyEvaluationError:
+        raise
     except Exception as e:
-        print(f"OPA exception ({rego_package}): {e}")
-        return False
+        raise PolicyEvaluationError(f"OPA exception ({rego_package}): {e}")
 
 
 # --- Exception Query ---
@@ -126,14 +155,16 @@ def query_exception(control_id: str, resource_arn: str) -> Optional[Dict[str, An
     destructive for an authorized resource). On query failure, escalate.
     """
     try:
+        # No Limit here: DynamoDB applies Limit BEFORE FilterExpression, so
+        # Limit=1 could read only an expired exception and miss a valid one
+        # for the same resource+control pair.
         resp = exceptions_table.query(
             IndexName='resource-control-index',
             KeyConditionExpression='resource_arn = :arn AND control_id = :cid',
             FilterExpression='valid_until > :now',
             ExpressionAttributeValues={
                 ':arn': resource_arn, ':cid': control_id, ':now': int(time.time())
-            },
-            Limit=1
+            }
         )
         items = resp.get('Items', [])
         return items[0] if items else None
@@ -188,7 +219,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 raise ValueError(f"No fetch_config for: {control_id}")
 
             resource_config = fetch_resource_config(fetch_config, resource_id)
-            is_compliant = evaluate_policy_with_opa(rego_package, resource_config, control.get('rego_s3_key'))
+            is_compliant = evaluate_policy_with_opa(
+                rego_package, resource_config,
+                control.get('rego_s3_key'), control.get('policy_version', 'v1.0'))
 
             # Only query exceptions for non-compliant resources. A query failure
             # here must escalate (S_error), never silently remediate an
