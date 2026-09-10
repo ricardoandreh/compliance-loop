@@ -125,44 +125,76 @@ Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão I
 
 ## Pré-requisitos
 
-- Python 3.13+
+- Python 3.13+ com `boto3` — os scripts de teste e benchmark não rodam sem ele
 - AWS CLI configurado
 - OpenTofu (executado via Docker: `ghcr.io/opentofu/opentofu:latest`)
 
-## Deploy
+O `boto3` precisa estar no interpretador que você usa para chamar os scripts.
+Neste ambiente ele vive num virtualenv:
 
 ```bash
-# 1. Provisionar infraestrutura
-cd infra
-docker run --rm -v "$(pwd)/../:/work" -v "$HOME/.aws:/root/.aws:ro" \
-  -w /work/infra ghcr.io/opentofu/opentofu:latest init
-docker run --rm -v "$(pwd)/../:/work" -v "$HOME/.aws:/root/.aws:ro" \
-  -w /work/infra ghcr.io/opentofu/opentofu:latest apply
-
-# 2. Deploy dos controles
-./scripts/deploy_control.sh --all
-
-# 3. Build e deploy das Lambdas
-cd lambdas/analyze && zip -j analyze.zip handler.py && \
-  aws lambda update-function-code --function-name compliance-loop-analyze-dev \
-    --zip-file fileb://analyze.zip
-cd ../execute && zip -j execute.zip handler.py && \
-  aws lambda update-function-code --function-name compliance-loop-execute-dev \
-    --zip-file fileb://execute.zip
+lambdas/analyze/.venv/bin/python scripts/integration_test.py
+lambdas/analyze/.venv/bin/python scripts/benchmark.py --runs 10
 ```
+
+O `benchmark.py` repassa o próprio interpretador (`sys.executable`) ao invocar
+o `integration_test.py`, então basta acertar o de fora. Chamar com o `python3`
+do sistema falha com `ModuleNotFoundError: No module named 'boto3'`.
+
+## Deploy
+
+Rode **a partir da raiz do repositório**, com `-chdir=infra`:
+
+```bash
+# 1. Provisionar infraestrutura (empacota e publica as Lambdas junto)
+tofu -chdir=infra init
+tofu -chdir=infra apply
+
+# 2. Deploy dos controles (só quando policy.rego / remediation.tf / control.json mudarem)
+./scripts/deploy_control.sh --all
+```
+
+O código das Lambdas é empacotado pelo `archive_file` durante o `apply` — não
+há passo manual de `zip` + `update-function-code`.
+
+> **Não rode de dentro de `infra/`.** Se o `tofu` do seu PATH for o wrapper
+> Docker (`docker run -v "$(pwd):/workspace" -w /workspace ...`), ele monta
+> apenas o diretório atual. A partir de `infra/`, o `lambdas/` fica fora do
+> mount e os módulos de layer falham com:
+>
+> ```
+> Call to function "filebase64sha256" failed:
+>   open ../lambdas/analyze/opa_layer.zip: no such file or directory
+> ```
+>
+> O arquivo existe — é o container que não o enxerga. Rodar da raiz com
+> `-chdir=infra` monta o repositório inteiro e resolve. Os caminhos
+> `${path.module}/../../../lambdas/...` dos módulos estão corretos.
+
+Alternativa sem wrapper, invocando o Docker diretamente da raiz:
+
+```bash
+docker run --rm -v "$(pwd):/work" -v "$HOME/.aws:/root/.aws:ro" \
+  -w /work/infra ghcr.io/opentofu/opentofu:latest apply
+```
+
+As layers OPA e OpenTofu usam zips pré-construídos
+(`lambdas/analyze/opa_layer.zip`, `lambdas/execute/tofu_layer.zip`), que são
+artefatos de build ignorados pelo git — precisam existir localmente antes do
+`apply`.
 
 ## Testes
 
 ```bash
 # Testes de integração end-to-end (todos os cenários + controles)
-python3 scripts/integration_test.py
+lambdas/analyze/.venv/bin/python scripts/integration_test.py
 
 # Teste específico
-python3 scripts/integration_test.py --test C1
-python3 scripts/integration_test.py --test CTRL-03
+lambdas/analyze/.venv/bin/python scripts/integration_test.py --test C1
+lambdas/analyze/.venv/bin/python scripts/integration_test.py --test CTRL-03
 
 # Com métricas em JSON
-python3 scripts/integration_test.py --json
+lambdas/analyze/.venv/bin/python scripts/integration_test.py --json
 ```
 
 ### Benchmark (múltiplas execuções)
@@ -173,10 +205,10 @@ repete a suíte, preserva o JSON bruto de cada rodada e agrega:
 
 ```bash
 # 10 execuções -> results/run-NN.json + summary.{json,md}
-python3 scripts/benchmark.py --runs 10
+lambdas/analyze/.venv/bin/python scripts/benchmark.py --runs 10
 
 # Reagrega o que já está em disco, sem tocar na AWS
-python3 scripts/benchmark.py --aggregate-only --out results/
+lambdas/analyze/.venv/bin/python scripts/benchmark.py --aggregate-only --out results/
 ```
 
 Reporta n, média, desvio amostral, mediana, amplitude e IC 95% por cenário e

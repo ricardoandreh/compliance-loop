@@ -97,17 +97,17 @@ def run_suite(run_index, out_dir, extra_args):
     # stop: the run's JSON still carries the scenarios that did pass.
     status = "ok" if proc.returncode == 0 else f"exit={proc.returncode}"
     if not os.path.exists(path):
-        print(f"  run {run_index:02d}: NO OUTPUT ({status}, {elapsed}s)")
+        print(f"  run {run_index:02d}: NO OUTPUT ({status}, {elapsed}s)", flush=True)
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
         for line in tail:
-            print(f"      {line}")
+            print(f"      {line}", flush=True)
         return None
 
     with open(path) as f:
         payload = json.load(f)
     passed = sum(1 for v in payload.get("results", {}).values() if v == "PASS")
     total = len(payload.get("results", {}))
-    print(f"  run {run_index:02d}: {passed}/{total} passed ({status}, {elapsed}s) -> {path}")
+    print(f"  run {run_index:02d}: {passed}/{total} passed ({status}, {elapsed}s) -> {path}", flush=True)
     return payload
 
 
@@ -253,11 +253,11 @@ def main():
         if args.test:
             extra += ["--test", args.test]
 
-        print(f"Running the suite {args.runs}x -> {out_dir}\n")
+        print(f"Running the suite {args.runs}x -> {out_dir}\n", flush=True)
         for i in range(1, args.runs + 1):
             run_suite(i, out_dir, extra)
             if i < args.runs and args.settle:
-                print(f"  settling {args.settle}s...")
+                print(f"  settling {args.settle}s...", flush=True)
                 time.sleep(args.settle)
         print()
 
