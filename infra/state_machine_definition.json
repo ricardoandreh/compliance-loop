@@ -1,7 +1,7 @@
 {
-  "Comment": "MAPE-K Compliance Loop — Single Analyze, Map over results",
+  "Comment": "MAPE-K Compliance Loop — Single Analyze, Map over results. Timeout budget: the global timeout must cover the serial worst case, since ProcessResults runs with MaxConcurrency=1 — InvokeAnalyze (75s) + n_controls x (InvokeExecute 90s + writes ~5s). At the current 5 controls that is 550s, hence 600s. Raising the per-control Execute timeout, or adding controls that share a CloudTrail event, requires revisiting this.",
   "StartAt": "ResolveResource",
-  "TimeoutSeconds": 300,
+  "TimeoutSeconds": 600,
   "QueryLanguage": "JSONata",
   "States": {
     "ResolveResource": {
@@ -135,7 +135,7 @@
           "event_time": "{% $states.input.event_time %}"
         }
       },
-      "TimeoutSeconds": 30,
+      "TimeoutSeconds": 75,
       "Output": {
         "resource_arn": "{% $states.input.resource_arn %}",
         "resource_id": "{% $states.input.resource_id %}",
@@ -373,24 +373,26 @@
           },
           "EnqueueEscalation": {
             "Type": "Task",
+            "Comment": "Deduplication is by violation_id (unique per evaluation), NOT by resource+control: the FIFO 5-minute window would otherwise drop a second violation of the same pair, and that violation_id would never receive its github_issue_url, breaking the H2 audit chain. Duplicate ISSUES are prevented one layer up, by find_open_issue() in the escalation Lambda, which is where semantic deduplication belongs.",
             "Resource": "arn:aws:states:::sqs:sendMessage",
             "Arguments": {
               "QueueUrl": "${escalation_queue_url}",
               "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'error': $string($states.input.execute_result.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
               "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
-              "MessageDeduplicationId": "{% $states.input.resource_arn & '#' & $states.input.analyze_result.control_id %}"
+              "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
             },
             "Output": { "outcome": "escalated" },
             "End": true
           },
           "ControlErrorEscalation": {
             "Type": "Task",
+            "Comment": "Deduplication is by violation_id (unique per evaluation), NOT by resource+control: the FIFO 5-minute window would otherwise drop a second violation of the same pair, and that violation_id would never receive its github_issue_url, breaking the H2 audit chain. Duplicate ISSUES are prevented one layer up, by find_open_issue() in the escalation Lambda, which is where semantic deduplication belongs.",
             "Resource": "arn:aws:states:::sqs:sendMessage",
             "Arguments": {
               "QueueUrl": "${escalation_queue_url}",
               "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'error': 'Analyze returned: ' & $states.input.analyze_result.state & ' - ' & ($states.input.analyze_result.error ? $states.input.analyze_result.error : 'unknown'), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
               "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
-              "MessageDeduplicationId": "{% $states.input.resource_arn & '#' & $states.input.analyze_result.control_id %}"
+              "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
             },
             "Output": { "outcome": "escalated" },
             "End": true

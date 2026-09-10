@@ -95,6 +95,28 @@ def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dic
 
 # --- OPA Evaluation ---
 
+# --- Evaluation time budget ---
+#
+# Each control costs one OPA subprocess. With a fixed per-control timeout the
+# worst case is (n_controls x timeout), which can exceed the Lambda timeout and
+# get the whole invocation killed — losing the per-control rows for EVERY
+# control, not just the slow one. The budget is therefore derived from the time
+# actually left, so the handler always returns a complete results[] (an
+# unevaluated control becomes S_error, which the state machine logs and
+# escalates) instead of dying wholesale.
+OPA_MAX_TIMEOUT = 5.0
+# Room to finish the loop, build the response and return before Lambda kills us.
+TIME_RESERVE_MS = 3000
+
+
+def opa_budget(lambda_context: Any) -> float:
+    """Seconds this control may spend in OPA, given the time left."""
+    if lambda_context is None or not hasattr(lambda_context, 'get_remaining_time_in_millis'):
+        return OPA_MAX_TIMEOUT
+    remaining_ms = lambda_context.get_remaining_time_in_millis() - TIME_RESERVE_MS
+    return max(0.0, min(OPA_MAX_TIMEOUT, remaining_ms / 1000.0))
+
+
 class PolicyEvaluationError(Exception):
     """Raised when OPA cannot evaluate the policy (vs. a policy that denies).
 
@@ -107,7 +129,8 @@ class PolicyEvaluationError(Exception):
 
 def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
                              rego_s3_key: str = None, policy_version: str = 'v1.0',
-                             context: Dict[str, Any] = None) -> bool:
+                             context: Dict[str, Any] = None,
+                             timeout: float = OPA_MAX_TIMEOUT) -> bool:
     # "resource" is the raw AWS API response for the resource; "context" is
     # evaluation metadata (resource_id/arn, account, region) kept in its own
     # namespace so it can never collide with resource_config keys. Policies
@@ -122,6 +145,11 @@ def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
     policy_path = f'/tmp/policies/{rego_package}@{policy_version}.rego'
     input_path = '/tmp/opa_input.json'
 
+    if timeout <= 0:
+        raise PolicyEvaluationError(
+            f"No time budget left to evaluate {rego_package}; "
+            f"refusing to start OPA (control reported as S_error)")
+
     if not os.path.exists(policy_path) and rego_s3_key and POLICY_BUCKET:
         os.makedirs('/tmp/policies', exist_ok=True)
         s3_client.download_file(POLICY_BUCKET, rego_s3_key, policy_path)
@@ -135,7 +163,7 @@ def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
         result = subprocess.run(
             ['/opt/bin/opa', 'eval', '--data', policy_path, '--input', input_path,
              '--format', 'json', f'data.{rego_package}.allow'],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=timeout
         )
         if result.returncode != 0:
             raise PolicyEvaluationError(f"OPA eval failed ({rego_package}): {result.stderr}")
@@ -231,6 +259,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 raise ValueError(f"No fetch_config for: {control_id}")
 
             resource_config = fetch_resource_config(fetch_config, resource_id)
+            # Recomputed per control: the budget shrinks as the loop advances,
+            # so a slow early control cannot starve the Lambda of the time it
+            # needs to report the remaining ones.
+            budget = opa_budget(context)
             is_compliant = evaluate_policy_with_opa(
                 rego_package, resource_config,
                 control.get('rego_s3_key'), control.get('policy_version', 'v1.0'),
@@ -240,6 +272,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'account_id':   account_id,
                     'region':       region,
                 },
+                timeout=budget,
             )
 
             # Only query exceptions for non-compliant resources. A query failure

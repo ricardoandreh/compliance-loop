@@ -19,7 +19,11 @@ resource "aws_lambda_function" "analyze" {
   handler          = "handler.lambda_handler"
   runtime          = "python3.13"
   architectures    = ["arm64"]
-  timeout          = 15
+  # 60s, not 15: worst case is (n_controls x OPA_MAX_TIMEOUT). CreateBucket
+  # alone fans out to 4 S3 controls, so 15s could not even cover the nominal
+  # worst case, and a timeout here loses the per-control rows for ALL controls.
+  # The handler additionally derives a per-control budget from the time left.
+  timeout          = 60
   memory_size      = 512
   layers           = [var.opa_layer_arn]
 

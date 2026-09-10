@@ -292,6 +292,56 @@ class TestEvaluatePolicyWithOpa:
         assert self.read_opa_input() == {'resource': {'x': 1}}
 
 
+class TestOpaBudget:
+    """The per-control OPA budget must come from the time actually left, so a
+    slow control degrades to S_error instead of killing the whole invocation
+    (which would lose the per-control rows for every control)."""
+
+    class Ctx:
+        def __init__(self, ms):
+            self._ms = ms
+
+        def get_remaining_time_in_millis(self):
+            return self._ms
+
+    def test_plenty_of_time_caps_at_max(self):
+        assert handler.opa_budget(self.Ctx(60_000)) == handler.OPA_MAX_TIMEOUT
+
+    def test_budget_shrinks_with_remaining_time(self):
+        # 4s left minus the 3s reserve leaves 1s.
+        assert handler.opa_budget(self.Ctx(4_000)) == pytest.approx(1.0)
+
+    def test_exhausted_budget_is_zero_never_negative(self):
+        assert handler.opa_budget(self.Ctx(500)) == 0.0
+
+    def test_no_context_falls_back_to_max(self):
+        assert handler.opa_budget(None) == handler.OPA_MAX_TIMEOUT
+
+    def test_zero_budget_refuses_to_start_opa(self):
+        """Regression: with no time left, report S_error rather than launching
+        a subprocess that Lambda will kill mid-flight."""
+        with patch.object(handler.subprocess, 'run') as run, \
+             patch.object(handler.os.path, 'exists', return_value=True):
+            with pytest.raises(PolicyEvaluationError, match='No time budget'):
+                evaluate_policy_with_opa('s3_public_access', {'x': 1}, timeout=0)
+        run.assert_not_called()
+
+    def test_budget_is_passed_through_to_subprocess(self):
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured['timeout'] = kwargs.get('timeout')
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = json.dumps({'result': [{'expressions': [{'value': True}]}]})
+            return m
+
+        with patch.object(handler.subprocess, 'run', side_effect=fake_run), \
+             patch.object(handler.os.path, 'exists', return_value=True):
+            evaluate_policy_with_opa('s3_public_access', {'x': 1}, timeout=2.5)
+        assert captured['timeout'] == 2.5
+
+
 class TestQueryException:
     def test_returns_active_exception(self):
         table = MagicMock()
