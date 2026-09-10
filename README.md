@@ -116,7 +116,8 @@ Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão I
 │   └── controls_sync/             # Atualiza EventBridge rule via DynamoDB Stream
 ├── scripts/
 │   ├── deploy_control.sh           # Deploy de controle (S3 + DynamoDB)
-│   └── integration_test.py         # Testes end-to-end automatizados
+│   ├── integration_test.py         # Testes end-to-end automatizados
+│   └── benchmark.py                # Agrega N execuções da suíte (n, desvio, IC 95%)
 └── tests/
     ├── unit/                       # Testes unitários
     └── property/                   # Property-based tests (Hypothesis)
@@ -163,6 +164,25 @@ python3 scripts/integration_test.py --test CTRL-03
 # Com métricas em JSON
 python3 scripts/integration_test.py --json
 ```
+
+### Benchmark (múltiplas execuções)
+
+Uma execução da suíte produz uma observação por métrica — suficiente para
+demonstrar o loop, insuficiente para afirmar uma latência. O `benchmark.py`
+repete a suíte, preserva o JSON bruto de cada rodada e agrega:
+
+```bash
+# 10 execuções -> results/run-NN.json + summary.{json,md}
+python3 scripts/benchmark.py --runs 10
+
+# Reagrega o que já está em disco, sem tocar na AWS
+python3 scripts/benchmark.py --aggregate-only --out results/
+```
+
+Reporta n, média, desvio amostral, mediana, amplitude e IC 95% por cenário e
+por hipótese. Latências contam apenas rodadas em que o cenário passou; a taxa
+de sucesso aparece ao lado. Métricas com n=1 são marcadas como observação
+única, não como média.
 
 ## Cenários validados
 

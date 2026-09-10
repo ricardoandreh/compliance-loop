@@ -1214,11 +1214,38 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 **AWS API Failures**:
 - Resource fetch fails (NoSuchBucket, AccessDenied): tratado via `error_defaults` no `fetch_config` quando aplicável; senão propaga como `S_error` → escalação
 - DynamoDB exception query timeout: **escala (S_error)** — NÃO assume "sem exceção". Assumir ausência de exceção remediaria um recurso potencialmente autorizado (destrutivo). A query de exceção só ocorre para recursos não-conformes
-- DynamoDB write failure: o Step Functions (não o Analyze) grava; retry built-in da SDK integration
+- DynamoDB write failure: o Step Functions (não o Analyze) grava. As integrações SDK de DynamoDB **não** possuem retry implícito no Step Functions; ver *Limitações Conhecidas*
 
 **OPA Evaluation Errors**:
 - Policy file missing / Rego syntax error / OPA runtime error: **escala (S_error)** via `PolicyEvaluationError`. Falha de avaliação NÃO é o mesmo que não-conformidade: classificar como `S_violation` dispararia remediação sem nenhuma decisão de política — para controles que reescrevem configuração (ex: bucket policy do ssl-only), isso seria destrutivo. Mesma lógica aplicada à falha de leitura de exceções
 - Cache de políticas Rego em `/tmp` é **versionado** (`{package}@{policy_version}.rego`): container warm nunca avalia um `.rego` obsoleto após bump de `policy_version` na tabela controls — sem isso, o log afirmaria uma `policy_version` que não foi a executada
+
+**Orçamento de tempo (completude H2)**:
+
+Cada controle custa um subprocesso OPA. Com timeout fixo por controle, o pior caso é `n_controles x timeout_OPA` — e um timeout da Lambda **mata a invocação inteira**, perdendo os registros por controle de *todos* os controles, não só do lento. Isso violaria a mesma invariante de completude que o `RegisterError` protege.
+
+O orçamento é portanto derivado do tempo restante, não fixo:
+
+```python
+OPA_MAX_TIMEOUT = 5.0
+TIME_RESERVE_MS = 3000   # espaço para montar a resposta e retornar
+
+def opa_budget(lambda_context) -> float:
+    remaining_ms = lambda_context.get_remaining_time_in_millis() - TIME_RESERVE_MS
+    return max(0.0, min(OPA_MAX_TIMEOUT, remaining_ms / 1000.0))
+```
+
+Recalculado a cada iteração: um controle lento no início não pode consumir o tempo necessário para reportar os seguintes. Com orçamento zerado, o controle vira `S_error` ("no time budget left") em vez de iniciar um subprocesso que será morto no meio.
+
+Dimensionamento correspondente:
+
+| Parâmetro | Valor | Restrição |
+|---|---|---|
+| Timeout da Lambda Analyze | 60s | > `n_controles x OPA_MAX_TIMEOUT`; `CreateBucket` já aciona 4 controles S3 |
+| `InvokeAnalyze.TimeoutSeconds` | 75s | **acima** do timeout da Lambda, para que o retorno estruturado da Lambda vença a corrida |
+| Timeout global da máquina | 600s | `MaxConcurrency=1` ⇒ pior caso serial: `75 + 5 x (90 + 5) = 550s` |
+
+O valor anterior (Lambda 15s) não cobria sequer o pior caso nominal de 4 controles (20s), e o timeout global de 300s já era insuficiente antes desta correção (410s com o timeout de 30s do `InvokeAnalyze`).
 
 **Error Recovery**: Step Functions retry policy with exponential backoff (3 attempts, 2s initial interval, 2x multiplier). After exhaustion, trigger escalation.
 
@@ -1241,12 +1268,14 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 ### Orchestrator Error Handling
 
 **State Machine Errors**:
-- Lambda invocation failure: Retry per Lambda error handling policy
-- DynamoDB SDK integration failure: Retry with exponential backoff (3 attempts)
-- SQS SendMessage failure: Retry with exponential backoff (3 attempts)
-- Global timeout (300s): Terminate workflow, log timeout error, send to Escalation_Queue
+- Lambda invocation failure: `Retry` explícito em `InvokeAnalyze` e `InvokeExecute`, com `Catch States.ALL` para escalação
+- Leitura da tabela `controls` (`QueryControls` / `GetControlById`): `Retry` em `ProvisionedThroughputExceededException` + `Catch` → `QueryControlsFailedEscalation`
+- Escrita do `RegisterError`: `Catch States.ALL` → `ControlErrorEscalation`, garantindo que a falha da gravação de auditoria não suprima o alerta
+- Global timeout (600s): encerra a execução como `FAILED`
 
-**Error Recovery**: Built-in Step Functions retry and catch mechanisms. All unhandled errors result in escalation.
+**Nota sobre retry nas escritas**: o Step Functions aplica retry *default* apenas às integrações otimizadas de **Lambda**. Integrações DynamoDB e SQS **não** têm retry implícito — o retry precisa ser declarado estado a estado. Os estados `RegisterNominal`, `RegisterException`, `RegisterViolation`, `UpdateLogSuccess`, `UpdateLogFailed`, `EnqueueEscalation` e `ControlErrorEscalation` **não** declaram `Retry` nem `Catch` na versão avaliada; ver *Limitações Conhecidas*.
+
+**Error Recovery**: `Retry` e `Catch` declarados por estado nos pontos listados acima. Erros não capturados resultam em execução `FAILED`, visível no console e nas métricas do Step Functions.
 
 ### Escalation Error Handling
 
@@ -1254,6 +1283,14 @@ For any resource where Execute fails, the resource configuration SHALL remain in
 - GitHub API rate limit: Lambda retries via SQS visibility timeout (300s), exponential backoff
 - GitHub API authentication failure: Send to DLQ, trigger CloudWatch alarm
 - Network timeout: Lambda retries via SQS visibility timeout
+
+**Deduplicação (H2)**:
+
+O `MessageDeduplicationId` é o `violation_id` (uuid4 por avaliação), **não** `resource_arn#control_id`. Com a chave por par recurso+controle, a janela fixa de 5 minutos do SQS FIFO descartava a segunda violação do mesmo par — e aquele `violation_id` nunca recebia `github_issue_url`, abrindo um buraco exatamente na cadeia de auditoria que o `link_issue` fora criado para fechar.
+
+A deduplicação de **issues** continua existindo, uma camada acima: `find_open_issue()` na Lambda de escalação busca issue aberta de mesmo título antes de criar. É a camada correta para deduplicação semântica — a do SQS passa a fazer apenas o que lhe cabe, proteger contra entrega duplicada da mesma mensagem.
+
+O `MessageGroupId` permanece `resource_id#control_id`, serializando o processamento por par e evitando que duas escalações concorrentes criem duas issues.
 
 **DynamoDB Update Failures**:
 - Update violations_log with github_issue_id fails: Log error to CloudWatch, continue (issue already created)
@@ -1520,8 +1557,9 @@ Essa otimização foi conscientemente descartada por três razões:
 ### Contexto de adequação
 
 A latência de 5-11s é irrelevante para o domínio: o baseline de comparação é tempo de
-exposição medido em horas ou dias (janela entre violação e detecção manual). Qualquer
-valor abaixo de 60s já representa uma redução de ordem de grandeza no MTTR.
+exposição medido em horas ou dias (janela entre violação e detecção manual) — ver a
+referência ao Verizon DBIR na *Síntese por Hipótese*. Qualquer valor abaixo de 60s já
+representa uma redução de ordem de grandeza no MTTR.
 
 ### Espaço de otimização (não implementado)
 
@@ -2140,6 +2178,29 @@ S_nominal — foi demonstrado com precisão de segundos no Teste 5.
 | CTRL-04 | ctrl-s3-encryption | S3 | SSEAlgorithm = AES256 | ~26s |
 | CTRL-05 | ctrl-ebs-encryption-default | EC2 | EbsEncryptionByDefault = true | ~35s |
 
+### Metodologia de Medição
+
+As métricas de cada cenário são extraídas do histórico de execuções do Step Functions (`start`/`stop` por execução) e dos timestamps do `violations_log`, não de instrumentação interna — o que mede o comportamento observável do sistema, não o caminho feliz do código.
+
+**Definição das métricas**:
+
+| Métrica | Intervalo medido |
+|---|---|
+| `t_detection` | evento CloudTrail → início da execução do Step Functions |
+| `t_remediation` | início da execução → confirmação de sucesso da remediação |
+| `t_exposure` | evento CloudTrail → recurso reconvergido (fim da execução) |
+| `t_classification` | duração da execução para recursos já conformes (sem remediação) |
+| `t_escalation` | início da execução → mensagem na fila de escalação |
+
+**Agregação sobre repetições**: `scripts/benchmark.py` executa a suíte N vezes, preserva o JSON bruto de cada execução (`results/run-NN.json`) e reporta n, média, desvio amostral (n−1), mediana, amplitude e intervalo de confiança de 95% pela distribuição t de Student — por cenário e agrupado por hipótese.
+
+Duas decisões afetam a interpretação dos números:
+
+1. **Latências consideram apenas execuções em que o cenário passou.** Incluir os tempos parciais de uma execução que falhou favoreceria artificialmente o resultado. As falhas não são omitidas: cada linha traz a taxa de sucesso (`k/N`) ao lado da latência, de modo que confiabilidade e latência são lidas juntas.
+2. **n=1 é reportado como observação única**, com traços nas colunas de desvio e intervalo — nunca como média com precisão inventada. O agregador emite aviso explícito nomeando as métricas nessa condição.
+
+**Ameaças à validade**: as medições foram feitas em conta e região únicas (`us-east-1`), com violações sintéticas induzidas pelo próprio runner, sobre 5 controles. Cold start do Lambda é a principal fonte de variância em `t_remediation` (~14s vs. ~5s em warm start), de modo que a média depende da proporção de execuções frias na amostra — razão adicional para reportar desvio e amplitude, não apenas a média.
+
 ### Síntese por Hipótese
 
 **H1 — Redução do MTTR**
@@ -2158,3 +2219,46 @@ S_nominal — foi demonstrado com precisão de segundos no Teste 5.
 - t_exposure médio para violações simples (C1, C5): **19.16s**
 - Janela de risco pós-expiração de exceção (C3): **~51s** (30s buffer + execução)
 - Precisão do Scheduler: `valid_until + 30s` (determinístico)
+
+
+## Limitações Conhecidas e Trabalhos Futuros
+
+Esta seção registra lacunas **identificadas e não fechadas**, com a justificativa da decisão. Distinguem-se de bugs: são pontos onde o comportamento é conhecido, delimitado e aceito no escopo avaliado.
+
+### L1. Ausência de `Retry`/`Catch` nas escritas do Step Functions
+
+**O que**: sete estados de escrita — `RegisterNominal`, `RegisterException`, `RegisterViolation`, `UpdateLogSuccess`, `UpdateLogFailed`, `EnqueueEscalation` e `ControlErrorEscalation` — não declaram `Retry` nem `Catch`. O `ProcessResults` (Map) também não declara `Catch`.
+
+**Consequência**: uma falha transitória de DynamoDB em `RegisterViolation` faz a iteração falhar; sem `Catch` no Map, a execução termina `FAILED` sem remediação e sem escalação. Com `MaxConcurrency=1`, os controles seguintes daquela avaliação não chegam a ser processados — num evento `CreateBucket` são 4 controles.
+
+**Por que não foi fechado**: o modo de falha exige throttling de DynamoDB numa tabela `PAY_PER_REQUEST` com 5 controles e volume de teste. Não é alcançável nos cenários de avaliação, portanto a correção não seria **demonstrável** — apenas afirmada. Fechá-la sem poder exercitá-la adicionaria superfície não verificada ao artefato.
+
+**Como fechar**: o princípio é que nenhum estado dentro do Map pode lançar exceção — toda saída termina num `outcome`. Isso exige `Retry` (throttling/erros internos) e `Catch` por estado, com destino coerente: `RegisterViolation` → `InvokeExecute` (a remediação não pode ser bloqueada pela auditoria), `RegisterNominal`/`RegisterException` → estado de escalação de auditoria degradada, `UpdateLogFailed` → `EnqueueEscalation`. Um `Catch` no próprio `ProcessResults` cobre o resto. Observação: `ToleratedFailureCount` **não** resolve — só existe em Distributed Map, e `ProcessResults` é `INLINE`.
+
+**Efeito colateral a tratar junto**: se `RegisterViolation` falhar e o fluxo seguir para `InvokeExecute`, os `UpdateLog*` viram *upsert* e criam linha fantasma — o mesmo defeito que o `ConditionExpression attribute_exists(violation_id)` corrigiu na Lambda de escalação. A correção é simétrica: aplicar a mesma condição aos dois `UpdateLog*`.
+
+### L2. `Scan` sem paginação na resolução de controles
+
+`QueryControls` (integração SDK, que não pagina automaticamente) e `controls_sync` (sem paginator boto3) leem apenas a primeira página de 1 MB. Irrelevante com 5 controles; ao crescer, controles seriam silenciosamente omitidos do enforcement e da regra do EventBridge. Fechar exige paginação explícita ou, preferencialmente, um GSI por `cloudtrail_event` que substitua o scan por query.
+
+### L3. Pseudo-ARN de recursos account-level
+
+Recursos sem ARN nomeável (ex: EBS encryption by default) usam o identificador sintético `arn:aws:{region}:{account_id}`, que não é um ARN AWS válido. É a chave usada na consulta de exceções e no `violations_log`: uma exceção cadastrada em qualquer outro formato é silenciosamente ignorada e o recurso é remediado apesar da aprovação.
+
+Há ainda divergência entre os dois caminhos de entrada: via CloudTrail o `resource_id` resolve para `'account-level'`; via scheduler de exceção resolve para o pseudo-ARN completo. Hoje é inócuo (o `remediation.tf` do EBS não usa `resource_id`, e o Analyze recalcula o identificador), mas torna-se defeito assim que um controle account-level usar `resource_id` na remediação.
+
+### L4. TTL na tabela `exceptions` versus retenção do registro de aprovação
+
+O TTL sobre `valid_until` permanece habilitado para limpeza eventual. Como a deleção é física, o registro de *quem aprovou* uma exceção desaparece até 48h após a expiração. O rastro de auditoria não se perde — `RegisterException` copia `exception_id` e `approved_by` para o `violations_log`, que não tem TTL —, mas a tabela `exceptions` não deve ser tratada como fonte histórica de aprovações.
+
+### L5. Latência de indexação na deduplicação de issues
+
+`find_open_issue()` usa a Search API do GitHub, cujo índice tem atraso de segundos a minutos. Uma issue recém-criada pode não ser encontrada, gerando duplicata. O `MessageGroupId` serializa o processamento por par recurso+controle, o que reduz a janela, mas não a elimina. Alternativa mais robusta: consultar o GSI `resource_arn-timestamp-index` do `violations_log` por registro recente do mesmo controle que já tenha `github_issue_url` — exato e sem atraso, ao custo de adicionar `dynamodb:Query` à role da Lambda de escalação.
+
+### L6. Escopo da validação empírica
+
+Conta e região únicas, 5 controles, violações sintéticas induzidas pelo runner. Não foram exercitados: concorrência entre execuções sobre o mesmo recurso, operação multi-conta (AWS Organizations), nem controles cujo `fetch_config` exija paginação da API de origem. A generalização do fetcher genérico está demonstrada para 2 serviços (S3, EC2), não para o espaço de serviços AWS.
+
+### L7. Comparação com soluções gerenciadas
+
+O trabalho não apresenta comparação empírica com AWS Config Rules + SSM Automation, Cloud Custodian ou Prowler. A justificativa da abordagem é arquitetural — política portável em Rego, remediação declarativa com diff auditável, mecanismo de exceção com re-avaliação temporal determinística e loop MAPE-K explícito —, não experimental. Uma comparação de MTTR e de completude de auditoria contra AWS Config seria a extensão natural.
