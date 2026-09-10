@@ -39,6 +39,11 @@ def init(region, prefix, env):
     sfn = boto3.client("stepfunctions", region_name=REGION)
     dynamodb = boto3.resource("dynamodb", region_name=REGION)
 
+    global CLOCK_OFFSET
+    CLOCK_OFFSET = measure_clock_offset()
+    if abs(CLOCK_OFFSET) >= 1.0:
+        log(f"local clock is {CLOCK_OFFSET:+.2f}s off AWS; metrics compensated", "WARN")
+
 
 # --- Helpers ---
 
@@ -89,6 +94,56 @@ def set_public_access(name, block=False):
 
 def get_public_access(name):
     return s3.get_public_access_block(Bucket=name)["PublicAccessBlockConfiguration"]
+
+
+# --- Clock alignment ---
+#
+# The runner's clock and AWS's are independent, and this matters twice:
+#
+# 1. Metrics. t_detection and t_exposure subtract a LOCAL timestamp from an AWS
+#    one (Step Functions startDate/stopDate). Any offset lands directly in the
+#    result — a local clock running ahead makes the system look faster than it
+#    is, which would bias H1/H3 in our own favour.
+# 2. Correctness of the search. wait_for_executions keeps executions whose
+#    startDate is later than a locally-taken reference. If the local clock runs
+#    ahead, an execution AWS stamped moments after the reference is silently
+#    dropped. Tests that trigger via CloudTrail absorb this in their ~8s
+#    detection delay; C4, which calls StartExecution directly, does not — it
+#    reported "No FAILED executions found" for an execution that had in fact
+#    failed correctly 0.6s in.
+#
+# The Date response header has 1-second resolution and is truncated, so
+# (local - header) always lands in [offset, offset + 1) and the minimum across
+# samples is the best estimator, approaching the true offset from above. The
+# residual is therefore bounded by roughly one second divided by the number of
+# samples that happen to straddle a tick — good enough for metrics reported in
+# seconds, but it does mean t_detection carries sub-second systematic
+# uncertainty that no amount of repetition removes. Reported as a limitation
+# rather than hidden.
+CLOCK_OFFSET = 0.0
+
+
+def measure_clock_offset(samples=10):
+    """Seconds the local clock runs ahead of AWS (negative if behind)."""
+    import email.utils
+    sts = boto3.client("sts", region_name=REGION)
+    deltas = []
+    for _ in range(samples):
+        t0 = time.time()
+        resp = sts.get_caller_identity()
+        t1 = time.time()
+        header = resp["ResponseMetadata"]["HTTPHeaders"].get("date")
+        if not header:
+            continue
+        aws = email.utils.parsedate_to_datetime(header).timestamp()
+        deltas.append((t0 + t1) / 2 - aws)
+    return min(deltas) if deltas else 0.0
+
+
+def aws_now():
+    """Local clock expressed on AWS's timeline; use for anything compared
+    against a Step Functions startDate/stopDate."""
+    return time.time() - CLOCK_OFFSET
 
 
 def wait_for_executions(after_ts, expected_statuses, min_count=1, timeout=90):
@@ -146,7 +201,7 @@ def test_c1():
     metrics = {}
     create_bucket(name)
     try:
-        t_event = time.time()
+        t_event = aws_now()
         set_public_access(name, block=False)
         log(f"Violation triggered on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
@@ -188,7 +243,7 @@ def test_c2():
         eid = put_exception("ctrl-s3-public-block", arn, int(time.time()) + 86400)
         time.sleep(1)
 
-        t_event = time.time()
+        t_event = aws_now()
         set_public_access(name, block=False)
         log(f"Violation with exception on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
@@ -268,9 +323,12 @@ def test_c4():
     """C4: Bucket inexistente → escalação → FAILED"""
     bucket_name = f"bucket-inexistente-c4-{int(time.time())}"
     metrics = {}
-    t_start = time.time()
-
-    sfn.start_execution(
+    # StartExecution returns the ARN, so this scenario can poll the exact
+    # execution instead of searching recent ones by start time. The search is
+    # only needed when the trigger is indirect (CloudTrail), and here it was
+    # actively harmful: the execution finishes in under a second, and any
+    # clock skew pushed it outside the "startDate > t_start" filter.
+    exec_arn = sfn.start_execution(
         stateMachineArn=SFN_ARN,
         input=json.dumps({
             "resource_id": bucket_name,
@@ -280,18 +338,20 @@ def test_c4():
             "event_time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "event_name": "PutBucketPublicAccessBlock",
         }),
-    )
+    )["executionArn"]
     log("Execution started with non-existent bucket")
-    time.sleep(15)
 
-    execs = wait_for_executions(t_start, ["FAILED"], min_count=1)
-    assert execs, "No FAILED executions found"
+    deadline = time.time() + 90
+    desc = sfn.describe_execution(executionArn=exec_arn)
+    while desc["status"] == "RUNNING" and time.time() < deadline:
+        time.sleep(2)
+        desc = sfn.describe_execution(executionArn=exec_arn)
+    assert desc["status"] == "FAILED", f"Expected FAILED, got {desc['status']}"
 
-    timing = get_execution_timing(execs[0]["executionArn"])
-    metrics["t_escalation"] = timing["duration_s"]
+    assert desc["error"] == "ComplianceEscalation", \
+        f"Expected ComplianceEscalation, got {desc.get('error')}"
 
-    desc = sfn.describe_execution(executionArn=execs[0]["executionArn"])
-    assert desc["error"] == "ComplianceEscalation"
+    metrics["t_escalation"] = get_execution_timing(exec_arn)["duration_s"]
 
     log(f"t_escalation={metrics['t_escalation']}s", "TIME")
     log("C4 PASSED", "OK")
@@ -304,7 +364,7 @@ def test_c5():
     metrics = {}
     create_bucket(name)
     try:
-        t_event = time.time()
+        t_event = aws_now()
         set_public_access(name, block=False)
         log(f"IaC-simulated violation on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
@@ -336,7 +396,7 @@ def test_c6():
     metrics = {}
     create_bucket(name)
     try:
-        t_event = time.time()
+        t_event = aws_now()
         set_public_access(name, block=True)
         log(f"Already compliant: {name}")
         time.sleep(WAIT_CLOUDTRAIL)
@@ -411,7 +471,7 @@ def test_ctrl_s3_public_block():
     metrics = {}
     create_bucket(name)
     try:
-        t_event = time.time()
+        t_event = aws_now()
         set_public_access(name, block=False)
         log(f"Public access disabled on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
@@ -419,7 +479,7 @@ def test_ctrl_s3_public_block():
 
         cfg = get_public_access(name)
         assert all(cfg.values()), f"Not remediated: {cfg}"
-        metrics["t_total"] = round(time.time() - t_event, 2)
+        metrics["t_total"] = round(aws_now() - t_event, 2)
         log(f"All 4 settings = true  t_total={metrics['t_total']}s", "TIME")
         log("CTRL-01 PASSED", "OK")
         return True, metrics
@@ -433,7 +493,7 @@ def test_ctrl_s3_ssl_only():
     metrics = {}
     create_bucket(name)
     try:
-        t_event = time.time()
+        t_event = aws_now()
         # DeleteBucketPolicy triggers ssl-only control
         try:
             s3.delete_bucket_policy(Bucket=name)
@@ -446,7 +506,7 @@ def test_ctrl_s3_ssl_only():
         policy = json.loads(s3.get_bucket_policy(Bucket=name)["Policy"])
         sids = [st.get("Sid", "") for st in policy.get("Statement", [])]
         assert "DenyNonSSLRequests" in sids, f"SSL statement missing: {sids}"
-        metrics["t_total"] = round(time.time() - t_event, 2)
+        metrics["t_total"] = round(aws_now() - t_event, 2)
         log(f"DenyNonSSLRequests present  t_total={metrics['t_total']}s", "TIME")
         log("CTRL-02 PASSED", "OK")
         return True, metrics
@@ -460,7 +520,7 @@ def test_ctrl_s3_versioning():
     metrics = {}
     create_bucket(name)
     try:
-        t_event = time.time()
+        t_event = aws_now()
         # PutBucketVersioning with Suspended triggers the control
         s3.put_bucket_versioning(Bucket=name, VersioningConfiguration={"Status": "Suspended"})
         log(f"Versioning suspended on {name}")
@@ -469,7 +529,7 @@ def test_ctrl_s3_versioning():
 
         resp = s3.get_bucket_versioning(Bucket=name)
         assert resp.get("Status") == "Enabled", f"Not enabled: {resp}"
-        metrics["t_total"] = round(time.time() - t_event, 2)
+        metrics["t_total"] = round(aws_now() - t_event, 2)
         log(f"Versioning=Enabled  t_total={metrics['t_total']}s", "TIME")
         log("CTRL-03 PASSED", "OK")
         return True, metrics
@@ -482,7 +542,7 @@ def test_ctrl_s3_encryption():
     name = f"compliance-ctrl04-{int(time.time())}"
     arn = f"arn:aws:s3:::{name}"
     metrics = {}
-    t_event = time.time()
+    t_event = aws_now()
     create_bucket(name)  # CreateBucket triggers ctrl-s3-encryption evaluation
     try:
         log(f"Checking encryption on {name}")
@@ -498,7 +558,7 @@ def test_ctrl_s3_encryption():
         assert enc[-1]["state"] == "S_nominal", \
             f"Expected S_nominal (AES256 default), got {enc[-1]['state']}: {enc[-1].get('error', '')}"
 
-        metrics["t_total"] = round(time.time() - t_event, 2)
+        metrics["t_total"] = round(aws_now() - t_event, 2)
         log(f"system classified S_nominal  t_total={metrics['t_total']}s", "TIME")
         log("CTRL-04 PASSED", "OK")
         return True, metrics
@@ -547,7 +607,7 @@ def main():
     print(f"MAPE-K Integration Tests — {args.prefix}-{args.env}")
     print(f"{'='*70}\n")
 
-    suite_start = time.time()
+    suite_start = aws_now()
     results = {}
     all_metrics = {}
 
