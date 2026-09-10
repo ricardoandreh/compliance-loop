@@ -160,10 +160,35 @@ def aggregate(runs):
                     pooled.extend(entry["metrics"][metric])
                     sources.append(name)
         if pooled:
+            summary = summarize(pooled)
+            # Pooling is only meaningful if the scenarios share a distribution.
+            # They often do not: remediating a fresh violation (cold Lambda,
+            # cold provider cache) and remediating after an exception expires
+            # (both already warm) are different regimes, each internally tight.
+            # When that happens the pooled sd is dominated by the gap BETWEEN
+            # scenarios, and the pooled mean describes neither — so say so
+            # instead of publishing a number that looks like a measurement.
+            per_scenario_means = []
+            widest_within = 0.0
+            for name, entry in scenarios.items():
+                for metric in metric_names:
+                    vals = entry["metrics"].get(metric)
+                    if vals:
+                        per_scenario_means.append((name, statistics.mean(vals)))
+                        if len(vals) > 1:
+                            widest_within = max(widest_within, statistics.stdev(vals))
+            spread = (max(m for _, m in per_scenario_means)
+                      - min(m for _, m in per_scenario_means)) if per_scenario_means else 0.0
+            summary["per_scenario_means"] = dict(per_scenario_means)
+            summary["widest_within_scenario_sd"] = widest_within or None
+            # Heuristic: the scenario means are further apart than the noise
+            # inside any one of them, by a wide margin.
+            summary["heterogeneous"] = bool(
+                len(per_scenario_means) > 1 and spread > max(3 * widest_within, 1.0))
             per_hypothesis[hypothesis] = {
                 "metric": "/".join(metric_names),
                 "scenarios": sorted(set(sources)),
-                **summarize(pooled),
+                **summary,
             }
 
     return {"runs": len(runs), "scenarios": per_scenario, "hypotheses": per_hypothesis}
@@ -192,11 +217,25 @@ def render_markdown(agg):
         out.append("| Hipótese | Métrica | n | Média (s) | Desvio (s) | Mediana (s) | Mín | Máx | IC 95% |")
         out.append("|---|---|---:|---:|---:|---:|---:|---:|---|")
         for name, s in agg["hypotheses"].items():
+            flag = " ⚠️" if s.get("heterogeneous") else ""
             out.append(
-                f"| {name} | `{s['metric']}` | {s['n']} | {fmt(s['mean'])} | {fmt(s['sd'])} "
+                f"| {name}{flag} | `{s['metric']}` | {s['n']} | {fmt(s['mean'])} | {fmt(s['sd'])} "
                 f"| {fmt(s['median'])} | {fmt(s['min'])} | {fmt(s['max'])} | {fmt_ci(s['ci95'])} |"
             )
         out.append("")
+
+        for name, s in agg["hypotheses"].items():
+            if not s.get("heterogeneous"):
+                continue
+            parts = ", ".join(f"{k} ≈ {v:.1f}s" for k, v in
+                              sorted(s["per_scenario_means"].items(), key=lambda kv: kv[1]))
+            out.append(
+                f"> ⚠️ **{name} agrega cenários de regimes diferentes** ({parts}). "
+                f"Cada cenário isolado é estável — o maior desvio dentro de um único "
+                f"cenário é {fmt(s['widest_within_scenario_sd'])}s, contra {fmt(s['sd'])}s "
+                f"no agregado. O desvio agregado mede a distância ENTRE cenários, não a "
+                f"variabilidade da medição, e a média agregada não descreve nenhum deles. "
+                f"Reporte os cenários separadamente, ou justifique a agregação.\n")
 
     out.append("## Por cenário\n")
     out.append("| Cenário | Sucesso | Métrica | n | Média (s) | Desvio (s) | Mediana (s) | Mín | Máx | IC 95% |")

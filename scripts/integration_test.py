@@ -73,6 +73,28 @@ def wait_quiesce(timeout=60):
     return False
 
 
+def wait_for_revocation_cascade(grace=30):
+    """Wait out the chain that deleting a still-valid exception sets off.
+
+    Removing a live grant is a revoke, not housekeeping: scheduler-sync
+    re-evaluates the resource, which remediates it, and that remediation emits
+    its own CloudTrail event and one more evaluation. The chain starts on a
+    DynamoDB Stream, so wait_quiesce() on its own can return before the first
+    execution even exists — and tearing the bucket down in that gap makes the
+    late evaluation hit NoSuchBucket, classify S_error and open a GitHub issue
+    for a bucket the test deleted on purpose.
+    """
+    deadline = time.time() + grace
+    while time.time() < deadline:
+        resp = sfn.list_executions(stateMachineArn=SFN_ARN, statusFilter="RUNNING", maxResults=5)
+        if resp["executions"]:
+            break
+        time.sleep(2)
+    wait_quiesce(timeout=120)
+    time.sleep(8)
+    wait_quiesce(timeout=120)
+
+
 def delete_bucket(name):
     wait_quiesce()
     # In-flight CloudTrail events may still spawn executions for a few
@@ -268,7 +290,11 @@ def test_c2():
         return True, metrics
     finally:
         if eid:
+            # The grant is still valid here (24h), so removing it is a revoke
+            # and triggers a full re-evaluation; let it converge before the
+            # bucket disappears.
             delete_exception(eid)
+            wait_for_revocation_cascade()
         delete_bucket(name)
 
 
