@@ -596,13 +596,13 @@ O DynamoDB Streams está habilitado na tabela exceptions com `NEW_AND_OLD_IMAGES
 
 O input enviado ao Step Functions carrega o `control_id` da exceção (não um `event_name` sintético). O estado `RouteControlLookup` detecta a presença de `control_id` e resolve o controle exato via `GetControlById` (getItem), em vez do scan por `cloudtrail_events`. Isso garante que a re-avaliação atinja precisamente o controle da exceção expirada — inclusive controles não-S3 (ex: `ctrl-ebs-encryption-default`), cujos eventos CloudTrail não se relacionam com nenhum evento S3 — sem disparar controles alheios contra o recurso.
 
-Este mecanismo substituiu a abordagem anterior baseada em EventBridge Pipe + DynamoDB TTL, que dependia da deleção física de itens expirados — operação com latência não determinística de até 48h. O novo mecanismo oferece precisão de segundos (evidenciado no Teste 5/C3) e comportamento determinístico.
+Este mecanismo substituiu a abordagem anterior baseada em EventBridge Pipe + DynamoDB TTL, que dependia da deleção física de itens expirados — operação com latência não determinística de até 48h. O novo mecanismo reduz essa latência em ordens de grandeza, mas **não é preciso ao segundo**: medido em 10 execuções (C3), o disparo ocorre em média **22,5 s após o instante agendado**, variando de 1,1 s a 40,1 s. O ganho real é de latência **limitada e observável** (dezenas de segundos) contra **ilimitada** (até 48 h) — não de determinismo.
 
 Isso garante que, após expiração de uma exceção, o recurso seja automaticamente re-avaliado pelo loop MAPE-K completo, mantendo o invariante arquitetural de que o Analyze é sempre o componente decisor.
 
 **Limitação conhecida — Latência do TTL**:
 
-A deleção física de itens expirados pelo DynamoDB TTL é **não-determinística** e pode levar até 48 horas após o timestamp `valid_until`. No entanto, a re-avaliação automática **não depende da deleção física**: o EventBridge Scheduler dispara em `valid_until + 30s` com precisão de segundos, e a Analyze Lambda filtra exceções com `valid_until > now()`, garantindo que exceções logicamente expiradas sejam ignoradas em qualquer avaliação. O TTL permanece habilitado apenas para limpeza eventual dos itens na tabela.
+A deleção física de itens expirados pelo DynamoDB TTL é **não-determinística** e pode levar até 48 horas após o timestamp `valid_until`. No entanto, a re-avaliação automática **não depende da deleção física**: o EventBridge Scheduler é agendado para `valid_until + 30s` e dispara dentro de algumas dezenas de segundos desse instante (22,5 s de atraso médio, até 40,1 s observados em 10 execuções), e a Analyze Lambda filtra exceções com `valid_until > now()`, garantindo que exceções logicamente expiradas sejam ignoradas em qualquer avaliação. O TTL permanece habilitado apenas para limpeza eventual dos itens na tabela.
 
 
 
@@ -1898,9 +1898,15 @@ Bucket configurado com todos os public access settings em `false`.
 **Hipóteses validadas**: H2 (rastreabilidade), H3 (tempo de exposição)
 
 Este é o teste mais completo do sistema. Demonstra o ciclo de vida inteiro de uma
-exceção com precisão de segundos, usando o novo mecanismo de EventBridge Scheduler
-(substituiu o EventBridge Pipe + DynamoDB TTL, que tinha latência não determinística
-de até 48h).
+exceção em escala de dezenas de segundos, usando o novo mecanismo de EventBridge
+Scheduler (substituiu o EventBridge Pipe + DynamoDB TTL, que tinha latência não
+determinística de até 48h).
+
+> **Ressalva de medição**: este trace é de uma execução única, na qual o Scheduler
+> disparou próximo ao instante agendado. A agregação posterior de 10 execuções
+> mostrou que o disparo carrega **22,5 s de atraso médio** sobre `valid_until + 30s`
+> (faixa 1,1–40,1 s). A convergência demonstrada aqui permanece válida; a
+> caracterização de "precisão de segundos" não — ver *Síntese por Hipótese*.
 
 #### Mudança Arquitetural: Pipe → Scheduler
 
@@ -1916,7 +1922,7 @@ Scheduler dispara, a exceção já expirou logicamente, e o Analyze classifica c
 `S_violation`.
 
 Propriedades do novo mecanismo:
-- **Precisão**: disparo em `valid_until + 30s` (vs. até 48h do TTL)
+- **Precisão**: agendado para `valid_until + 30s`, disparo efetivo em `+30s` mais um atraso de entrega do Scheduler de 22,5 s em média (1,1–40,1 s, n = 10) — contra até 48 h do TTL
 - **Idempotência**: nome determinístico `exc-{exception_id}` permite upsert
 - **Auto-limpeza**: `ActionAfterCompletion=DELETE` remove o Scheduler após disparo
 - **Extensibilidade**: `MODIFY` no DynamoDB atualiza o Scheduler (ex: extensão de prazo)
@@ -1965,7 +1971,7 @@ confirmação. É o argumento empírico central de H2 (rastreabilidade/completud
 #### Verificações
 
 - [x] Scheduler criado automaticamente pela Lambda sync
-- [x] Scheduler disparou em `valid_until + 30s` com precisão de segundos
+- [x] Scheduler disparou próximo a `valid_until + 30s` nesta execução (agregado de 10: +22,5 s de atraso médio sobre o instante agendado)
 - [x] Scheduler auto-deletado após disparo (lista vazia confirmada)
 - [x] Analyze ignorou exceção expirada (FilterExpression `valid_until > now()`)
 - [x] Execute remediou com sucesso (OpenTofu apply)
@@ -2118,7 +2124,9 @@ os settings em `true`. O sistema detecta, avalia, confirma conformidade e encerr
 
 Coberto pelo Teste 5 (C3). O ciclo completo de exceção — criação, período de tolerância,
 expiração via EventBridge Scheduler, re-avaliação como S_violation, remediação e confirmação
-S_nominal — foi demonstrado com precisão de segundos no Teste 5.
+S_nominal — foi demonstrado no Teste 5, em janela de dezenas de segundos. A medição
+agregada (n = 10) situa a janela pós-expiração em 58,55 s ± 13,73, com a dispersão
+vindo do atraso de entrega do Scheduler.
 
 ---
 
@@ -2157,26 +2165,41 @@ S_nominal — foi demonstrado com precisão de segundos no Teste 5.
 
 ## Tabela Comparativa de Métricas por Cenário
 
+Agregado de **10 execuções da suíte**, média ± desvio amostral. Todos os cenários
+aprovados em 10/10.
+
 | Cenário | Descrição | Estado Final | t_remediation | t_exposure | Execute? | Escalação? | Hipóteses |
 |---|---|---|---|---|---|---|---|
-| C1 | Violação simples via console | S_nominal | 14.32s | 22.54s | Sim (success) | Não | H1, H3 |
+| C1 | Violação simples via console | S_nominal | **6,02s** ± 0,11 | **13,85s** ± 1,56 | Sim (success) | Não | H1, H3 |
 | C2 | Violação com exceção ativa | S_exception | — | — | Não | Não | H2 |
-| C3 | Exceção expira → remediação | S_nominal | 0.57s | 51.28s* | Sim (success) | Não | H2, H3 |
+| C3 | Exceção expira → remediação | S_nominal | **6,04s** ± 0,10 | 58,55s ± 13,73* | Sim (success) | Não | H2, H3 |
 | C4 | Bucket inexistente → escalação | Escalado | — | — | Não | Sim (GitHub Issue) | H2 |
-| C5 | Violação originada por IaC | S_nominal | 5.52s | 15.77s | Sim (success) | Não | H1, H2 |
+| C5 | Violação originada por IaC | S_nominal | **6,02s** ± 0,13 | **14,45s** ± 1,42 | Sim (success) | Não | H1, H2 |
 | C6 | Recurso já conforme | S_nominal | — | — | Não | Não | H1 |
+| C7 | Novo controle → EventBridge | — | — | — | Não | Não | Extensibilidade |
 
-*C3 t_exposure: 30s buffer do Scheduler + execução após disparo.
+\*C3: janela pós-expiração, não comparável às demais — inclui o buffer de 30 s do
+Scheduler mais o seu atraso de entrega, que é a fonte do desvio de 13,73 s (ver
+abaixo). O `t_remediation` do C3 é diretamente comparável, e concorda com C1/C5
+dentro de 0,02 s.
+
+Métricas dos cenários sem remediação: C2 `t_classification` **0,47s** ± 0,08 ·
+C4 `t_escalation` **0,60s** ± 0,06 · C6 `t_classification` **0,45s** ± 0,04 ·
+C7 `t_sync_insert` **15,93s** ± 1,02.
 
 ### Validação por Controle
 
-| Teste | Controle | Serviço | Resultado | Tempo |
+| Teste | Controle | Serviço | Resultado | t_total (n=10) |
 |---|---|---|---|---|
-| CTRL-01 | ctrl-s3-public-block | S3 | All 4 settings = true | ~36s |
-| CTRL-02 | ctrl-s3-ssl-only | S3 | DenyNonSSLRequests present | ~33s |
-| CTRL-03 | ctrl-s3-versioning | S3 | Versioning = Enabled | ~30s |
-| CTRL-04 | ctrl-s3-encryption | S3 | SSEAlgorithm = AES256 | ~26s |
-| CTRL-05 | ctrl-ebs-encryption-default | EC2 | EbsEncryptionByDefault = true | ~35s |
+| CTRL-01 | ctrl-s3-public-block | S3 | All 4 settings = true | 28,54s ± 2,10 |
+| CTRL-02 | ctrl-s3-ssl-only | S3 | DenyNonSSLRequests present | 26,81s ± 2,11 |
+| CTRL-03 | ctrl-s3-versioning | S3 | Versioning = Enabled | 26,32s ± 0,99 |
+| CTRL-04 | ctrl-s3-encryption | S3 | SSEAlgorithm = AES256 | 27,02s ± 1,29 |
+| CTRL-05 | ctrl-ebs-encryption-default | EC2 | EbsEncryptionByDefault = true | execução isolada (~35s) |
+
+O `t_total` mede o **teste**, não o loop: inclui criação de bucket e esperas de
+CloudTrail em série, e portanto não é comparável ao `t_remediation`. O CTRL-05 não
+tem teste na `integration_test.py` (ver L6) — o valor é de uma verificação isolada.
 
 ### Metodologia de Medição
 
@@ -2228,8 +2251,8 @@ Duas decisões afetam a interpretação dos números:
 - t_exposure para violações simples (C1, C5): **14,15 s** ± 1,48 (n = 20; IC 95% [13,46 · 14,84])
 - **Toda a dispersão está na detecção, não no loop**: `t_detection` mede **8,13 s** ± 1,46 (n = 20), variando de 6,14 s a 10,86 s enquanto `t_remediation` mantém desvio de 0,11 s. A decomposição fecha exatamente — `t_detection + t_remediation = t_exposure` em todas as 10 execuções — e localiza a variabilidade na latência de entrega do CloudTrail ao EventBridge, fora do controle do sistema
 - Consequência para otimização: não há folga na remediação. Reduzir `t_exposure` de forma significativa exigiria trocar o Monitor (ex: EventBridge nativo em vez de CloudTrail), não otimizar Analyze ou Execute
-- Janela de risco pós-expiração de exceção (C3): **~72 s** (buffer de 30 s do Scheduler + execução)
-- Precisão do Scheduler: `valid_until + 30s` (determinístico)
+- Janela de risco pós-expiração de exceção (C3): **58,55 s** ± 13,73 (n = 10) — buffer de 30 s do Scheduler, mais o atraso de entrega dele, mais a execução
+- Precisão do Scheduler: agendado para `valid_until + 30s`, mas o disparo efetivo carrega **22,5 s de atraso médio** (faixa 1,1–40,1 s, n = 10). É a única fonte de dispersão relevante do C3 e a razão do desvio de 13,73 s acima. O mecanismo é **limitado**, não determinístico — ver a ressalva em *Expiração de Exceções*
 
 
 ## Limitações Conhecidas e Trabalhos Futuros

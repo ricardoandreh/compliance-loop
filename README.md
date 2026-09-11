@@ -262,7 +262,7 @@ via `scripts/benchmark.py`. Desvio amostral (n−1) e IC 95% pela distribuição
 | t_classification (recurso conforme) | 0,45s | 0,04 | 10 | [0,43 · 0,48] |
 | t_escalation (falha → fila SQS) | 0,60s | 0,06 | 10 | [0,55 · 0,64] |
 
-**A remediação é determinística; a detecção é que varia.** `t_remediation` tem
+**A remediação varia 1,8%; a detecção, 18% — dez vezes mais.** `t_remediation` tem
 desvio de 0,11s, e os três cenários que remedeiam por rotas independentes
 concordam dentro de 0,02s (C1 6,02 · C3 6,04 · C5 6,02). Toda a dispersão do
 tempo de exposição vem do `t_detection` — latência de entrega do CloudTrail ao
