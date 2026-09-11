@@ -1181,7 +1181,14 @@ For any bucket name extracted from a CloudTrail event, the Monitor SHALL constru
 
 ### Property 28: Timeout Error Handling
 
-For any component timeout (Analyze task > 30s, Execute task > 90s, Orchestrator global > 300s), the Orchestrator SHALL log a timeout error and terminate the workflow. A cadeia de timeouts é monotônica com folga para o cold start: subprocess do tofu (65s) + cold start (~11s) ≈ 76s ≤ Execute Lambda (90s) ≤ Execute task SFN (90s) ≤ Orchestrator global (300s). A folga garante que um timeout do tofu sempre retorne erro estruturado (`subprocess.TimeoutExpired`) antes de o Lambda ser morto com `States.Timeout` genérico.
+For any component timeout (Analyze task > 75s, Execute task > 90s, Orchestrator global > 600s), the Orchestrator SHALL log a timeout error and terminate the workflow.
+
+A cadeia é monotônica em dois ramos, cada um com folga para o cold start:
+
+- **Execute**: subprocess do tofu (65s) + cold start (~11s) ≈ 76s ≤ Execute Lambda (90s) ≤ Execute task SFN (90s). A folga garante que um timeout do tofu sempre retorne erro estruturado (`subprocess.TimeoutExpired`) antes de o Lambda ser morto com `States.Timeout` genérico
+- **Analyze**: orçamento de OPA derivado do tempo restante (ver *Analyze Error Handling*) ≤ Analyze Lambda (60s) ≤ InvokeAnalyze task SFN (75s). O task fica **acima** do Lambda para que o retorno estruturado do handler vença a corrida contra o Step Functions
+
+O **global (600s)** precisa cobrir o pior caso serial, porque `ProcessResults` roda com `MaxConcurrency=1`: `75 + n_controles × (90 + escritas ~5) = 550s` nos 5 controles atuais. Adicionar controles que compartilhem um evento CloudTrail, ou elevar o timeout do Execute, exige revisitar esse valor.
 
 **Validates: Requirements 17.4**
 
@@ -1563,8 +1570,10 @@ representa uma redução de ordem de grandeza no MTTR.
 
 ### Espaço de otimização (não implementado)
 
-- **Provisioned Concurrency**: eliminaria o cold start de ~11s, garantindo ~5-7s
-  consistente. Mecanismo de SLA para requisitos de MTTR < 10s. Custo fixo (~$15/mês
+- **Provisioned Concurrency**: eliminaria o cold start de ~11s. Não é necessário
+  para o MTTR medido — 6,03 s ± 0,11 já se obtém sem ela, porque cold start é raro
+  (6 de 174 invocações). Serviria para eliminar a **cauda** (o outlier de ~10s numa
+  invocação fria) sob um SLA mais estreito, não para mover a média. Custo fixo (~$15/mês
   por instância) não justificado para MVP acadêmico.
 - **Memória 3008 MB**: 2 vCPUs proporcionais, reduziria extração do provider.
 - **SDK direto por controle**: otimização pontual para controles críticos com SLA
@@ -1839,6 +1848,12 @@ desabilitado (simulando ação via console), o sistema detecta, classifica como
 | t_detection (evento → SFN start) | ~6s | H3 |
 | t_remediation (SFN start → success) | **18s** | H1 |
 | t_exposure (evento → remediação confirmada) | **24s** | H3 |
+
+> **Ressalva de medição**: valores de uma execução única, mantidos como trace. O
+> `t_remediation` de 18s aqui é compatível com uma invocação de container frio
+> (~10s de Execute frio contra ~5s quente). Os valores reportáveis são o agregado
+> de 10 execuções — **6,03 s ± 0,11** — na *Síntese por Hipótese*. Nenhuma cifra
+> desta seção deve ser citada como o valor de H1 ou H3.
 
 #### Rastreabilidade (H2)
 
@@ -2228,7 +2243,9 @@ Duas decisões afetam a interpretação dos números:
 1. **Latências consideram apenas execuções em que o cenário passou.** Incluir os tempos parciais de uma execução que falhou favoreceria artificialmente o resultado. As falhas não são omitidas: cada linha traz a taxa de sucesso (`k/N`) ao lado da latência, de modo que confiabilidade e latência são lidas juntas.
 2. **n=1 é reportado como observação única**, com traços nas colunas de desvio e intervalo — nunca como média com precisão inventada. O agregador emite aviso explícito nomeando as métricas nessa condição.
 
-**Ameaças à validade**: as medições foram feitas em conta e região únicas (`us-east-1`), com violações sintéticas induzidas pelo próprio runner, sobre 5 controles. Cold start do Lambda é a principal fonte de variância em `t_remediation` (~14s vs. ~5s em warm start), de modo que a média depende da proporção de execuções frias na amostra — razão adicional para reportar desvio e amplitude, não apenas a média.
+**Ameaças à validade**: as medições foram feitas em conta e região únicas (`us-east-1`), com violações sintéticas induzidas pelo próprio runner, sobre 5 controles — e apenas o S3 tem cobertura repetida (ver L6).
+
+A variância de `t_remediation` é pequena (desvio 0,11 s sobre 6,03 s, ou 1,8%) e **não** é dominada por cold start: apenas 6 de 174 invocações do Execute foram frias na janela medida, e o custo do container frio (~5 s) apareceria como outlier isolado, não como dispersão distribuída. A hipótese de cold start como fonte principal foi levantada e **refutada** pelos logs — ver L10. A dispersão relevante está em `t_detection` (18% de coeficiente de variação), fora do controle do sistema.
 
 ### Síntese por Hipótese
 
