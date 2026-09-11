@@ -181,7 +181,8 @@ def wait_for_executions(after_ts, expected_statuses, min_count=1, timeout=90):
     return []
 
 
-def pick_execution(execs, event_name=None, trigger=None, resource_id=None):
+def pick_execution(execs, event_name=None, trigger=None, resource_id=None,
+                   longest=False):
     """Pick the execution that corresponds to the step under test.
 
     Unrelated executions overlap in time, and taking execs[0] measured whichever
@@ -200,6 +201,7 @@ def pick_execution(execs, event_name=None, trigger=None, resource_id=None):
     scenario caused. Falls back to the most recent execution if nothing matches,
     so a scenario never silently loses its metric — but says so.
     """
+    matches = []
     for e in execs:
         try:
             raw = sfn.describe_execution(executionArn=e["executionArn"]).get("input") or "{}"
@@ -212,7 +214,21 @@ def pick_execution(execs, event_name=None, trigger=None, resource_id=None):
             continue
         if resource_id is not None and resource_id not in raw:
             continue
-        return e
+        matches.append(e)
+
+    if matches:
+        if not longest:
+            return matches[0]
+        # A single event name can cover several executions: the violation that
+        # remediates (~5s) and the re-evaluations the remediation itself
+        # triggers (~0.4s each). Filtering by event alone would pick whichever
+        # the listing returned first — measuring a re-evaluation as if it were
+        # the remediation. Taking the longest WITHIN the matching event is what
+        # separates them; taking the longest across ALL events was the original
+        # bug, since it picked the CreateBucket fan-out instead.
+        return max(matches, key=lambda e: get_execution_timing(
+            e["executionArn"])["duration_s"])
+
     wanted = {k: v for k, v in
               (("event_name", event_name), ("trigger", trigger)) if v is not None}
     log(f"no execution matched {wanted}; falling back to most recent", "WARN")
@@ -269,8 +285,16 @@ def test_c1():
         execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
         assert execs, "No SUCCEEDED executions found"
 
-        timings = [(e, get_execution_timing(e["executionArn"])) for e in execs]
-        remediation = max(timings, key=lambda x: x[1]["duration_s"])
+        # Select by the event this scenario triggered, NOT by max(duration).
+        # max() reliably picked the wrong execution: create_bucket emits
+        # CreateBucket, which fans out to all four S3 controls and remediates
+        # the two a fresh bucket fails (versioning, ssl-only) serially, taking
+        # 15-25s. The violation under test remediates one control in ~5s, so
+        # max() reported the setup's fan-out as this scenario's MTTR — inflating
+        # H1 by roughly 3.5x and attributing the fan-out's spread to it.
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
+                                resource_id=name, longest=True)
+        remediation = (chosen, get_execution_timing(chosen["executionArn"]))
         t_sfn_start = remediation[1]["start"]
         t_sfn_end = remediation[1]["stop"]
 
@@ -439,8 +463,16 @@ def test_c5():
         execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
         assert execs, "No SUCCEEDED executions found"
 
-        timings = [(e, get_execution_timing(e["executionArn"])) for e in execs]
-        remediation = max(timings, key=lambda x: x[1]["duration_s"])
+        # Select by the event this scenario triggered, NOT by max(duration).
+        # max() reliably picked the wrong execution: create_bucket emits
+        # CreateBucket, which fans out to all four S3 controls and remediates
+        # the two a fresh bucket fails (versioning, ssl-only) serially, taking
+        # 15-25s. The violation under test remediates one control in ~5s, so
+        # max() reported the setup's fan-out as this scenario's MTTR — inflating
+        # H1 by roughly 3.5x and attributing the fan-out's spread to it.
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
+                                resource_id=name, longest=True)
+        remediation = (chosen, get_execution_timing(chosen["executionArn"]))
 
         metrics["t_detection"] = round(remediation[1]["start"] - t_event, 2)
         metrics["t_remediation"] = remediation[1]["duration_s"]
