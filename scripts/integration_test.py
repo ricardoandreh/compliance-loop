@@ -181,6 +181,44 @@ def wait_for_executions(after_ts, expected_statuses, min_count=1, timeout=90):
     return []
 
 
+def pick_execution(execs, event_name=None, trigger=None, resource_id=None):
+    """Pick the execution that corresponds to the step under test.
+
+    Unrelated executions overlap in time, and taking execs[0] measured whichever
+    the listing happened to return first. Two cases bit us:
+
+    - C2/C6: creating the bucket emits CreateBucket, which fans out to every S3
+      control and remediates the ones a fresh bucket fails (~13s). The violation
+      the scenario actually triggers classifies in under a second. Both start
+      within the same second, so t_classification came out as 0.4s on some runs
+      and 13.2s on others for the same scenario, with nothing wrong.
+    - C3: after the scheduler-triggered remediation (~5.9s), that remediation's
+      own CloudTrail event causes one more evaluation (~0.5s). Picking the
+      latter reported t_remediation as 0.47s and dragged H1's interval negative.
+
+    Matching on fields of the execution input ties each metric to the event the
+    scenario caused. Falls back to the most recent execution if nothing matches,
+    so a scenario never silently loses its metric — but says so.
+    """
+    for e in execs:
+        try:
+            raw = sfn.describe_execution(executionArn=e["executionArn"]).get("input") or "{}"
+            inp = json.loads(raw)
+        except Exception:
+            continue
+        if event_name is not None and inp.get("event_name") != event_name:
+            continue
+        if trigger is not None and inp.get("trigger") != trigger:
+            continue
+        if resource_id is not None and resource_id not in raw:
+            continue
+        return e
+    wanted = {k: v for k, v in
+              (("event_name", event_name), ("trigger", trigger)) if v is not None}
+    log(f"no execution matched {wanted}; falling back to most recent", "WARN")
+    return execs[0]
+
+
 def get_execution_timing(exec_arn):
     """Extract start/stop timestamps and duration from execution history."""
     desc = sfn.describe_execution(executionArn=exec_arn)
@@ -273,8 +311,9 @@ def test_c2():
         execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
         assert execs, "No SUCCEEDED executions found"
 
-        timing = get_execution_timing(execs[0]["executionArn"])
-        metrics["t_classification"] = timing["duration_s"]
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
+                                resource_id=name)
+        metrics["t_classification"] = get_execution_timing(chosen["executionArn"])["duration_s"]
 
         cfg = get_public_access(name)
         assert not any(cfg.values()), f"Bucket remediated despite exception: {cfg}"
@@ -331,7 +370,9 @@ def test_c3():
 
         # Timing: scheduler precision
         if execs:
-            sched_exec = get_execution_timing(execs[0]["executionArn"])
+            chosen = pick_execution(execs, trigger="exception_ttl_expiry",
+                                    resource_id=name)
+            sched_exec = get_execution_timing(chosen["executionArn"])
             metrics["t_scheduler_fire"] = round(sched_exec["start"] - ttl, 2)
             metrics["t_remediation_post_expiry"] = round(sched_exec["stop"] - ttl, 2)
             metrics["t_remediation"] = sched_exec["duration_s"]
@@ -430,8 +471,9 @@ def test_c6():
         execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
         assert execs, "No SUCCEEDED executions found"
 
-        timing = get_execution_timing(execs[0]["executionArn"])
-        metrics["t_classification"] = timing["duration_s"]
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
+                                resource_id=name)
+        metrics["t_classification"] = get_execution_timing(chosen["executionArn"])["duration_s"]
 
         violations = query_violations(arn)
         nominals = [v for v in violations if v["state"] == "S_nominal" and v["control_id"] == "ctrl-s3-public-block"]
