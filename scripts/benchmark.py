@@ -272,6 +272,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run the integration suite N times and aggregate the metrics")
     parser.add_argument("--runs", type=int, default=10, help="how many times to run the suite")
+    parser.add_argument("--start-index", type=int, default=1, metavar="N",
+                        help="number the first run N instead of 1, so a batch can be "
+                             "added to an existing set without overwriting it "
+                             "(runs accumulate; --aggregate-only re-reads them all)")
     parser.add_argument("--out", default="results", help="directory for raw and aggregated output")
     parser.add_argument("--test", help="restrict every run to one scenario (e.g. C1)")
     parser.add_argument("--region", default="us-east-1")
@@ -292,10 +296,12 @@ def main():
         if args.test:
             extra += ["--test", args.test]
 
-        print(f"Running the suite {args.runs}x -> {out_dir}\n", flush=True)
-        for i in range(1, args.runs + 1):
+        first, last = args.start_index, args.start_index + args.runs - 1
+        print(f"Running the suite {args.runs}x (run-{first:02d}..run-{last:02d}) "
+              f"-> {out_dir}\n", flush=True)
+        for i in range(first, last + 1):
             run_suite(i, out_dir, extra)
-            if i < args.runs and args.settle:
+            if i < last and args.settle:
                 print(f"  settling {args.settle}s...", flush=True)
                 time.sleep(args.settle)
         print()
