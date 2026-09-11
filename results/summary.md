@@ -1,6 +1,6 @@
 # Resultados agregados
 
-Execuções da suíte: **3** — gerado em 2026-09-11 02:48 UTC.
+Execuções da suíte: **3** — gerado em 2026-09-11 02:49 UTC.
 Latências consideram apenas execuções em que o cenário passou; a taxa de sucesso é reportada separadamente. IC 95% pela distribuição t de Student (desvio amostral, n-1).
 
 ## Por hipótese
