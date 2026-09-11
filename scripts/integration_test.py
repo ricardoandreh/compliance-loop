@@ -95,6 +95,53 @@ def wait_for_revocation_cascade(grace=30):
     wait_quiesce(timeout=120)
 
 
+def close_escalation_issue(resource_id, control_id, timeout=75):
+    """Close the GitHub issue this scenario opened on purpose.
+
+    C4 escalates by design — a bucket that does not exist, so remediation fails
+    and the loop raises an issue. That is the behaviour under test, but without
+    cleanup every benchmark run leaves one more issue behind for a bucket that
+    never existed; 71 had accumulated before this was added.
+
+    The issue arrives asynchronously (SQS → Lambda → GitHub API), so poll for it
+    rather than assume it is already there. Nothing here is fatal: the scenario's
+    assertions have already passed by this point, and scripts/close_test_issues.py
+    can always sweep whatever was missed.
+    """
+    try:
+        import close_test_issues as gh
+    except ImportError:
+        log("close_test_issues not importable; issue left open", "WARN")
+        return False
+
+    title = f"[VIOLATION] {control_id} \u2014 {resource_id}"
+    try:
+        params = gh.github_params(REGION)
+    except Exception as e:
+        log(f"could not read GitHub params; issue left open ({e})", "WARN")
+        return False
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            match = [i for i in gh.list_open_issues(params) if i["title"] == title]
+        except Exception as e:
+            log(f"issue lookup failed; leaving it open ({e})", "WARN")
+            return False
+        if match:
+            try:
+                gh.close_issue(params, match[0]["number"])
+                log(f"closed escalation issue #{match[0]['number']}", "OK")
+                return True
+            except Exception as e:
+                log(f"could not close #{match[0]['number']} ({e})", "WARN")
+                return False
+        time.sleep(5)
+
+    log(f"escalation issue for {resource_id} did not appear in {timeout}s", "WARN")
+    return False
+
+
 def delete_bucket(name):
     wait_quiesce()
     # In-flight CloudTrail events may still spawn executions for a few
@@ -446,6 +493,12 @@ def test_c4():
 
     log(f"t_escalation={metrics['t_escalation']}s", "TIME")
     log("C4 PASSED", "OK")
+
+    # The escalation is the point of this scenario, so the issue it raises is a
+    # real result — but it describes a bucket the test invented, so it should not
+    # outlive the run.
+    close_escalation_issue(bucket_name, "ctrl-s3-public-block")
+
     return True, metrics
 
 

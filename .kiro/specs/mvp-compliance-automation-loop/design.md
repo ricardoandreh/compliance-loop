@@ -2209,9 +2209,12 @@ Duas decisões afetam a interpretação dos números:
 
 ### Síntese por Hipótese
 
+> **Valores de referência**: os números abaixo vêm de **10 execuções completas da suíte** (120/120 cenários aprovados), agregados por `scripts/benchmark.py` com o harness corrigido — ver *Metodologia de Medição* e L10. Substituem as medições de execução única registradas nas seções de evidência experimental, que permanecem como rastro histórico de cada cenário, não como valor reportável.
+
 **H1 — Redução do MTTR**
-- t_remediation médio (C1, C3, C5): **6.8s** (última execução automatizada)
-- t_remediation cold start: ~14s | warm start: ~5s
+- t_remediation: **6,03 s** ± 0,11 (n = 30; IC 95% [5,99 · 6,06]; faixa 5,83–6,24)
+- Concordância entre rotas independentes: C1 **6,02 s** · C3 **6,04 s** · C5 **6,02 s** — três caminhos distintos (violação via console, expiração de exceção com re-avaliação pelo Scheduler, violação originada por IaC externo) convergem dentro de **0,02 s**. Não é um caminho otimizado: é o custo do loop
+- Contribuição do cold start: container frio custa **~5 s** (Execute frio 10,09 s vs. quente 5,24 s, n = 6 e 168), quase todo o download do cache de provider dentro do handler — o `Init Duration` é de apenas 0,40–0,53 s. Frio é **raro** (6 de 174 invocações), de modo que a média agregada reflete o regime quente
 - Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual
 - Redução: **ordens de grandeza** (segundos vs. dias)
 
@@ -2222,8 +2225,10 @@ Duas decisões afetam a interpretação dos números:
 - `state=S_violation` preservado mesmo após falha de remediação (C4)
 
 **H3 — Tempo de exposição**
-- t_exposure médio para violações simples (C1, C5): **19.16s**
-- Janela de risco pós-expiração de exceção (C3): **~51s** (30s buffer + execução)
+- t_exposure para violações simples (C1, C5): **14,15 s** ± 1,48 (n = 20; IC 95% [13,46 · 14,84])
+- **Toda a dispersão está na detecção, não no loop**: `t_detection` mede **8,13 s** ± 1,46 (n = 20), variando de 6,14 s a 10,86 s enquanto `t_remediation` mantém desvio de 0,11 s. A decomposição fecha exatamente — `t_detection + t_remediation = t_exposure` em todas as 10 execuções — e localiza a variabilidade na latência de entrega do CloudTrail ao EventBridge, fora do controle do sistema
+- Consequência para otimização: não há folga na remediação. Reduzir `t_exposure` de forma significativa exigiria trocar o Monitor (ex: EventBridge nativo em vez de CloudTrail), não otimizar Analyze ou Execute
+- Janela de risco pós-expiração de exceção (C3): **~72 s** (buffer de 30 s do Scheduler + execução)
 - Precisão do Scheduler: `valid_until + 30s` (determinístico)
 
 
@@ -2263,7 +2268,7 @@ O TTL sobre `valid_until` permanece habilitado para limpeza eventual. Como a del
 
 ### L6. Escopo da validação empírica
 
-Conta e região únicas, 5 controles, violações sintéticas induzidas pelo runner. Não foram exercitados: concorrência entre execuções sobre o mesmo recurso, operação multi-conta (AWS Organizations), nem controles cujo `fetch_config` exija paginação da API de origem. A generalização do fetcher genérico está demonstrada para 2 serviços (S3, EC2), não para o espaço de serviços AWS.
+Conta e região únicas, 5 controles, violações sintéticas induzidas pelo runner. Não foram exercitados: concorrência entre execuções sobre o mesmo recurso, operação multi-conta (AWS Organizations), nem controles cujo `fetch_config` exija paginação da API de origem. A generalização do fetcher genérico está demonstrada para 2 serviços (S3, EC2), mas com força de evidência desigual: a suíte repetida (10 execuções) cobre **apenas S3** — seus cenários automatizados vão de CTRL-01 a CTRL-04. O controle de EC2 (`ctrl-ebs-encryption-default`) foi validado numa execução isolada, registrada na tabela de validação por controle, e não possui teste na `integration_test.py`. Portanto, a afirmação sustentada por medição repetida é sobre S3; EC2 sustenta a afirmação de *extensibilidade do mecanismo*, não a de desempenho.
 
 ### L7. Comparação com soluções gerenciadas
 
@@ -2280,3 +2285,15 @@ Isso afeta apenas `t_detection`, a única métrica que cruza os dois relógios n
 `wait_for_executions` lista as 15 execuções mais recentes e filtra por horário de início. A própria propriedade de convergência do loop faz cada remediação gerar novos eventos CloudTrail e, portanto, novas execuções — foram observadas 36 execuções numa única rodada da suíte. Cenários cuja verificação demore o suficiente podem ter sua execução empurrada para fora dessa janela de 15, produzindo falha de teste sem falha de sistema.
 
 O cenário C4 foi corrigido por não precisar de busca (acompanha o `executionArn` devolvido pelo `StartExecution`). Os cenários disparados por CloudTrail não têm essa opção: a correção seria paginar a listagem ou correlacionar pela entrada da execução em vez do horário.
+
+### L10. Correlação entre métrica e execução (corrigido, com lição residual)
+
+Quatro defeitos de medição foram encontrados e corrigidos; ficam registrados porque explicam por que os números desta versão divergem dos anteriores, e porque a classe de erro é fácil de reintroduzir.
+
+**O caso mais grave.** C1 e C5 selecionavam a execução a cronometrar por `max(duration)` entre as recentes. Isso escolhia consistentemente a execução de `CreateBucket` — emitida pela criação do bucket no próprio setup do teste, que avalia os quatro controles S3 e remedia em série os dois que um bucket novo falha (versioning, ssl-only): 15 a 25 s. A violação sob teste remedia **um** controle em ~6 s. O MTTR reportado era, portanto, a duração do setup, inflado por um fator de ~3, e a dispersão de 12 s atribuída ao sistema era a variabilidade de quantos controles o fan-out precisava corrigir.
+
+**A correção tem duas etapas, e a primeira sozinha erra de novo.** Filtrar por `event_name` não basta: o mesmo evento cobre a violação que remedia (~6 s) e as re-avaliações que a própria remediação dispara (~0,4 s cada). Filtrar e pegar a primeira passou a medir uma re-avaliação (0,42 s). O correto é filtrar pelo evento **e então** tomar a execução mais longa *dentro* do filtro — tomar a mais longa entre todos os eventos era o defeito original.
+
+**Os outros três**: relógio do runner adiantado 0,9 s (ver L8); corrida no teardown do C2 que produzia uma escalação espúria por execução; e seleção por `execs[0]` em C2/C6/C3, que rendia valores bimodais (0,4 s ou 13,2 s para a mesma grandeza).
+
+**A lição residual**: em um sistema cujo invariante de projeto é a reconvergência, *toda* remediação gera novos eventos e, portanto, novas execuções — 36 numa única rodada da suíte. Qualquer métrica correlacionada por proximidade temporal ou por extremo de duração é frágil por construção. A correlação precisa ser pela **identidade do evento que o cenário causou**. A verificação de execuções falhas inesperadas (`AUDIT`) foi o que detectou o defeito do C2, que passou por todas as asserções dos cenários — vale manter esse tipo de checagem negativa em qualquer suíte sobre sistema reativo.

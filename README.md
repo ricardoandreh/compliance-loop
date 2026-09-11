@@ -218,38 +218,65 @@ de sucesso aparece ao lado. Métricas com n=1 são marcadas como observação
 
 ## Cenários validados
 
-| Cenário | Descrição | Resultado |
-|---|---|---|
-| C1 | Violação simples via console | Remediado em ~14s |
-| C2 | Violação com exceção ativa | Não remedia, registra exceção |
-| C3 | Exceção expira → remediação | Scheduler dispara, remedia em ~6s |
-| C4 | Falha na remediação (bucket inexistente) | Escala via GitHub Issue |
-| C5 | Violação originada por IaC externo | Detecta e remedia em ~5s |
-| C6 | Recurso já conforme | Confirma em <1s, sem ação |
-| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync em ~16s |
+Todos aprovados em **10 de 10** execuções da suíte. Valores: média ± desvio (n=10).
+
+| Cenário | Descrição | Resultado | Métrica |
+|---|---|---|---|
+| C1 | Violação simples via console | Remediado, converge a S_nominal | 6,02s ± 0,11 |
+| C2 | Violação com exceção ativa | Não remedia, registra S_exception | 0,47s ± 0,08 |
+| C3 | Exceção expira → remediação | Scheduler dispara, remedia | 6,04s ± 0,10 |
+| C4 | Falha na remediação (bucket inexistente) | Escala via GitHub Issue | 0,60s ± 0,06 |
+| C5 | Violação originada por IaC externo | Detecta e remedia | 6,02s ± 0,13 |
+| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | 0,45s ± 0,04 |
+| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | 15,93s ± 1,02 |
+| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além da esperada do C4 | — |
 
 ## Controles validados
 
-| Teste | Controle | Verificação |
-|---|---|---|
-| CTRL-01 | ctrl-s3-public-block | All 4 settings = true |
-| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present |
-| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled |
-| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 |
-| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true |
+| Teste | Controle | Verificação | t_total (n=10) |
+|---|---|---|---|
+| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | 28,54s ± 2,10 |
+| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 26,81s ± 2,11 |
+| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 26,32s ± 0,99 |
+| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | 27,02s ± 1,29 |
+| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | validado à parte, fora da suíte |
+
+O `t_total` das CTRL-* inclui esperas de CloudTrail em série, e não é comparável ao
+`t_remediation` — mede o teste, não o loop.
+
+O CTRL-05 não tem teste automatizado: a `integration_test.py` cobre CTRL-01 a
+CTRL-04. O controle está implantado e foi validado numa execução isolada
+(registrada no `design.md`), mas não entra nas 10 execuções agregadas acima —
+logo, o único serviço com cobertura repetida é o S3.
 
 ## Performance
 
-| Métrica | Valor |
-|---|---|
-| t_detection (evento → SFN start) | ~8s |
-| t_remediation cold start | ~14s |
-| t_remediation warm start | ~5s |
-| t_exposure (evento → remediação) | ~20s |
-| H1 (MTTR médio) | **6.8s** |
-| H3 (Tempo de exposição médio) | **19.16s** |
+Agregado de **10 execuções completas da suíte** (120/120 cenários aprovados),
+via `scripts/benchmark.py`. Desvio amostral (n−1) e IC 95% pela distribuição t.
+
+| Métrica | Valor | Desvio | n | IC 95% |
+|---|---|---|---|---|
+| **H1 — t_remediation** | **6,03s** | 0,11 | 30 | [5,99 · 6,06] |
+| **H3 — t_exposure** | **14,15s** | 1,48 | 20 | [13,46 · 14,84] |
+| t_detection (evento → SFN start) | 8,13s | 1,46 | 20 | [7,45 · 8,81] |
+| t_classification (recurso conforme) | 0,45s | 0,04 | 10 | [0,43 · 0,48] |
+| t_escalation (falha → fila SQS) | 0,60s | 0,06 | 10 | [0,55 · 0,64] |
+
+**A remediação é determinística; a detecção é que varia.** `t_remediation` tem
+desvio de 0,11s, e os três cenários que remedeiam por rotas independentes
+concordam dentro de 0,02s (C1 6,02 · C3 6,04 · C5 6,02). Toda a dispersão do
+tempo de exposição vem do `t_detection` — latência de entrega do CloudTrail ao
+EventBridge, fora do controle do sistema. A decomposição fecha exatamente:
+`t_detection + t_remediation = t_exposure` nas dez execuções.
+
+Cold start custa ~5s (Execute frio 10,09s vs. quente 5,24s) e é raro — 6 de 174
+invocações. O `Init Duration` é de apenas 0,40–0,53s; o custo real é o download
+do cache de provider dentro do handler.
 
 A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~128MB), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
+
+Relatório com os gráficos interativos e a tabela completa: `results/report.html`
+(dados brutos em `results/run-NN.json`, regeneráveis com `scripts/build_report_data.py`).
 
 ## Licença
 
