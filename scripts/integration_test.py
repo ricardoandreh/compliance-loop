@@ -335,10 +335,12 @@ def test_c1():
         # Select by the event this scenario triggered, NOT by max(duration).
         # max() reliably picked the wrong execution: create_bucket emits
         # CreateBucket, which fans out to all four S3 controls and remediates
-        # the two a fresh bucket fails (versioning, ssl-only) serially, taking
-        # 15-25s. The violation under test remediates one control in ~5s, so
+        # three of them serially in ~18.5s: versioning and ssl-only, which a
+        # fresh bucket fails, plus public-block, which this test has already
+        # switched off by the time the event is evaluated (both events arrive
+        # together). The violation under test remediates one control in ~6s, so
         # max() reported the setup's fan-out as this scenario's MTTR — inflating
-        # H1 by roughly 3.5x and attributing the fan-out's spread to it.
+        # H1 by roughly 3x and attributing the fan-out's spread to it.
         chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
                                 resource_id=name, longest=True)
         remediation = (chosen, get_execution_timing(chosen["executionArn"]))
@@ -519,10 +521,12 @@ def test_c5():
         # Select by the event this scenario triggered, NOT by max(duration).
         # max() reliably picked the wrong execution: create_bucket emits
         # CreateBucket, which fans out to all four S3 controls and remediates
-        # the two a fresh bucket fails (versioning, ssl-only) serially, taking
-        # 15-25s. The violation under test remediates one control in ~5s, so
+        # three of them serially in ~18.5s: versioning and ssl-only, which a
+        # fresh bucket fails, plus public-block, which this test has already
+        # switched off by the time the event is evaluated (both events arrive
+        # together). The violation under test remediates one control in ~6s, so
         # max() reported the setup's fan-out as this scenario's MTTR — inflating
-        # H1 by roughly 3.5x and attributing the fan-out's spread to it.
+        # H1 by roughly 3x and attributing the fan-out's spread to it.
         chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
                                 resource_id=name, longest=True)
         remediation = (chosen, get_execution_timing(chosen["executionArn"]))
