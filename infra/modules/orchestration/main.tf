@@ -8,6 +8,7 @@ variable "escalation_queue_arn" { type = string }
 variable "escalation_queue_url" { type = string }
 variable "controls_table_name" { type = string }
 variable "controls_table_arn" { type = string }
+variable "remediation_role_arn" { type = string }
 
 # --- EventBridge Rule ---
 # Event pattern is dynamically managed by the controls-sync Lambda
@@ -16,10 +17,19 @@ resource "aws_cloudwatch_event_rule" "s3_public_access_block" {
   name        = "${var.project_name}-s3-public-access-block-${var.environment}"
   description = "Capture S3 compliance events - managed dynamically from controls table"
 
+  # Only the initial pattern: controls-sync owns this rule afterwards (hence
+  # ignore_changes) and regenerates it from the controls table with the same
+  # identity filter — see lambdas/controls_sync/handler.py for why the $or with
+  # exists:false is required rather than a bare anything-but.
   event_pattern = jsonencode({
-    source      = ["aws.s3"]
     detail-type = ["AWS API Call via CloudTrail"]
-    detail      = { eventName = ["PutBucketPublicAccessBlock", "DeleteBucketPublicAccessBlock", "CreateBucket", "PutBucketPolicy", "DeleteBucketPolicy"] }
+    detail = {
+      eventName = ["PutBucketPublicAccessBlock", "DeleteBucketPublicAccessBlock", "CreateBucket", "PutBucketPolicy", "DeleteBucketPolicy"]
+      "$or" = [
+        { userIdentity = { sessionContext = { sessionIssuer = { arn = [{ exists = false }] } } } },
+        { userIdentity = { sessionContext = { sessionIssuer = { arn = [{ anything-but = var.remediation_role_arn }] } } } },
+      ]
+    }
   })
 
   tags = { Name = "${var.project_name}-s3-public-access-block", Environment = var.environment }
@@ -140,6 +150,19 @@ resource "aws_iam_role_policy" "sfn_dynamodb" {
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem"], Resource = [var.violations_log_table_arn] },
                  { Effect = "Allow", Action = ["dynamodb:Scan", "dynamodb:GetItem"], Resource = [var.controls_table_arn] }]
+  })
+}
+
+# The loop closes by starting itself once more: a detection round that
+# remediated schedules a single verification round. The policy targets the
+# state machine's own ARN, which is fine here — this policy depends on the state
+# machine, not the other way round, so there is no cycle.
+resource "aws_iam_role_policy" "sfn_start_verification" {
+  name = "start-verification-round"
+  role = aws_iam_role.step_functions.id
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Action = ["states:StartExecution"], Resource = [aws_sfn_state_machine.compliance_loop.arn] }]
   })
 }
 

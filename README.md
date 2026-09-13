@@ -32,11 +32,17 @@ EventBridge detecta e dispara o loop de compliance
 │                                                          │
 │  5. Escalate → Cria GitHub Issue                         │
 │              (se remediação falhar)                       │
+│                                                          │
+│  6. Verify   → se remediou, agenda UMA nova rodada:      │
+│              reavalia os controles corrigidos e          │
+│              confirma S_nominal ou escala                │
 └──────────────────────────────────────────────────────────┘
-    │
-    ▼
-CloudTrail captura a remediação → re-avaliação → S_nominal ✓
 ```
+
+O laço se fecha em **no máximo duas execuções** por incidente. As escritas da
+própria remediação não disparam o sistema de novo — a regra do EventBridge
+ignora a identidade da Lambda Execute —, e a rodada de verificação nunca
+remedeia, então o loop não tem como oscilar.
 
 ## Estados de classificação
 
@@ -67,7 +73,7 @@ CloudTrail captura a remediação → re-avaliação → S_nominal ✓
 | Knowledge | DynamoDB (3 tabelas) | Controles, exceções e log de violações |
 | Escalação | SQS FIFO + Lambda + GitHub API | Cria issues para falhas de remediação |
 | Scheduler | EventBridge Scheduler | Re-avalia após expiração de exceções |
-| Controls Sync | DynamoDB Stream → Lambda | Atualiza EventBridge rule ao inserir/modificar controles |
+| Controls Sync | DynamoDB Stream → Lambda | Atualiza a EventBridge rule ao inserir/modificar controles, excluindo eventos da própria remediação |
 
 ## Extensibilidade
 
@@ -156,6 +162,24 @@ tofu -chdir=infra apply
 
 O código das Lambdas é empacotado pelo `archive_file` durante o `apply` — não
 há passo manual de `zip` + `update-function-code`.
+
+**Depois de um `apply` que mude o padrão da regra**, regenere a regra viva: o
+Terraform não a atualiza (`ignore_changes`), quem a escreve é o `controls-sync`.
+
+```bash
+aws lambda invoke --function-name compliance-loop-controls-sync-dev --payload '{}' /dev/stdout
+```
+
+> **Credenciais com `aws login`.** O provider AWS dentro do container do
+> OpenTofu não lê a sessão do novo `aws login` (`~/.aws/login/cache`). Exporte
+> credenciais temporárias e passe-as ao container:
+>
+> ```bash
+> eval "$(aws configure export-credentials --format env)"
+> docker run --rm -v "$PWD:/workspace" -w /workspace \
+>   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_REGION=us-east-1 \
+>   ghcr.io/opentofu/opentofu:latest -chdir=infra apply
+> ```
 
 > **Não rode de dentro de `infra/`.** Se o `tofu` do seu PATH for o wrapper
 > Docker (`docker run -v "$(pwd):/workspace" -w /workspace ...`), ele monta

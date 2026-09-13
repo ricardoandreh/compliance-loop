@@ -13,17 +13,28 @@
         "region": "{% $states.input.region %}",
         "event_time": "{% $states.input.event_time %}",
         "event_name": "{% $states.input.event_name ? $states.input.event_name : '' %}",
-        "control_id": "{% $states.input.control_id ? $states.input.control_id : '' %}"
+        "control_id": "{% $states.input.control_id ? $states.input.control_id : '' %}",
+        "mode": "{% $states.input.mode ? $states.input.mode : 'detect' %}",
+        "origin_execution": "{% $states.input.origin_execution ? $states.input.origin_execution : '' %}",
+        "origin_violations": "{% $states.input.origin_violations ? $states.input.origin_violations : {} %}",
+        "controls": "{% $states.input.controls ? $states.input.controls : [] %}"
       },
       "Next": "RouteControlLookup"
     },
     "RouteControlLookup": {
       "Type": "Choice",
-      "Comment": "Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events have no control_id (defaulted to '') → fan out by event_name.",
+      "Comment": "Verification rounds (mode=verify) carry the controls to re-check → wait for consistency, then re-evaluate. Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events carry neither → fan out by event_name.",
       "Choices": [
+        { "Condition": "{% $states.input.mode = 'verify' %}", "Next": "WaitForConsistency" },
         { "Condition": "{% $states.input.control_id != '' %}", "Next": "GetControlById" }
       ],
       "Default": "QueryControls"
+    },
+    "WaitForConsistency": {
+      "Type": "Wait",
+      "Comment": "Verification round. It re-checks exactly the controls the detection round remediated, using the control definitions that round carried over, so there is nothing to look up. S3 bucket configuration is eventually consistent: the CloudTrail echo this round replaces used to arrive several seconds after a remediation, which quietly gave the read time to settle. With the echo filtered out, that margin has to be explicit, or a stale read would escalate a remediation that actually worked.",
+      "Seconds": 15,
+      "Next": "InvokeAnalyze"
     },
     "GetControlById": {
       "Type": "Task",
@@ -142,6 +153,10 @@
         "account_id": "{% $states.input.account_id %}",
         "region": "{% $states.input.region %}",
         "event_time": "{% $states.input.event_time %}",
+        "mode": "{% $states.input.mode ? $states.input.mode : 'detect' %}",
+        "origin_execution": "{% $states.input.origin_execution ? $states.input.origin_execution : '' %}",
+        "origin_violations": "{% $states.input.origin_violations ? $states.input.origin_violations : {} %}",
+        "controls": "{% $states.input.controls %}",
         "results": "{% $states.result.Payload.results %}"
       },
       "Retry": [
@@ -172,6 +187,9 @@
         "account_id": "{% $states.input.account_id %}",
         "region": "{% $states.input.region %}",
         "event_time": "{% $states.input.event_time %}",
+        "mode": "{% $states.input.mode %}",
+        "origin_execution": "{% $states.input.origin_execution %}",
+        "origin_violations": "{% $states.input.origin_violations %}",
         "analyze_result": "{% $states.context.Map.Item.Value %}"
       },
       "ItemProcessor": {
@@ -180,12 +198,82 @@
         "States": {
           "ClassifyState": {
             "Type": "Choice",
+            "Comment": "The verification branches come first on purpose: in a verification round a violation must escalate, never reach InvokeExecute. That is what bounds an incident to two executions.",
             "Choices": [
+              { "Condition": "{% $states.input.mode = 'verify' and $states.input.analyze_result.state = 'S_nominal' %}", "Next": "RegisterVerified" },
+              { "Condition": "{% $states.input.mode = 'verify' and $states.input.analyze_result.state = 'S_violation' %}", "Next": "RegisterNonConvergence" },
               { "Condition": "{% $states.input.analyze_result.state = 'S_nominal' %}", "Next": "RegisterNominal" },
               { "Condition": "{% $states.input.analyze_result.state = 'S_exception' %}", "Next": "RegisterException" },
               { "Condition": "{% $states.input.analyze_result.state = 'S_violation' %}", "Next": "RegisterViolation" }
             ],
             "Default": "RegisterError"
+          },
+          "RegisterVerified": {
+            "Type": "Task",
+            "Comment": "Convergence confirmed. Linked to the violation it verifies, so the audit trail reads violation -> remediation -> verified as one chain instead of rows joined only by resource and time.",
+            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Arguments": {
+              "TableName": "${violations_log_table}",
+              "Item": {
+                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
+                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
+                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
+                "state": { "S": "S_nominal" },
+                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
+                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
+                "round": { "S": "verification" },
+                "origin_execution": { "S": "{% $states.input.origin_execution %}" },
+                "verifies_violation_id": { "S": "{% $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) ? $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) : 'unknown' %}" },
+                "account_id": { "S": "{% $states.input.account_id %}" },
+                "region": { "S": "{% $states.input.region %}" }
+              }
+            },
+            "Output": { "outcome": "verified", "control_id": "{% $states.input.analyze_result.control_id %}" },
+            "End": true
+          },
+          "RegisterNonConvergence": {
+            "Type": "Task",
+            "Comment": "A remediation reported success but the verification round still sees the violation: the policy and its remediation disagree, or something external undid the fix. Recorded, then escalated — never remediated again, which is what keeps the loop from oscillating (design.md, L11).",
+            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Arguments": {
+              "TableName": "${violations_log_table}",
+              "Item": {
+                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
+                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
+                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
+                "state": { "S": "S_violation" },
+                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
+                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
+                "round": { "S": "verification" },
+                "remediation_status": { "S": "not_converged" },
+                "origin_execution": { "S": "{% $states.input.origin_execution %}" },
+                "verifies_violation_id": { "S": "{% $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) ? $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) : 'unknown' %}" },
+                "account_id": { "S": "{% $states.input.account_id %}" },
+                "region": { "S": "{% $states.input.region %}" }
+              }
+            },
+            "Output": "{% $states.input %}",
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "Comment": "The audit write must never suppress the alert.",
+                "Output": "{% $states.input %}",
+                "Next": "NonConvergenceEscalation"
+              }
+            ],
+            "Next": "NonConvergenceEscalation"
+          },
+          "NonConvergenceEscalation": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage",
+            "Arguments": {
+              "QueueUrl": "${escalation_queue_url}",
+              "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'error': 'Remediation did not converge: the verification round still finds ' & $states.input.analyze_result.control_id & ' violated after a remediation reported success (origin execution ' & $states.input.origin_execution & '). The loop does not remediate twice; human review required.', 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+              "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
+              "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
+            },
+            "Output": { "outcome": "escalated" },
+            "End": true
           },
           "RegisterError": {
             "Type": "Task",
@@ -344,7 +432,11 @@
                 ":output": { "S": "{% $states.input.execute_result.output %}" }
               }
             },
-            "Output": { "outcome": "remediated" },
+            "Output": {
+              "outcome": "remediated",
+              "control_id": "{% $states.input.analyze_result.control_id %}",
+              "violation_id": "{% $states.input.analyze_result.violation_id %}"
+            },
             "End": true
           },
           "UpdateLogFailed": {
@@ -399,12 +491,78 @@
           }
         }
       },
+      "Output": {
+        "resource_arn": "{% $states.input.resource_arn %}",
+        "resource_id": "{% $states.input.resource_id %}",
+        "account_id": "{% $states.input.account_id %}",
+        "region": "{% $states.input.region %}",
+        "mode": "{% $states.input.mode %}",
+        "controls": "{% $states.input.controls %}",
+        "outcomes": "{% $states.result %}"
+      },
+      "Next": "ScheduleVerificationIfNeeded"
+    },
+    "ScheduleVerificationIfNeeded": {
+      "Type": "Choice",
+      "Comment": "Close the MAPE-K loop with exactly one more round. Only a detection round that remediated something schedules it, and a verification round never does, so an incident costs at most two executions and cannot oscillate. The remediation's own CloudTrail events no longer start executions: the EventBridge rule filters out the Execute role.",
+      "Choices": [
+        { "Condition": "{% $not($states.input.mode = 'verify') and $count($states.input.outcomes[outcome = 'remediated']) > 0 %}", "Next": "ScheduleVerification" }
+      ],
+      "Default": "EvaluateOutcome"
+    },
+    "ScheduleVerification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::states:startExecution",
+      "Arguments": {
+        "StateMachineArn": "{% $states.context.StateMachine.Id %}",
+        "Input": {
+          "mode": "verify",
+          "trigger": "verification",
+          "resource_arn": "{% $states.input.resource_arn %}",
+          "resource_id": "{% $states.input.resource_id %}",
+          "account_id": "{% $states.input.account_id %}",
+          "region": "{% $states.input.region %}",
+          "event_time": "{% $states.context.State.EnteredTime %}",
+          "origin_execution": "{% $states.context.Execution.Id %}",
+          "origin_violations": "{% $merge($states.input.outcomes[outcome = 'remediated'].{control_id: violation_id}) %}",
+          "controls": "{% ( $ids := $states.input.outcomes[outcome = 'remediated'].control_id; [$states.input.controls[control_id.S in $ids]] ) %}"
+        }
+      },
+      "Output": "{% $states.input %}",
+      "Retry": [
+        { "ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2.0 }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Comment": "A remediation whose convergence can no longer be verified is a governance gap, not a success.",
+          "Output": {
+            "resource_arn": "{% $states.input.resource_arn %}",
+            "resource_id": "{% $states.input.resource_id %}",
+            "account_id": "{% $states.input.account_id %}",
+            "region": "{% $states.input.region %}",
+            "error": "{% $states.errorOutput %}"
+          },
+          "Next": "VerificationNotScheduledEscalation"
+        }
+      ],
       "Next": "EvaluateOutcome"
+    },
+    "VerificationNotScheduledEscalation": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Arguments": {
+        "QueueUrl": "${escalation_queue_url}",
+        "MessageBody": "{% $string({'violation_id': 'verification-not-scheduled-' & $states.context.Execution.Name, 'resource_arn': $states.input.resource_arn, 'control_id': 'remediated-controls', 'error': 'Remediation succeeded but the verification round could not be scheduled; convergence is unverified: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+        "MessageGroupId": "{% $states.input.resource_id & '#verification' %}",
+        "MessageDeduplicationId": "{% 'verification-not-scheduled-' & $states.context.Execution.Name %}"
+      },
+      "Next": "ExecutionFailed"
     },
     "EvaluateOutcome": {
       "Type": "Choice",
       "Choices": [
-        { "Condition": "{% $count($states.input[outcome = 'escalated']) > 0 %}", "Next": "ExecutionFailed" }
+        { "Condition": "{% $count($states.input.outcomes[outcome = 'escalated']) > 0 %}", "Next": "ExecutionFailed" }
       ],
       "Default": "ExecutionSucceeded"
     },

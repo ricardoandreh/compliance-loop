@@ -5,6 +5,7 @@ variable "controls_table_arn" { type = string }
 variable "controls_stream_arn" { type = string }
 variable "eventbridge_rule_name" { type = string }
 variable "eventbridge_rule_arn" { type = string }
+variable "remediation_role_arn" { type = string }
 
 data "archive_file" "handler" {
   type        = "zip"
@@ -25,8 +26,9 @@ resource "aws_lambda_function" "controls_sync" {
 
   environment {
     variables = {
-      CONTROLS_TABLE      = var.controls_table_name
+      CONTROLS_TABLE        = var.controls_table_name
       EVENTBRIDGE_RULE_NAME = var.eventbridge_rule_name
+      REMEDIATION_ROLE_ARN  = var.remediation_role_arn
     }
   }
 

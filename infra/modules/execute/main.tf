@@ -75,3 +75,4 @@ resource "aws_iam_role_policy" "s3" {
 output "function_arn" { value = aws_lambda_function.execute.arn }
 output "function_name" { value = aws_lambda_function.execute.function_name }
 output "role_name" { value = aws_iam_role.execute_lambda.name }
+output "role_arn" { value = aws_iam_role.execute_lambda.arn }

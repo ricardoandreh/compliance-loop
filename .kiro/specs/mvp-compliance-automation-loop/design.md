@@ -173,6 +173,8 @@ sequenceDiagram
 
 Nota: o filtro `source` foi removido para suportar eventos de múltiplos serviços (S3, EC2, etc.) em uma única rule. O `eventName` é suficientemente específico para evitar falsos positivos.
 
+O padrão gerado pelo `controls-sync` inclui ainda uma cláusula de identidade: eventos cuja sessão foi emitida pelo role da Lambda Execute são descartados, para que as escritas da própria remediação não reiniciem o loop. A cláusula usa `$or` com `exists: false`, porque identidades sem emissor de sessão (usuários IAM, root) não casariam com um `anything-but` simples — ver *Fechamento do laço em duas rodadas*.
+
 **Output Schema**:
 ```json
 {
@@ -199,8 +201,9 @@ Nota: o filtro `source` foi removido para suportar eventos de múltiplos serviç
 - Step Functions Standard workflow (não Express) para histórico de 90 dias
 - Choice states para decisão baseada em `$.state`
 - SDK integrations diretas para DynamoDB (sem Lambda intermediária)
-- Timeout global de 300 segundos
+- Timeout global de 600 segundos (ver a cadeia de timeouts em *Correctness Properties*)
 - Estados terminais explícitos: `ExecutionSucceeded` (Succeed) e `ExecutionFailed` (Fail com `Error: ComplianceEscalation`)
+- **Laço fechado em duas rodadas**: uma rodada de detecção que remediou algo agenda exatamente uma rodada de verificação (`mode = verify`), que confirma `S_nominal` ou escala — nunca remedeia de novo. Ver *Fechamento do laço em duas rodadas*
 - Após o Map state, `EvaluateOutcome` verifica se algum controle foi escalado — se sim, a execução termina como FAILED
 
 **State Machine Definition** (estrutura real):
@@ -208,9 +211,13 @@ Nota: o filtro `source` foi removido para suportar eventos de múltiplos serviç
 A máquina de estados usa JSONata e processa múltiplos controles via Map state. Fluxo:
 
 ```
-ResolveResource          # extrai resource_id/resource_arn dos request_parameters do CloudTrail
-  → RouteControlLookup   # Choice: input tem control_id (re-avaliação de exceção)?
-       ├─ sim → GetControlById            # getItem na tabela controls pelo control_id exato
+ResolveResource          # extrai resource_id/resource_arn dos request_parameters do CloudTrail;
+                         # normaliza mode (detect|verify) e a origem da rodada de verificação
+  → RouteControlLookup   # Choice, em ordem:
+       ├─ mode = verify → WaitForConsistency (15 s) → InvokeAnalyze
+       │                          # usa as definições dos controles remediados que a rodada
+       │                          # de detecção carregou; não há consulta a fazer
+       ├─ input tem control_id (re-avaliação de exceção) → GetControlById
        │          → CheckRequestedControlFound
        │               ├─ achou → InvokeAnalyze
        │               └─ não   → RequestedControlNotFound (SQS) → ExecutionFailed
@@ -222,6 +229,10 @@ ResolveResource          # extrai resource_id/resource_arn dos request_parameter
        (Catch States.ALL → AnalyzeFailedEscalation → ExecutionFailed)
   → ProcessResults       # Map sobre results[], MaxConcurrency=1
        └─ ClassifyState  # Choice por analyze_result.state
+            ├─ verify + S_nominal   → RegisterVerified (putItem, liga a verifies_violation_id) → outcome=verified
+            ├─ verify + S_violation → RegisterNonConvergence (putItem) → NonConvergenceEscalation → outcome=escalated
+            │                          # regras de verificação vêm ANTES: numa rodada de verificação
+            │                          # uma violação nunca alcança InvokeExecute
             ├─ S_nominal   → RegisterNominal   (putItem) → outcome=nominal
             ├─ S_exception → RegisterException (putItem) → outcome=exception
             ├─ S_violation → RegisterViolation (putItem) → InvokeExecute
@@ -230,8 +241,34 @@ ResolveResource          # extrai resource_id/resource_arn dos request_parameter
             │          └─ failed  → UpdateLogFailed  (updateItem) → EnqueueEscalation → outcome=escalated
             │     (Catch States.ALL → UpdateLogFailed → EnqueueEscalation)
             └─ default (S_error) → RegisterError (putItem) → ControlErrorEscalation → outcome=escalated
+  → ScheduleVerificationIfNeeded   # Choice: não é verify E algum outcome=remediated?
+       └─ sim → ScheduleVerification  # states:startExecution na própria máquina (mode=verify)
+                 (Catch → VerificationNotScheduledEscalation → ExecutionFailed)
   → EvaluateOutcome      # Choice: algum outcome=escalated? → ExecutionFailed; senão → ExecutionSucceeded
 ```
+
+#### Fechamento do laço em duas rodadas
+
+Até esta versão, o laço se fechava por **eco**: cada escrita do Execute (`PutBucketPolicy`, `PutBucketVersioning`…) gerava o próprio evento no CloudTrail, e cada evento abria uma execução nova só para confirmar. O histórico de 6 buckets do C5 mostrou o custo: 2 eventos do teste produziam 4 remediações e 4 execuções de confirmação — 6 execuções por bucket, uma confirmação por controle remediado, sem ligação explícita com a violação confirmada. E, sem disjuntor, uma política mais estrita que a sua remediação oscilaria indefinidamente (L11).
+
+O laço agora é explícito:
+
+1. **O eco é filtrado na origem.** A regra do EventBridge descarta eventos cuja identidade é o role da Lambda Execute. Toda escrita de remediação chega ao CloudTrail como `AssumedRole` desse role — verificado no CloudTrail da conta — enquanto mudanças humanas chegam como `IAMUser`, **sem** `sessionContext.sessionIssuer`.
+2. **A rodada de detecção agenda uma única verificação.** Se remediou algo, ela inicia a própria máquina em `mode = verify`, levando as definições dos controles remediados e o mapa controle → `violation_id`.
+3. **A rodada de verificação não remedeia.** Espera 15 s (a configuração de bucket é eventualmente consistente; o eco escondia essa margem), reavalia exatamente os controles remediados e registra `S_nominal` ligado à violação que confirma, ou registra a não convergência e escala.
+
+Um incidente custa, portanto, **no máximo duas execuções**, e oscilar é estruturalmente impossível. Essas propriedades são verificadas estaticamente sobre o grafo em `tests/unit/test_state_machine.py`: as regras de verificação precedem a de violação, os ramos de verificação não alcançam `InvokeExecute`, e só uma rodada de detecção agenda verificação.
+
+**A armadilha do filtro.** Um `anything-but` simples sobre o emissor da sessão descartaria justamente os eventos humanos, porque num campo ausente ele não casa. Medido com `aws events test-event-pattern`:
+
+| padrão | IAMUser | role do Execute | outro role |
+|---|---|---|---|
+| só `anything-but` | **False** | False | True |
+| `$or` com `exists: false` | True | False | True |
+
+O primeiro padrão faria o sistema parar de detectar toda violação feita pelo console — o cenário C1 — sem nenhum erro. O `controls-sync` gera o segundo, e `tests/contract/test_event_pattern.py` avalia o padrão gerado no próprio EventBridge para as quatro identidades.
+
+**O que continua possível**: duas mudanças *externas* simultâneas sobre o mesmo controle (a corrida `CreateBucket` + violação do C1/C5) ainda produzem duas rodadas de detecção e duas de verificação — limitado, mas não deduplicado (ver L6).
 
 Estados terminais explícitos:
 - `ExecutionSucceeded` (`Succeed`)
@@ -2229,6 +2266,7 @@ As métricas de cada cenário são extraídas do histórico de execuções do St
 | `t_exposure` | evento CloudTrail → recurso reconvergido (fim da execução) |
 | `t_classification` | duração da execução para recursos já conformes (sem remediação) |
 | `t_escalation` | início da execução → mensagem na fila de escalação |
+| `t_verified` | evento CloudTrail → fim da rodada de verificação que confirma `S_nominal`. Inclui a espera de consistência de 15 s da própria rodada, portanto é um limite superior de quando a convergência foi *confirmada*, não de quando o recurso convergiu |
 
 **Alinhamento de relógio**: `t_detection` e `t_exposure` subtraem um timestamp do runner de um timestamp da AWS (`startDate`/`stopDate` do Step Functions). Os dois relógios são independentes, e qualquer desvio entra direto no resultado — um runner adiantado faz o sistema parecer mais rápido do que é, enviesando H1/H3 a favor da própria hipótese. Medição real neste ambiente (WSL2): **+0,9s adiantado**, o que subestimaria `t_detection` em ~11%.
 
@@ -2248,6 +2286,8 @@ Duas decisões afetam a interpretação dos números:
 A variância de `t_remediation` é pequena (desvio 0,11 s sobre 6,03 s, ou 1,8%) e **não** é dominada por cold start: apenas 6 de 174 invocações do Execute foram frias na janela medida, e o custo do container frio (~5 s) apareceria como outlier isolado, não como dispersão distribuída. A hipótese de cold start como fonte principal foi levantada e **refutada** pelos logs — ver L10. A dispersão relevante está em `t_detection` (18% de coeficiente de variação), fora do controle do sistema.
 
 ### Síntese por Hipótese
+
+> **Ressalva de versão**: estas medições são anteriores ao laço em duas rodadas. A rodada de detecção só ganhou um estado de agendamento, então `t_remediation` deve permanecer comparável; `t_verified` é métrica nova e ainda não tem agregado. Um novo benchmark é necessário para confirmar ambos.
 
 > **Valores de referência**: os números abaixo vêm de **10 execuções completas da suíte** (120/120 cenários aprovados), agregados por `scripts/benchmark.py` com o harness corrigido — ver *Metodologia de Medição* e L10. Substituem as medições de execução única registradas nas seções de evidência experimental, que permanecem como rastro histórico de cada cenário, não como valor reportável.
 
@@ -2310,7 +2350,7 @@ O TTL sobre `valid_until` permanece habilitado para limpeza eventual. Como a del
 
 Conta e região únicas, 5 controles, violações sintéticas induzidas pelo runner. Não foram exercitados: operação multi-conta (AWS Organizations), nem controles cujo `fetch_config` exija paginação da API de origem.
 
-Concorrência sobre o mesmo recurso **foi** exercitada — de forma incidental, não planejada. Em toda execução do C1 e do C5, `CreateBucket` e a violação induzida pelo teste chegam juntos, e duas execuções remedeiam `ctrl-s3-public-block` no mesmo bucket em paralelo. O resultado converge, porque a remediação é declarativa e idempotente, mas tem duas consequências observáveis: o Execute roda duas vezes para o mesmo ajuste, e o `violations_log` registra **dois** `S_violation` (e duas confirmações `S_nominal`) para o que operacionalmente é uma única violação. O log é correto como registro de *avaliações*; contar violações por número de linhas superestima incidentes. Concorrência adversarial — remediações não idempotentes, ou duas remediações que escrevem estados diferentes — não foi exercitada; o merge de policy do ssl-only é o candidato mais sensível a isso. A generalização do fetcher genérico está demonstrada para 2 serviços (S3, EC2), mas com força de evidência desigual: a suíte repetida (10 execuções) cobre **apenas S3** — seus cenários automatizados vão de CTRL-01 a CTRL-04. O controle de EC2 (`ctrl-ebs-encryption-default`) foi validado numa execução isolada, registrada na tabela de validação por controle, e não possui teste na `integration_test.py`. Portanto, a afirmação sustentada por medição repetida é sobre S3; EC2 sustenta a afirmação de *extensibilidade do mecanismo*, não a de desempenho.
+Concorrência sobre o mesmo recurso **foi** exercitada — de forma incidental, não planejada. Em toda execução do C1 e do C5, `CreateBucket` e a violação induzida pelo teste chegam juntos, e duas execuções remedeiam `ctrl-s3-public-block` no mesmo bucket em paralelo. O resultado converge, porque a remediação é declarativa e idempotente, mas tem duas consequências observáveis: o Execute roda duas vezes para o mesmo ajuste, e o `violations_log` registra **dois** `S_violation` (e duas confirmações `S_nominal`) para o que operacionalmente é uma única violação. Com o laço fechado em duas rodadas, as confirmações por eco deixam de existir, mas a corrida entre as duas mudanças *externas* permanece: são duas rodadas de detecção, cada uma com sua rodada de verificação. O log é correto como registro de *avaliações*; contar violações por número de linhas superestima incidentes. Concorrência adversarial — remediações não idempotentes, ou duas remediações que escrevem estados diferentes — não foi exercitada; o merge de policy do ssl-only é o candidato mais sensível a isso. A generalização do fetcher genérico está demonstrada para 2 serviços (S3, EC2), mas com força de evidência desigual: a suíte repetida (10 execuções) cobre **apenas S3** — seus cenários automatizados vão de CTRL-01 a CTRL-04. O controle de EC2 (`ctrl-ebs-encryption-default`) foi validado numa execução isolada, registrada na tabela de validação por controle, e não possui teste na `integration_test.py`. Portanto, a afirmação sustentada por medição repetida é sobre S3; EC2 sustenta a afirmação de *extensibilidade do mecanismo*, não a de desempenho.
 
 ### L7. Comparação com soluções gerenciadas
 
@@ -2340,7 +2380,9 @@ Quatro defeitos de medição foram encontrados e corrigidos; ficam registrados p
 
 **A lição residual**: em um sistema cujo invariante de projeto é a reconvergência, *toda* remediação gera novos eventos e, portanto, novas execuções — 36 numa única rodada da suíte. Qualquer métrica correlacionada por proximidade temporal ou por extremo de duração é frágil por construção. A correlação precisa ser pela **identidade do evento que o cenário causou**. A verificação de execuções falhas inesperadas (`AUDIT`) foi o que detectou o defeito do C2, que passou por todas as asserções dos cenários — vale manter esse tipo de checagem negativa em qualquer suíte sobre sistema reativo.
 
-### L11. O laço de remediação não tem disjuntor
+### L11. O laço de remediação não tinha disjuntor *(resolvido por construção)*
+
+> **Estado atual**: resolvido pelo fechamento do laço em duas rodadas (ver *Orchestrator*). A rodada de verificação nunca remedeia — escala a não convergência —, e o eco da remediação é filtrado no EventBridge, então não há como a cadeia recomeçar sozinha. O teste de contrato abaixo continua útil como segunda camada: ele impede que uma política e sua remediação divirjam, o que agora produziria uma escalação em vez de uma oscilação. O texto a seguir descreve o problema como foi identificado.
 
 A convergência do loop depende de uma premissa não verificada em tempo de execução: **cada remediação produz um estado que a política aceita**. Quando isso vale, a cadeia termina sozinha — a re-avaliação encontra o recurso conforme, o Execute não roda, nenhuma chamada de API é feita, nenhum evento chega ao CloudTrail. No histórico de 6 buckets do C5 foram 24 remediações, cada uma seguida de exatamente uma confirmação `S_nominal`, sem nenhuma re-violação.
 

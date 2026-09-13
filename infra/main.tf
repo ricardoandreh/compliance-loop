@@ -98,6 +98,7 @@ module "orchestration" {
   escalation_queue_url      = module.escalation_queue.queue_url
   controls_table_name       = module.knowledge.controls_table_name
   controls_table_arn        = module.knowledge.controls_table_arn
+  remediation_role_arn      = module.execute.role_arn
 }
 
 module "exception_scheduler" {
@@ -121,6 +122,7 @@ module "controls_sync" {
   controls_stream_arn   = module.knowledge.controls_stream_arn
   eventbridge_rule_name = module.orchestration.eventbridge_rule_name
   eventbridge_rule_arn  = module.orchestration.eventbridge_rule_arn
+  remediation_role_arn  = module.execute.role_arn
 }
 
 # --- Outputs ---

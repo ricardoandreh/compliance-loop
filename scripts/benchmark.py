@@ -40,6 +40,10 @@ INTEGRATION_TEST = os.path.join(HERE, "integration_test.py")
 HYPOTHESES = {
     "H1 (MTTR)": ["t_remediation"],
     "H3 (tempo de exposição)": ["t_exposure"],
+    # Event -> the verification round confirms S_nominal. Includes that round's
+    # deliberate consistency wait, so it is an upper bound on when convergence
+    # was known, not on when the resource actually converged.
+    "Convergência verificada": ["t_verified"],
 }
 
 # Two-tailed t critical values at 95%, indexed by degrees of freedom (n-1).
