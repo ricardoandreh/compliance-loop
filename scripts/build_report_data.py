@@ -73,6 +73,22 @@ def build(results_dir):
     files = sorted(glob.glob(os.path.join(results_dir, "run-*.json")))
     runs = [json.load(open(f)) for f in files]
 
+    # Cold/warm classification from scripts/classify_cold_starts.py, keyed by
+    # (run index, scenario). It is evidence-based (Init Duration on the exact
+    # Lambda invocation), so the page never has to guess from a duration.
+    cold_path = os.path.join(results_dir, "cold_starts.json")
+    classified = None
+    if os.path.exists(cold_path):
+        doc = json.load(open(cold_path))
+        if doc["summary"]["problems"]:
+            raise SystemExit(f"{cold_path} reports problems; fix them before building: "
+                             f"{doc['summary']['problems']}")
+        index = {os.path.basename(f): i for i, f in enumerate(files, 1)}
+        classified = {(index[x["run"]], x["scenario"]): x["cold"] for x in doc["samples"]}
+
+    def is_cold(run, scenario):
+        return None if classified is None else classified.get((run, scenario))
+
     scenarios, observations = {}, {}
     for payload in runs:
         for name, verdict in payload.get("results", {}).items():
@@ -107,20 +123,49 @@ def build(results_dir):
             if payload["results"].get(cen) == "PASS" and "t_detection" in m:
                 row[cen] = {"detection": m["t_detection"],
                             "remediation": m["t_remediation"],
-                            "exposure": m["t_exposure"]}
+                            "exposure": m["t_exposure"],
+                            "verified": m.get("t_verified"),
+                            "cold": is_cold(i, cen)}
         composition.append(row)
 
-    pooled = {}
-    for hyp, metric, cens in (("H1", "t_remediation", ("C1", "C3", "C5")),
-                              ("H3", "t_exposure", ("C1", "C5"))):
-        vals = [v for c in cens for v in observations.get(c, {}).get(metric, [])]
-        pooled[hyp] = {"metric": metric, "scenarios": list(cens),
-                       "per_scenario": {c: summarize(observations.get(c, {}).get(metric, []))
-                                        for c in cens},
-                       **(summarize(vals) or {})}
+    # Per-sample view with the class attached. t_exposure and t_verified of
+    # C1/C5 come from the same detection execution as that run's remediation,
+    # so they inherit its class; t_detection precedes any Lambda and has none.
+    samples = []
+    for i, payload in enumerate(runs, 1):
+        for cen, m in (payload.get("metrics") or {}).items():
+            if payload["results"].get(cen) != "PASS":
+                continue
+            for metric, value in m.items():
+                if isinstance(value, (int, float)):
+                    samples.append({"run": i, "scenario": cen, "metric": metric,
+                                    "value": float(value), "cold": is_cold(i, cen)})
 
-    return {"runs": len(runs), "scenarios": out_scenarios,
-            "composition": composition, "hypotheses": pooled}
+    def split(metric, cens):
+        rows = [x for x in samples if x["metric"] == metric and x["scenario"] in cens]
+        vals = lambda pred: [x["value"] for x in rows if pred(x)]
+        out = {"metric": metric, "scenarios": list(cens),
+               "all": summarize(vals(lambda x: True)),
+               "per_scenario": {c: summarize(vals(lambda x, c=c: x["scenario"] == c)) for c in cens}}
+        if classified is not None:
+            out["warm"] = summarize(vals(lambda x: x["cold"] is False))
+            out["cold"] = summarize(vals(lambda x: x["cold"] is True))
+            out["cold_samples"] = [{"run": x["run"], "scenario": x["scenario"], "value": x["value"]}
+                                   for x in rows if x["cold"]]
+        return out
+
+    pooled = {
+        "H1": split("t_remediation", ("C1", "C3", "C5")),
+        "H3": split("t_exposure", ("C1", "C5")),
+        "verified": split("t_verified", ("C1", "C5")),
+        "detection": {"metric": "t_detection", "scenarios": ["C1", "C5"],
+                      "all": summarize([x["value"] for x in samples
+                                        if x["metric"] == "t_detection" and x["scenario"] in ("C1", "C5")])},
+    }
+
+    return {"runs": len(runs), "classified": classified is not None,
+            "scenarios": out_scenarios, "composition": composition,
+            "samples": samples, "hypotheses": pooled}
 
 
 def main():
