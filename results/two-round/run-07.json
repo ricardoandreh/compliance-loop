@@ -1,0 +1,61 @@
+{
+  "results": {
+    "C1": "PASS",
+    "C2": "PASS",
+    "C3": "PASS",
+    "C4": "PASS",
+    "C5": "PASS",
+    "C6": "PASS",
+    "C7": "PASS",
+    "CTRL-01": "PASS",
+    "CTRL-02": "PASS",
+    "CTRL-03": "PASS",
+    "CTRL-04": "PASS",
+    "AUDIT": "PASS"
+  },
+  "metrics": {
+    "C1": {
+      "t_detection": 7.4,
+      "t_remediation": 6.25,
+      "t_exposure": 13.65,
+      "t_verified": 28.97
+    },
+    "C2": {
+      "t_classification": 0.48
+    },
+    "C3": {
+      "t_scheduler_fire": 44.31,
+      "t_remediation_post_expiry": 50.7,
+      "t_remediation": 6.38,
+      "t_verified_post_expiry": 66.02
+    },
+    "C4": {
+      "t_escalation": 0.52
+    },
+    "C5": {
+      "t_detection": 5.92,
+      "t_remediation": 6.1,
+      "t_exposure": 12.02,
+      "t_verified": 27.41
+    },
+    "C6": {
+      "t_classification": 0.43
+    },
+    "C7": {
+      "t_sync_insert": 15.62,
+      "t_sync_delete": 15.58
+    },
+    "CTRL-01": {
+      "t_total": 41.74
+    },
+    "CTRL-02": {
+      "t_total": 38.92
+    },
+    "CTRL-03": {
+      "t_total": 38.54
+    },
+    "CTRL-04": {
+      "t_total": 42.15
+    }
+  }
+}
