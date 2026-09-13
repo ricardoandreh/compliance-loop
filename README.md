@@ -254,31 +254,36 @@ de sucesso aparece ao lado. Métricas com n=1 são marcadas como observação
 
 ## Cenários validados
 
-Todos aprovados em **10 de 10** execuções da suíte. Valores: média ± desvio (n=10).
+Todos aprovados em **10 de 10** execuções da suíte. Valores: média ± desvio,
+**separados em regime quente e frio** por evidência de `Init Duration` na
+invocação da Lambda (`scripts/classify_cold_starts.py`). A única amostra fria
+das 10 execuções é do C1.
 
-| Cenário | Descrição | Resultado | Métrica |
-|---|---|---|---|
-| C1 | Violação simples via console | Remediado, converge a S_nominal | 6,02s ± 0,11 |
-| C2 | Violação com exceção ativa | Não remedia, registra S_exception | 0,47s ± 0,08 |
-| C3 | Exceção expira → remediação | Scheduler dispara, remedia | 6,04s ± 0,10 |
-| C4 | Falha na remediação (bucket inexistente) | Escala via GitHub Issue | 0,60s ± 0,06 |
-| C5 | Violação originada por IaC externo | Detecta e remedia | 6,02s ± 0,13 |
-| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | 0,45s ± 0,04 |
-| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | 15,93s ± 1,02 |
-| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além da esperada do C4 | — |
+| Cenário | Descrição | Resultado | Quente | Frio |
+|---|---|---|---|---|
+| C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 6,19s ± 0,05 (n=9) | 14,78s (n=1) |
+| C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,47s ± 0,04 | nenhuma |
+| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 6,24s ± 0,08 | nenhuma |
+| C4 | Falha na remediação (bucket inexistente) | Escala via GitHub Issue | `t_escalation` 0,58s ± 0,07 | nenhuma |
+| C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 6,18s ± 0,15 | nenhuma |
+| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,47s ± 0,04 | nenhuma |
+| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: 15,64s ± 0,08 | — |
+| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além da esperada do C4 | — | — |
 
 ## Controles validados
 
 | Teste | Controle | Verificação | t_total (n=10) |
 |---|---|---|---|
-| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | 28,54s ± 2,10 |
-| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 26,81s ± 2,11 |
-| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 26,32s ± 0,99 |
-| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | 27,02s ± 1,29 |
+| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | 44,37s ± 2,04 |
+| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 38,57s ± 1,06 |
+| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 38,05s ± 2,06 |
+| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | 38,98s ± 1,43 |
 | CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | validado à parte, fora da suíte |
 
-O `t_total` das CTRL-* inclui esperas de CloudTrail em série, e não é comparável ao
-`t_remediation` — mede o teste, não o loop.
+O `t_total` das CTRL-* mede o **teste**: criação de bucket, esperas de CloudTrail
+e a espera pelas rodadas de verificação, já que o harness só encerra quando
+nenhuma execução está em andamento. Não é comparável ao `t_remediation` nem é
+classificado em quente/frio.
 
 O CTRL-05 não tem teste automatizado: a `integration_test.py` cobre CTRL-01 a
 CTRL-04. O controle está implantado e foi validado numa execução isolada
@@ -287,27 +292,43 @@ logo, o único serviço com cobertura repetida é o S3.
 
 ## Performance
 
-Agregado de **10 execuções completas da suíte** (120/120 cenários aprovados),
-via `scripts/benchmark.py`. Desvio amostral (n−1) e IC 95% pela distribuição t.
+Agregado de **10 execuções completas da suíte** com o laço em duas rodadas
+(120/120 cenários aprovados), via `scripts/benchmark.py`. Desvio amostral (n−1)
+e IC 95% pela distribuição t. **Quente e frio são reportados separadamente**,
+classificados por evidência (`Init Duration` na invocação exata da Lambda),
+sem corte de duração. Uma amostra fria com n=1 é reportada como observação
+única.
 
-| Métrica | Valor | Desvio | n | IC 95% |
-|---|---|---|---|---|
-| **H1 — t_remediation** | **6,03s** | 0,11 | 30 | [5,99 · 6,06] |
-| **H3 — t_exposure** | **14,15s** | 1,48 | 20 | [13,46 · 14,84] |
-| t_detection (evento → SFN start) | 8,13s | 1,46 | 20 | [7,45 · 8,81] |
-| t_classification (recurso conforme) | 0,45s | 0,04 | 10 | [0,43 · 0,48] |
-| t_escalation (falha → fila SQS) | 0,60s | 0,06 | 10 | [0,55 · 0,64] |
+| Métrica | Quente | Frio | Total |
+|---|---|---|---|
+| **H1 — t_remediation** | **6,20s** ± 0,10 · IC [6,16 · 6,24] · n=29 | **14,78s** (n=1) | 6,49s ± 1,57 · mediana 6,20 · n=30 |
+| **H3 — t_exposure** | **13,90s** ± 1,87 · IC [13,00 · 14,80] · n=19 | **20,06s** (n=1) | 14,21s ± 2,28 · n=20 |
+| **t_verified** (convergência confirmada) | **29,26s** ± 1,88 · IC [28,35 · 30,16] · n=19 | **35,42s** (n=1) | 29,57s ± 2,29 · n=20 |
+| t_detection (evento → SFN start) | sem classe: 7,59s ± 1,85 · IC [6,73 · 8,46] · n=20 | | |
+| t_classification (recurso conforme) | 0,47s ± 0,04 · n=10 | nenhuma | |
+| t_escalation (falha → fila SQS) | 0,58s ± 0,07 · n=10 | nenhuma | |
 
-**A remediação varia 1,8%; a detecção, 18% — dez vezes mais.** `t_remediation` tem
-desvio de 0,11s, e os três cenários que remedeiam por rotas independentes
-concordam dentro de 0,02s (C1 6,02 · C3 6,04 · C5 6,02). Toda a dispersão do
-tempo de exposição vem do `t_detection` — latência de entrega do CloudTrail ao
+**A remediação quente varia 1,6%; a detecção, 24% — quinze vezes mais.** Os três
+cenários que remedeiam por rotas independentes concordam dentro de 0,06s no
+regime quente (C1 6,19 · C3 6,24 · C5 6,18). Toda a dispersão do tempo de
+exposição vem do `t_detection` — latência de entrega do CloudTrail ao
 EventBridge, fora do controle do sistema. A decomposição fecha exatamente:
-`t_detection + t_remediation = t_exposure` nas dez execuções.
+`t_detection + t_remediation = t_exposure`. O `t_detection` não recebe classe
+porque termina antes de qualquer Lambda rodar.
 
-Cold start custa ~5s (Execute frio 10,09s vs. quente 5,24s) e é raro — 6 de 174
-invocações. O `Init Duration` é de apenas 0,40–0,53s; o custo real é o download
-do cache de provider dentro do handler.
+**Cold start** foi a única amostra fria em 30: C1 na primeira execução, após
+horas sem tráfego, com Analyze e Execute em containers novos. O `Init Duration`
+é só ~0,6s; o custo real (~+5s no Execute) é o download do cache de provider
+dentro do handler. O desvio de 1,57s do total é inteiramente essa amostra — a
+mediana fica em 6,20s.
+
+**Comparado ao laço anterior** (confirmação por eco do CloudTrail, 60 amostras,
+nenhuma fria): `t_remediation` era 6,03s ± 0,11 · IC [5,98 · 6,07]. Os +0,18s no
+regime quente são o novo estado `ScheduleVerification` (0,156s medidos no
+histórico). `t_exposure` era 14,15s ± 1,48. As execuções por rodada da suíte
+caíram de **48,5 para 36,0 (−26%)**, e um incidente com N controles remediados
+passou de 1 + N para **no máximo 2** execuções. O `t_verified` inclui a espera
+de consistência de 15s da rodada de verificação — uma premissa de projeto.
 
 A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~128MB), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 
