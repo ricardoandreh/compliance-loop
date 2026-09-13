@@ -47,10 +47,18 @@ LABELS = {
     "AUDIT": "Ausência de falhas inesperadas",
 }
 
+# Same table as scripts/benchmark.py. It used to stop at 20 degrees of freedom,
+# so every n > 21 silently fell back to the normal 1.960 instead of the t value
+# (2.045 at n = 30) and published intervals slightly narrower than the data
+# supports. Keep the two tables identical.
+PRE_EXECUTION_METRICS = {"t_detection", "t_scheduler_fire"}
+
 T_95 = {
     1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
     8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
     15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
+    21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056,
+    27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042,
 }
 
 
@@ -138,8 +146,14 @@ def build(results_dir):
                 continue
             for metric, value in m.items():
                 if isinstance(value, (int, float)):
+                    # A container's state can only affect metrics that include a
+                    # Lambda invocation. Detection and the scheduler's fire time
+                    # are over before the execution starts, so they get no class
+                    # — splitting them would attribute CloudTrail or Scheduler
+                    # delay to a cold start that had not happened yet.
+                    cls = None if metric in PRE_EXECUTION_METRICS else is_cold(i, cen)
                     samples.append({"run": i, "scenario": cen, "metric": metric,
-                                    "value": float(value), "cold": is_cold(i, cen)})
+                                    "value": float(value), "cold": cls})
 
     def split(metric, cens):
         rows = [x for x in samples if x["metric"] == metric and x["scenario"] in cens]
@@ -163,7 +177,22 @@ def build(results_dir):
                                         if x["metric"] == "t_detection" and x["scenario"] in ("C1", "C5")])},
     }
 
+    # Every scenario and metric, split where the sample carries a class. Metrics
+    # of unclassified scenarios (CTRL-*, C7) report "all" only — they time the
+    # whole test, so there is no single invocation to classify.
+    by_scenario = {}
+    for x in samples:
+        by_scenario.setdefault(x["scenario"], {}).setdefault(x["metric"], []).append(x)
+    for cen, metrics in by_scenario.items():
+        for metric, rows in metrics.items():
+            entry = {"all": summarize([r["value"] for r in rows])}
+            if any(r["cold"] is not None for r in rows):
+                entry["warm"] = summarize([r["value"] for r in rows if r["cold"] is False])
+                entry["cold"] = summarize([r["value"] for r in rows if r["cold"] is True])
+            metrics[metric] = entry
+
     return {"runs": len(runs), "classified": classified is not None,
+            "by_scenario": by_scenario,
             "scenarios": out_scenarios, "composition": composition,
             "samples": samples, "hypotheses": pooled}
 

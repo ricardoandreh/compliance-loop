@@ -14,9 +14,11 @@ against the value recorded in run-NN.json. A mismatch is reported, never
 silently absorbed, because it would mean the classification describes a
 different execution than the metric.
 
-Only t_remediation samples of C1, C3 and C5 are classified. t_exposure and
-t_verified of C1/C5 come from the same detection execution, so they inherit
-its class. t_detection happens before any Lambda runs and is not affected.
+Classified: the primary metric of C1, C3, C5 (t_remediation), C2, C6
+(t_classification) and C4 (t_escalation). t_exposure and t_verified of C1/C5
+come from the same detection execution, so they inherit its class.
+t_detection happens before any Lambda runs and is not affected. CTRL-* and C7
+time the whole test rather than one execution and are left unclassified.
 
 Usage:
     python3 scripts/classify_cold_starts.py --results results/two-round
@@ -34,10 +36,22 @@ import boto3
 
 REGION = "us-east-1"
 SCENARIOS = {
-    # scenario: (bucket prefix, how the harness selected the execution)
-    "C1": ("compliance-inttest-c1-", {"event_name": "PutBucketPublicAccessBlock"}),
-    "C5": ("compliance-inttest-c5-", {"event_name": "PutBucketPublicAccessBlock"}),
-    "C3": ("compliance-inttest-c3-", {"trigger": "exception_ttl_expiry"}),
+    # scenario: (bucket prefix, input fields the harness matched, metric, which
+    # match the harness kept). The pick rule has to mirror the harness exactly:
+    # before the echo was filtered, a C2 bucket also had the PutBucketPublicAccessBlock
+    # echo of the remediation its own teardown triggered, and taking the longest
+    # match classified that echo instead of the execution the metric timed.
+    "C1": ("compliance-inttest-c1-", {"event_name": "PutBucketPublicAccessBlock"}, "t_remediation", "longest"),
+    "C5": ("compliance-inttest-c5-", {"event_name": "PutBucketPublicAccessBlock"}, "t_remediation", "longest"),
+    "C3": ("compliance-inttest-c3-", {"trigger": "exception_ttl_expiry"}, "t_remediation", "earliest"),
+    # Scenarios without remediation still run the Analyze Lambda, so a cold
+    # container shows up in them too.
+    "C2": ("compliance-inttest-c2-", {"event_name": "PutBucketPublicAccessBlock"}, "t_classification", "earliest"),
+    "C6": ("compliance-inttest-c6-", {"event_name": "PutBucketPublicAccessBlock"}, "t_classification", "earliest"),
+    "C4": ("bucket-inexistente-c4-", {"event_name": "PutBucketPublicAccessBlock"}, "t_escalation", "earliest"),
+    # Not classified: CTRL-* and C7 time the whole test (bucket setup,
+    # CloudTrail waits, a stream propagation), not one execution, so there is no
+    # single invocation whose container state could explain the sample.
 }
 
 
@@ -139,8 +153,8 @@ def main():
     samples, problems = [], []
     for run_file, start, end in windows:
         recorded = json.load(open(os.path.join(args.results, run_file)))["metrics"]
-        for scenario, (prefix, selector) in SCENARIOS.items():
-            value = (recorded.get(scenario) or {}).get("t_remediation")
+        for scenario, (prefix, selector, metric, pick) in SCENARIOS.items():
+            value = (recorded.get(scenario) or {}).get(metric)
             if value is None:
                 continue
             candidates = []
@@ -151,11 +165,15 @@ def main():
                     continue
                 if any(inp.get(k) != v for k, v in selector.items()):
                     continue
-                candidates.append((round((d["stopDate"] - d["startDate"]).total_seconds(), 2), arn_))
+                candidates.append((round((d["stopDate"] - d["startDate"]).total_seconds(), 2),
+                                   e["startDate"].timestamp(), arn_))
             if not candidates:
                 problems.append(f"{run_file} {scenario}: no matching execution")
                 continue
-            duration, chosen = max(candidates)
+            if pick == "longest":
+                duration, _, chosen = max(candidates)
+            else:
+                duration, _, chosen = min(candidates, key=lambda c: c[1])
             if abs(duration - value) > 0.011:
                 problems.append(f"{run_file} {scenario}: execution lasted {duration}s, "
                                 f"run file records {value}s")
@@ -169,13 +187,13 @@ def main():
                     problems.append(f"{run_file} {scenario}: no REPORT line for a {fn} invocation")
             cold = any(inv["init_s"] not in (None, "missing")
                        for fn in detail for inv in detail[fn])
-            samples.append({"run": run_file, "scenario": scenario, "t_remediation": value,
+            samples.append({"run": run_file, "scenario": scenario, "metric": metric, "value": value,
                             "execution_arn": chosen, "cold": cold, "lambdas": detail})
 
     cold = [s for s in samples if s["cold"]]
     summary = {
         "samples": len(samples), "cold": len(cold), "warm": len(samples) - len(cold),
-        "cold_samples": [f"{s['run']} {s['scenario']} ({s['t_remediation']}s)" for s in cold],
+        "cold_samples": [f"{s['run']} {s['scenario']} {s['metric']}={s['value']}s" for s in cold],
         "problems": problems,
     }
     out = args.out or os.path.join(args.results, "cold_starts.json")
