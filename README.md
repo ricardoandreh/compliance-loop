@@ -197,6 +197,18 @@ lambdas/analyze/.venv/bin/python scripts/integration_test.py --test CTRL-03
 lambdas/analyze/.venv/bin/python scripts/integration_test.py --json
 ```
 
+### Políticas e contrato de remediação
+
+```bash
+./scripts/test_policies.sh
+```
+
+Roda os testes Rego (`policy_test.rego`) e o **contrato de remediação** — verifica
+que o estado produzido por cada `remediation.tf` é aceito pela própria política,
+que é o que garante que o loop converge em vez de oscilar. Usa a imagem oficial
+do OPA na mesma versão do layer da Lambda (lida do `build_analyze.sh`); requer
+Docker.
+
 ### Benchmark (múltiplas execuções)
 
 Uma execução da suíte produz uma observação por métrica — suficiente para
