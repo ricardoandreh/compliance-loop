@@ -60,25 +60,57 @@ def test_every_transition_targets_an_existing_state(sm):
         assert not broken, f"transitions to missing states: {broken}"
 
 
-def test_verification_branches_never_reach_execute(sm):
+FORMAL_STATES = {"S_nominal": "RegisterNominal", "S_exception": "RegisterException",
+                 "S_violation": "RegisterViolation"}
+
+
+def test_classification_has_exactly_the_three_formal_states(sm):
+    """The graph mirrors the formal model: one branch per state, no branch per
+    round. Anything that is not one of the three states is a system failure and
+    goes straight to escalation, without a register step that would record it
+    as if it were a state."""
+    classify = map_states(sm)["ClassifyState"]
+    routes = {}
+    for choice in classify["Choices"]:
+        assert "mode" not in choice["Condition"], (
+            "the round must not split the classification: mode belongs to PlanAction")
+        state = choice["Condition"].split("state = '")[1].split("'")[0]
+        routes[state] = choice["Next"]
+    assert routes == FORMAL_STATES
+    assert classify["Default"] == "Escalate"
+
+
+def test_verification_round_never_reaches_execute(sm):
+    """Every way out of RegisterViolation goes through PlanAction, whose first
+    rule sends a verification round to Escalate, a terminal state. So a
+    verification round cannot remediate again, and the loop cannot oscillate."""
     inner = map_states(sm)
-    for start in ("RegisterVerified", "RegisterNonConvergence"):
-        assert "InvokeExecute" not in reachable(inner, start), (
-            f"{start} can reach InvokeExecute: a verification round could "
-            f"remediate again, and the loop could oscillate")
+    out_of_violation = {d for s, d in edges(inner) if s == "RegisterViolation"}
+    assert out_of_violation == {"PlanAction"}
+    into_execute = {s for s, d in edges(inner) if d == "InvokeExecute"}
+    assert into_execute == {"PlanAction"}
+    plan = inner["PlanAction"]
+    first = plan["Choices"][0]
+    assert "mode = 'verify'" in first["Condition"] and first["Next"] == "Escalate"
+    assert inner["Escalate"].get("End") is True
+    assert "InvokeExecute" not in reachable(inner, "Escalate")
 
 
-def test_verification_choices_are_evaluated_before_the_violation_choice(sm):
-    """Choice rules are evaluated in order. If the generic S_violation rule came
-    first, a verification round would route a violation to InvokeExecute."""
-    choices = map_states(sm)["ClassifyState"]["Choices"]
-    targets = [c["Next"] for c in choices]
-    first_generic_violation = targets.index("RegisterViolation")
-    for verify_target in ("RegisterVerified", "RegisterNonConvergence"):
-        idx = targets.index(verify_target)
-        assert idx < first_generic_violation, (
-            f"{verify_target} is evaluated after RegisterViolation")
-        assert "mode = 'verify'" in choices[idx]["Condition"]
+def test_a_failed_violation_record_never_remediates(sm):
+    inner = map_states(sm)
+    catch = inner["RegisterViolation"]["Catch"]
+    assert [c["Next"] for c in catch] == ["PlanAction"]
+    assert "audit_write_failed" in catch[0]["Output"]
+    targets = {c["Next"] for c in inner["PlanAction"]["Choices"]
+               if "audit_write_failed" in c["Condition"]}
+    assert targets == {"ViolationNotRecorded"}
+    assert inner["ViolationNotRecorded"]["Type"] == "Fail"
+
+
+def test_escalation_names_its_reason(sm):
+    body = map_states(sm)["Escalate"]["Arguments"]["MessageBody"]
+    for reason in ("remediation_failed", "non_convergence", "system_failure"):
+        assert reason in body
 
 
 def test_only_a_detection_round_schedules_verification(sm):

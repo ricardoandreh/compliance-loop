@@ -102,8 +102,8 @@ def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dic
 # get the whole invocation killed — losing the per-control rows for EVERY
 # control, not just the slow one. The budget is therefore derived from the time
 # actually left, so the handler always returns a complete results[] (an
-# unevaluated control becomes S_error, which the state machine logs and
-# escalates) instead of dying wholesale.
+# unevaluated control comes back without a state, which the state machine
+# escalates as a system failure) instead of dying wholesale.
 OPA_MAX_TIMEOUT = 5.0
 # Room to finish the loop, build the response and return before Lambda kills us.
 TIME_RESERVE_MS = 3000
@@ -122,7 +122,8 @@ class PolicyEvaluationError(Exception):
 
     Evaluation failure must NOT be conflated with non-compliance: classifying
     an unevaluated resource as S_violation triggers remediation based on no
-    policy decision at all. The caller escalates (S_error) instead.
+    policy decision at all. The control gets no state and is escalated as a
+    system failure instead.
     """
     pass
 
@@ -148,7 +149,7 @@ def evaluate_policy_with_opa(rego_package: str, resource_config: Dict[str, Any],
     if timeout <= 0:
         raise PolicyEvaluationError(
             f"No time budget left to evaluate {rego_package}; "
-            f"refusing to start OPA (control reported as S_error)")
+            f"refusing to start OPA (control reported without a state)")
 
     if not os.path.exists(policy_path) and rego_s3_key and POLICY_BUCKET:
         os.makedirs('/tmp/policies', exist_ok=True)
@@ -276,8 +277,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             )
 
             # Only query exceptions for non-compliant resources. A query failure
-            # here must escalate (S_error), never silently remediate an
-            # authorized resource.
+            # here must escalate, never silently remediate an authorized
+            # resource: the resource may well be S_exception.
             exception = None
             if not is_compliant:
                 exception = query_exception(control_id, resource_arn)
@@ -296,10 +297,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             print(f"  {control_id}: {state}")
 
         except Exception as e:
+            # Not a fourth state. The formal model has S_nominal, S_exception
+            # and S_violation; a control that could not be evaluated has none of
+            # them — its state is unknown, which is a failure of the system and
+            # not a property of the resource. No 'state' key, so the state
+            # machine cannot mistake it for one, and it escalates as a system
+            # failure. violation_id stays as the evaluation's identity, used to
+            # deduplicate the escalation.
             print(f"  {control_id}: ERROR - {e}")
             results.append({
                 'control_id': control_id,
-                'state': 'S_error',
                 'violation_id': str(uuid.uuid4()),
                 'timestamp': now,
                 'policy_version': 'unknown',

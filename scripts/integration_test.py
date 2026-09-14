@@ -61,7 +61,7 @@ def wait_quiesce(timeout=60):
 
     Teardown must not delete a bucket while re-evaluations (triggered by the
     remediation's own CloudTrail events) are in flight — they would hit
-    NoSuchBucket, classify S_error and open spurious GitHub issues.
+    NoSuchBucket, fail to evaluate and open spurious GitHub issues.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -81,7 +81,7 @@ def wait_for_revocation_cascade(grace=30):
     its own CloudTrail event and one more evaluation. The chain starts on a
     DynamoDB Stream, so wait_quiesce() on its own can return before the first
     execution even exists — and tearing the bucket down in that gap makes the
-    late evaluation hit NoSuchBucket, classify S_error and open a GitHub issue
+    late evaluation hit NoSuchBucket, fail to evaluate and open a GitHub issue
     for a bucket the test deleted on purpose.
     """
     deadline = time.time() + grace

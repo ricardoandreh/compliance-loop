@@ -45,7 +45,8 @@ def build_sfn_input(item, trigger):
     # makes the state machine GetItem that exact control (RouteControlLookup →
     # GetControlById), instead of scanning by a hardcoded event_name, which
     # failed for non-S3 controls like ctrl-ebs-encryption-default and ran
-    # unrelated S3 controls against the resource, producing spurious S_error.
+    # unrelated S3 controls against the resource, producing spurious evaluation
+    # failures (escalated as system failures).
     #
     # Indexed strictly, not .get(): an exception row without control_id is
     # malformed, and omitting the key would route the execution to QueryControls
@@ -130,7 +131,7 @@ def handler(event, context):
                 # expired rows visible to manual cleanup) is housekeeping: the
                 # revoke/expiry path already re-evaluated, and re-running here
                 # against a possibly long-gone resource only produces spurious
-                # S_error escalations.
+                # system-failure escalations.
                 if item.get('status', 'active') == 'active' and int(item.get('valid_until', 0)) > now:
                     trigger_immediate(item, 'exception_deleted')
                 continue

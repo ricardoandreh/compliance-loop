@@ -2,7 +2,8 @@
 Unit tests for the Analyze Lambda handler (multi-control, fetch_config-driven).
 
 Covers:
-- State classification (S_nominal / S_exception / S_violation / S_error)
+- State classification (S_nominal / S_exception / S_violation); a control that
+  cannot be evaluated gets no state at all
 - Generic resource fetcher: result_path traversal, error_defaults, cache
 - OPA evaluation fail-secure behavior
 - Exception query: GSI usage, no Limit (regression: Limit=1 + FilterExpression
@@ -294,7 +295,7 @@ class TestEvaluatePolicyWithOpa:
 
 class TestOpaBudget:
     """The per-control OPA budget must come from the time actually left, so a
-    slow control degrades to S_error instead of killing the whole invocation
+    slow control degrades to an unevaluated result instead of killing the whole invocation
     (which would lose the per-control rows for every control)."""
 
     class Ctx:
@@ -318,7 +319,7 @@ class TestOpaBudget:
         assert handler.opa_budget(None) == handler.OPA_MAX_TIMEOUT
 
     def test_zero_budget_refuses_to_start_opa(self):
-        """Regression: with no time left, report S_error rather than launching
+        """Regression: with no time left, report the control without a state rather than launching
         a subprocess that Lambda will kill mid-flight."""
         with patch.object(handler.subprocess, 'run') as run, \
              patch.object(handler.os.path, 'exists', return_value=True):
@@ -429,7 +430,7 @@ class TestLambdaHandler:
 
     def test_compliant_resource_skips_exception_query(self):
         """Exceptions only matter for non-compliant resources; querying for
-        compliant ones would waste reads and risk spurious S_error."""
+        compliant ones would waste reads and risk spurious escalations."""
         _, _, query = self.run_handler(base_event(), compliant=True)
         query.assert_not_called()
 
@@ -449,26 +450,26 @@ class TestLambdaHandler:
         assert r['state'] == 'S_violation'
         assert r['exception_id'] is None
 
-    def test_fetch_failure_yields_s_error(self):
+    def test_fetch_failure_yields_no_state(self):
         result, _, _ = self.run_handler(
             base_event(), compliant=False,
             fetch_error=ClientError({'Error': {'Code': 'NoSuchBucket', 'Message': 'x'}}, 'op'),
         )
         r = result['results'][0]
-        assert r['state'] == 'S_error'
+        assert 'state' not in r
         assert 'NoSuchBucket' in r['error']
 
-    def test_exception_query_failure_yields_s_error(self):
+    def test_exception_query_failure_yields_no_state(self):
         """Regression: DynamoDB failure during exception lookup escalates
         instead of silently remediating a possibly-authorized resource."""
         result, _, _ = self.run_handler(
             base_event(), compliant=False,
             query_error=ExceptionQueryError('timeout'),
         )
-        assert result['results'][0]['state'] == 'S_error'
+        assert 'state' not in result['results'][0]
 
-    def test_opa_failure_yields_s_error(self):
-        """Regression: OPA evaluation failure escalates (S_error) instead of
+    def test_opa_failure_yields_no_state(self):
+        """Regression: OPA evaluation failure escalates without a state instead of
         classifying S_violation and remediating an unevaluated resource."""
         with patch.object(handler, 'fetch_resource_config',
                           MagicMock(return_value={'x': 1})), \
@@ -477,8 +478,24 @@ class TestLambdaHandler:
              patch.object(handler, 'query_exception', MagicMock(return_value=None)):
             result = lambda_handler(base_event(), None)
         r = result['results'][0]
-        assert r['state'] == 'S_error'
+        assert 'state' not in r
         assert 'rego broken' in r['error']
+
+    def test_every_state_is_one_of_the_three_formal_states(self):
+        """The formal model is S_nominal / S_exception / S_violation. A result
+        either carries one of them or carries an error and no state."""
+        controls = [
+            {**typed_control('ctrl-broken'), 'fetch_config': {'M': {}}},
+            typed_control('ctrl-s3-public-block'),
+        ]
+        for compliant in (True, False):
+            result, _, _ = self.run_handler(base_event(controls), compliant=compliant)
+            for r in result['results']:
+                if 'state' in r:
+                    assert r['state'] in {'S_nominal', 'S_exception', 'S_violation'}
+                    assert 'error' not in r
+                else:
+                    assert r['error']
 
     def test_one_result_per_control(self):
         controls = [
@@ -491,7 +508,7 @@ class TestLambdaHandler:
         ]
 
     def test_error_in_one_control_does_not_stop_others(self):
-        # ctrl-broken has an empty fetch_config → missing keys → S_error
+        # ctrl-broken has an empty fetch_config → missing keys → no state
         controls = [
             {**typed_control('ctrl-broken'), 'fetch_config': {'M': {}}},
             typed_control('ctrl-s3-public-block'),
@@ -501,16 +518,16 @@ class TestLambdaHandler:
              patch.object(handler, 'evaluate_policy_with_opa', return_value=True), \
              patch.object(handler, 'query_exception', MagicMock(return_value=None)):
             result = lambda_handler(base_event(controls), None)
-        states = {r['control_id']: r['state'] for r in result['results']}
-        assert states['ctrl-broken'] == 'S_error'
+        states = {r['control_id']: r.get('state') for r in result['results']}
+        assert states['ctrl-broken'] is None
         assert states['ctrl-s3-public-block'] == 'S_nominal'
 
-    def test_control_without_fetch_config_is_s_error(self):
+    def test_control_without_fetch_config_has_no_state(self):
         control = typed_control()
         del control['fetch_config']
         result, _, _ = self.run_handler(base_event([control]), compliant=True)
         r = result['results'][0]
-        assert r['state'] == 'S_error'
+        assert 'state' not in r
         assert 'fetch_config' in r['error']
 
     def test_passthrough_fields(self):

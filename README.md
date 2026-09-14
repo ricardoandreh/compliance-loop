@@ -27,11 +27,11 @@ EventBridge detecta e dispara o loop de compliance
 │              → Consulta exceções no DynamoDB              │
 │              → Classifica: nominal / exceção / violação   │
 │                                                          │
-│  4. Execute  → Remedia com OpenTofu (HCL do S3)          │
-│              (se violação, para cada controle violado)    │
+│  4. Plan     → decide a ação para cada violação:         │
+│              detecção → remedia; verificação → escala    │
 │                                                          │
-│  5. Escalate → Cria GitHub Issue                         │
-│              (se remediação falhar)                       │
+│  5. Execute  → Remedia com OpenTofu (HCL do S3)          │
+│              (falhou → Escalate: cria GitHub Issue)      │
 │                                                          │
 │  6. Verify   → se remediou, agenda UMA nova rodada:      │
 │              reavalia os controles corrigidos e          │
@@ -50,7 +50,12 @@ remedeia, então o loop não tem como oscilar.
 |---|---|---|
 | **S_nominal** | Recurso conforme | Nenhuma — registra e encerra |
 | **S_exception** | Não conforme, mas com exceção aprovada | Nenhuma — monitora até expirar |
-| **S_violation** | Não conforme, sem exceção | Remediação automática |
+| **S_violation** | Não conforme, sem exceção | Remediação automática; na rodada de verificação, escalação por não convergência |
+
+São os únicos estados. A rodada (detecção ou verificação) não cria estados novos —
+só muda a ação diante de uma `S_violation`. Um controle que não pôde ser avaliado
+(leitura falhou, OPA falhou, consulta de exceções falhou) não é um quarto estado:
+é falha do sistema, fica fora do modelo, não é registrado como estado e é escalado.
 
 ## Controles implementados
 

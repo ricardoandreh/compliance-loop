@@ -192,128 +192,35 @@
         "States": {
           "ClassifyState": {
             "Type": "Choice",
-            "Comment": "The verification branches come first on purpose: in a verification round a violation must escalate, never reach InvokeExecute. That is what bounds an incident to two executions.",
+            "Comment": "The formal model has three states and nothing else. Whether this is a detection or a verification round does not change the state of the resource, only what the loop does about it, so mode is decided afterwards (PlanAction). A result without one of the three states is not a fourth state: the control could not be evaluated, which is a failure of the system, outside the model, and is escalated without being recorded as a state.",
             "Choices": [
-              { "Condition": "{% $states.input.mode = 'verify' and $states.input.analyze_result.state = 'S_nominal' %}", "Next": "RegisterVerified" },
-              { "Condition": "{% $states.input.mode = 'verify' and $states.input.analyze_result.state = 'S_violation' %}", "Next": "RegisterNonConvergence" },
-              { "Condition": "{% $states.input.analyze_result.state = 'S_nominal' %}", "Next": "RegisterNominal" },
-              { "Condition": "{% $states.input.analyze_result.state = 'S_exception' %}", "Next": "RegisterException" },
-              { "Condition": "{% $states.input.analyze_result.state = 'S_violation' %}", "Next": "RegisterViolation" }
-            ],
-            "Default": "RegisterError"
-          },
-          "RegisterVerified": {
-            "Type": "Task",
-            "Comment": "Convergence confirmed. Linked to the violation it verifies, so the audit trail reads violation -> remediation -> verified as one chain instead of rows joined only by resource and time.",
-            "Resource": "arn:aws:states:::dynamodb:putItem",
-            "Arguments": {
-              "TableName": "${violations_log_table}",
-              "Item": {
-                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
-                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
-                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
-                "state": { "S": "S_nominal" },
-                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
-                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
-                "round": { "S": "verification" },
-                "origin_execution": { "S": "{% $states.input.origin_execution %}" },
-                "verifies_violation_id": { "S": "{% $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) ? $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) : 'unknown' %}" },
-                "account_id": { "S": "{% $states.input.account_id %}" },
-                "region": { "S": "{% $states.input.region %}" }
-              }
-            },
-            "Output": { "outcome": "verified", "control_id": "{% $states.input.analyze_result.control_id %}" },
-            "End": true
-          },
-          "RegisterNonConvergence": {
-            "Type": "Task",
-            "Comment": "A remediation reported success but the verification round still sees the violation: the policy and its remediation disagree, or something external undid the fix. Recorded, then escalated — never remediated again, which is what keeps the loop from oscillating (design.md, L11).",
-            "Resource": "arn:aws:states:::dynamodb:putItem",
-            "Arguments": {
-              "TableName": "${violations_log_table}",
-              "Item": {
-                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
-                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
-                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
-                "state": { "S": "S_violation" },
-                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
-                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
-                "round": { "S": "verification" },
-                "remediation_status": { "S": "not_converged" },
-                "origin_execution": { "S": "{% $states.input.origin_execution %}" },
-                "verifies_violation_id": { "S": "{% $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) ? $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) : 'unknown' %}" },
-                "account_id": { "S": "{% $states.input.account_id %}" },
-                "region": { "S": "{% $states.input.region %}" }
-              }
-            },
-            "Output": "{% $states.input %}",
-            "Catch": [
               {
-                "ErrorEquals": ["States.ALL"],
-                "Comment": "The audit write must never suppress the alert.",
-                "Output": "{% $states.input %}",
-                "Next": "NonConvergenceEscalation"
-              }
-            ],
-            "Next": "NonConvergenceEscalation"
-          },
-          "NonConvergenceEscalation": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::sqs:sendMessage",
-            "Arguments": {
-              "QueueUrl": "${escalation_queue_url}",
-              "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'error': 'Remediation did not converge: the verification round still finds ' & $states.input.analyze_result.control_id & ' violated after a remediation reported success (origin execution ' & $states.input.origin_execution & '). The loop does not remediate twice; human review required.', 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
-              "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
-              "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
-            },
-            "Output": { "outcome": "escalated" },
-            "End": true
-          },
-          "RegisterError": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::dynamodb:putItem",
-            "Arguments": {
-              "TableName": "${violations_log_table}",
-              "Item": {
-                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
-                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
-                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
-                "state": { "S": "{% $states.input.analyze_result.state %}" },
-                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
-                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
-                "error": { "S": "{% $states.input.analyze_result.error ? $states.input.analyze_result.error : 'unknown' %}" },
-                "account_id": { "S": "{% $states.input.account_id %}" },
-                "region": { "S": "{% $states.input.region %}" }
-              }
-            },
-            "Output": "{% $states.input %}",
-            "Catch": [
+                "Condition": "{% $states.input.analyze_result.state = 'S_nominal' %}",
+                "Next": "RegisterNominal"
+              },
               {
-                "ErrorEquals": ["States.ALL"],
-                "Comment": "The audit write must never suppress the alert: if putItem fails, still enqueue the escalation (the S_error row is lost, but the GitHub issue is raised).",
-                "Output": "{% $states.input %}",
-                "Next": "ControlErrorEscalation"
+                "Condition": "{% $states.input.analyze_result.state = 'S_exception' %}",
+                "Next": "RegisterException"
+              },
+              {
+                "Condition": "{% $states.input.analyze_result.state = 'S_violation' %}",
+                "Next": "RegisterViolation"
               }
             ],
-            "Next": "ControlErrorEscalation"
+            "Default": "Escalate"
           },
           "RegisterNominal": {
             "Type": "Task",
+            "Comment": "In a verification round this is the confirmation of convergence, linked to the violation it verifies (round, origin_execution, verifies_violation_id), so the audit trail reads violation -> remediation -> S_nominal as one chain.",
             "Resource": "arn:aws:states:::dynamodb:putItem",
             "Arguments": {
               "TableName": "${violations_log_table}",
-              "Item": {
-                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
-                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
-                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
-                "state": { "S": "S_nominal" },
-                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
-                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
-                "account_id": { "S": "{% $states.input.account_id %}" },
-                "region": { "S": "{% $states.input.region %}" }
-              }
+              "Item": "{% $merge([{'violation_id': {'S': $states.input.analyze_result.violation_id}, 'resource_arn': {'S': $states.input.resource_arn}, 'control_id': {'S': $states.input.analyze_result.control_id}, 'state': {'S': 'S_nominal'}, 'timestamp': {'S': $states.input.analyze_result.timestamp}, 'policy_version': {'S': $states.input.analyze_result.policy_version}, 'account_id': {'S': $states.input.account_id}, 'region': {'S': $states.input.region}}, $states.input.mode = 'verify' ? {'round': {'S': 'verification'}, 'origin_execution': {'S': $states.input.origin_execution}, 'verifies_violation_id': {'S': ($lookup($states.input.origin_violations, $states.input.analyze_result.control_id) ? $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) : 'unknown')}} : {}]) %}"
             },
-            "Output": { "outcome": "nominal" },
+            "Output": {
+              "outcome": "{% $states.input.mode = 'verify' ? 'verified' : 'nominal' %}",
+              "control_id": "{% $states.input.analyze_result.control_id %}"
+            },
             "End": true
           },
           "RegisterException": {
@@ -322,39 +229,83 @@
             "Arguments": {
               "TableName": "${violations_log_table}",
               "Item": {
-                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
-                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
-                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
-                "state": { "S": "S_exception" },
-                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
-                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
-                "exception_id": { "S": "{% $states.input.analyze_result.exception_id ? $states.input.analyze_result.exception_id : '' %}" },
-                "approved_by": { "S": "{% $states.input.analyze_result.approved_by ? $states.input.analyze_result.approved_by : '' %}" },
-                "account_id": { "S": "{% $states.input.account_id %}" },
-                "region": { "S": "{% $states.input.region %}" }
+                "violation_id": {
+                  "S": "{% $states.input.analyze_result.violation_id %}"
+                },
+                "resource_arn": {
+                  "S": "{% $states.input.resource_arn %}"
+                },
+                "control_id": {
+                  "S": "{% $states.input.analyze_result.control_id %}"
+                },
+                "state": {
+                  "S": "S_exception"
+                },
+                "timestamp": {
+                  "S": "{% $states.input.analyze_result.timestamp %}"
+                },
+                "policy_version": {
+                  "S": "{% $states.input.analyze_result.policy_version %}"
+                },
+                "exception_id": {
+                  "S": "{% $states.input.analyze_result.exception_id ? $states.input.analyze_result.exception_id : '' %}"
+                },
+                "approved_by": {
+                  "S": "{% $states.input.analyze_result.approved_by ? $states.input.analyze_result.approved_by : '' %}"
+                },
+                "account_id": {
+                  "S": "{% $states.input.account_id %}"
+                },
+                "region": {
+                  "S": "{% $states.input.region %}"
+                }
               }
             },
-            "Output": { "outcome": "exception" },
+            "Output": {
+              "outcome": "exception"
+            },
             "End": true
           },
           "RegisterViolation": {
             "Type": "Task",
+            "Comment": "In a verification round the violation is a non-convergence: a remediation reported success and the policy still fails, so the row carries the link to the violation it verifies and remediation_status=not_converged.",
             "Resource": "arn:aws:states:::dynamodb:putItem",
             "Arguments": {
               "TableName": "${violations_log_table}",
-              "Item": {
-                "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" },
-                "resource_arn": { "S": "{% $states.input.resource_arn %}" },
-                "control_id": { "S": "{% $states.input.analyze_result.control_id %}" },
-                "state": { "S": "S_violation" },
-                "timestamp": { "S": "{% $states.input.analyze_result.timestamp %}" },
-                "policy_version": { "S": "{% $states.input.analyze_result.policy_version %}" },
-                "account_id": { "S": "{% $states.input.account_id %}" },
-                "region": { "S": "{% $states.input.region %}" }
-              }
+              "Item": "{% $merge([{'violation_id': {'S': $states.input.analyze_result.violation_id}, 'resource_arn': {'S': $states.input.resource_arn}, 'control_id': {'S': $states.input.analyze_result.control_id}, 'state': {'S': 'S_violation'}, 'timestamp': {'S': $states.input.analyze_result.timestamp}, 'policy_version': {'S': $states.input.analyze_result.policy_version}, 'account_id': {'S': $states.input.account_id}, 'region': {'S': $states.input.region}}, $states.input.mode = 'verify' ? {'round': {'S': 'verification'}, 'origin_execution': {'S': $states.input.origin_execution}, 'verifies_violation_id': {'S': ($lookup($states.input.origin_violations, $states.input.analyze_result.control_id) ? $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) : 'unknown')}, 'remediation_status': {'S': 'not_converged'}} : {}]) %}"
             },
             "Output": "{% $states.input %}",
-            "Next": "InvokeExecute"
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Comment": "A failed audit write must not suppress a non-convergence alert. In a detection round it still stops the iteration, as before (design.md, L1).",
+                "Output": "{% $merge([$states.input, {'audit_write_failed': true}]) %}",
+                "Next": "PlanAction"
+              }
+            ],
+            "Next": "PlanAction"
+          },
+          "PlanAction": {
+            "Type": "Choice",
+            "Comment": "Plan: what to do about S_violation. The verification rule comes first on purpose — in a verification round a violation escalates and never reaches InvokeExecute, which is what bounds an incident to two executions and makes oscillation impossible.",
+            "Choices": [
+              {
+                "Condition": "{% $states.input.mode = 'verify' %}",
+                "Next": "Escalate"
+              },
+              {
+                "Condition": "{% $states.input.audit_write_failed = true %}",
+                "Next": "ViolationNotRecorded"
+              }
+            ],
+            "Default": "InvokeExecute"
+          },
+          "ViolationNotRecorded": {
+            "Type": "Fail",
+            "Error": "AuditWriteFailed",
+            "Cause": "The S_violation row could not be written, so the remediation is not attempted without its audit record (design.md, L1)."
           },
           "InvokeExecute": {
             "Type": "Task",
@@ -386,11 +337,22 @@
               }
             },
             "Retry": [
-              { "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"], "IntervalSeconds": 5, "MaxAttempts": 2, "BackoffRate": 2.0 }
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException"
+                ],
+                "IntervalSeconds": 5,
+                "MaxAttempts": 2,
+                "BackoffRate": 2.0
+              }
             ],
             "Catch": [
               {
-                "ErrorEquals": ["States.ALL"],
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
                 "Output": {
                   "resource_arn": "{% $states.input.resource_arn %}",
                   "resource_id": "{% $states.input.resource_id %}",
@@ -398,7 +360,10 @@
                   "account_id": "{% $states.input.account_id %}",
                   "region": "{% $states.input.region %}",
                   "analyze_result": "{% $states.input.analyze_result %}",
-                  "execute_result": { "remediation_status": "failed", "error": "{% $states.errorOutput %}" }
+                  "execute_result": {
+                    "remediation_status": "failed",
+                    "error": "{% $states.errorOutput %}"
+                  }
                 },
                 "Next": "UpdateLogFailed"
               }
@@ -408,8 +373,14 @@
           "CheckRemediationStatus": {
             "Type": "Choice",
             "Choices": [
-              { "Condition": "{% $states.input.execute_result.remediation_status = 'success' %}", "Next": "UpdateLogSuccess" },
-              { "Condition": "{% $states.input.execute_result.remediation_status = 'failed' %}", "Next": "UpdateLogFailed" }
+              {
+                "Condition": "{% $states.input.execute_result.remediation_status = 'success' %}",
+                "Next": "UpdateLogSuccess"
+              },
+              {
+                "Condition": "{% $states.input.execute_result.remediation_status = 'failed' %}",
+                "Next": "UpdateLogFailed"
+              }
             ],
             "Default": "UpdateLogFailed"
           },
@@ -418,12 +389,22 @@
             "Resource": "arn:aws:states:::dynamodb:updateItem",
             "Arguments": {
               "TableName": "${violations_log_table}",
-              "Key": { "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" } },
+              "Key": {
+                "violation_id": {
+                  "S": "{% $states.input.analyze_result.violation_id %}"
+                }
+              },
               "UpdateExpression": "SET remediation_status = :status, remediation_timestamp = :ts, remediation_output = :output",
               "ExpressionAttributeValues": {
-                ":status": { "S": "success" },
-                ":ts": { "S": "{% $states.context.State.EnteredTime %}" },
-                ":output": { "S": "{% $states.input.execute_result.output %}" }
+                ":status": {
+                  "S": "success"
+                },
+                ":ts": {
+                  "S": "{% $states.context.State.EnteredTime %}"
+                },
+                ":output": {
+                  "S": "{% $states.input.execute_result.output %}"
+                }
               }
             },
             "Output": {
@@ -438,12 +419,22 @@
             "Resource": "arn:aws:states:::dynamodb:updateItem",
             "Arguments": {
               "TableName": "${violations_log_table}",
-              "Key": { "violation_id": { "S": "{% $states.input.analyze_result.violation_id %}" } },
+              "Key": {
+                "violation_id": {
+                  "S": "{% $states.input.analyze_result.violation_id %}"
+                }
+              },
               "UpdateExpression": "SET remediation_status = :status, remediation_timestamp = :ts, remediation_error = :error",
               "ExpressionAttributeValues": {
-                ":status": { "S": "failed" },
-                ":ts": { "S": "{% $states.context.State.EnteredTime %}" },
-                ":error": { "S": "{% $string($states.input.execute_result.error) %}" }
+                ":status": {
+                  "S": "failed"
+                },
+                ":ts": {
+                  "S": "{% $states.context.State.EnteredTime %}"
+                },
+                ":error": {
+                  "S": "{% $string($states.input.execute_result.error) %}"
+                }
               }
             },
             "Output": {
@@ -455,32 +446,21 @@
               "analyze_result": "{% $states.input.analyze_result %}",
               "execute_result": "{% $states.input.execute_result %}"
             },
-            "Next": "EnqueueEscalation"
+            "Next": "Escalate"
           },
-          "EnqueueEscalation": {
+          "Escalate": {
             "Type": "Task",
-            "Comment": "Deduplication is by violation_id (unique per evaluation), NOT by resource+control: the FIFO 5-minute window would otherwise drop a second violation of the same pair, and that violation_id would never receive its github_issue_url, breaking the H2 audit chain. Duplicate ISSUES are prevented one layer up, by find_open_issue() in the escalation Lambda, which is where semantic deduplication belongs.",
+            "Comment": "One escalation, three reasons: remediation_failed (Execute failed), non_convergence (S_violation in a verification round) and system_failure (the control could not be evaluated — outside the state model, so there is no violations_log row and the escalation Lambda leaves the issue unlinked). Deduplication is by violation_id (unique per evaluation), NOT by resource+control: the FIFO 5-minute window would otherwise drop a second violation of the same pair, and that violation_id would never receive its github_issue_url, breaking the H2 audit chain. Duplicate ISSUES are prevented one layer up, by find_open_issue() in the escalation Lambda, which is where semantic deduplication belongs.",
             "Resource": "arn:aws:states:::sqs:sendMessage",
             "Arguments": {
               "QueueUrl": "${escalation_queue_url}",
-              "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'error': $string($states.input.execute_result.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+              "MessageBody": "{% ( $reason := $states.input.execute_result ? 'remediation_failed' : ($states.input.analyze_result.state = 'S_violation' ? 'non_convergence' : 'system_failure'); $error := $reason = 'remediation_failed' ? $string($states.input.execute_result.error) : ($reason = 'non_convergence' ? 'Remediation did not converge: the verification round still finds ' & $states.input.analyze_result.control_id & ' violated after a remediation reported success (origin execution ' & $states.input.origin_execution & '). The loop does not remediate twice; human review required.' : 'System failure: the control could not be evaluated, so no state was assigned. ' & ($states.input.analyze_result.error ? $states.input.analyze_result.error : 'unknown')); $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'reason': $reason, 'error': $error, 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) ) %}",
               "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
               "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
             },
-            "Output": { "outcome": "escalated" },
-            "End": true
-          },
-          "ControlErrorEscalation": {
-            "Type": "Task",
-            "Comment": "Deduplication is by violation_id (unique per evaluation), NOT by resource+control: the FIFO 5-minute window would otherwise drop a second violation of the same pair, and that violation_id would never receive its github_issue_url, breaking the H2 audit chain. Duplicate ISSUES are prevented one layer up, by find_open_issue() in the escalation Lambda, which is where semantic deduplication belongs.",
-            "Resource": "arn:aws:states:::sqs:sendMessage",
-            "Arguments": {
-              "QueueUrl": "${escalation_queue_url}",
-              "MessageBody": "{% $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'error': 'Analyze returned: ' & $states.input.analyze_result.state & ' - ' & ($states.input.analyze_result.error ? $states.input.analyze_result.error : 'unknown'), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
-              "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
-              "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
+            "Output": {
+              "outcome": "escalated"
             },
-            "Output": { "outcome": "escalated" },
             "End": true
           }
         }
