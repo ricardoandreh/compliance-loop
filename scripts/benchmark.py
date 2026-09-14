@@ -38,12 +38,14 @@ INTEGRATION_TEST = os.path.join(HERE, "integration_test.py")
 # then pooled per hypothesis, because H1/H3 are claims about the system, not
 # about any one scenario.
 HYPOTHESES = {
-    "H1 (MTTR)": ["t_remediation"],
-    "H3 (tempo de exposição)": ["t_exposure"],
-    # Event -> the verification round confirms S_nominal. Includes that round's
-    # deliberate consistency wait, so it is an upper bound on when convergence
-    # was known, not on when the resource actually converged.
-    "Convergência verificada": ["t_verified"],
+    # (metrics, scenarios). Pooled over the S3 violation scenarios only: CTRL-05
+    # also reports t_remediation, but for an account-level EC2 setting with its
+    # own Terraform resource, and mixing it in would describe neither.
+    "H1 (MTTR)": (["t_remediation"], ("C1", "C3", "C5")),
+    "H3 (tempo de exposição)": (["t_exposure"], ("C1", "C5")),
+    # Event -> the verification round confirms S_nominal, read straight after
+    # the remediation (no consistency wait since results/no-wait/).
+    "Convergência verificada": (["t_verified"], ("C1", "C5")),
 }
 
 # Two-tailed t critical values at 95%, indexed by degrees of freedom (n-1).
@@ -156,9 +158,11 @@ def aggregate(runs):
 
     # Pool each hypothesis' metric across every scenario that reports it.
     per_hypothesis = {}
-    for hypothesis, metric_names in HYPOTHESES.items():
+    for hypothesis, (metric_names, pooled_scenarios) in HYPOTHESES.items():
         pooled, sources = [], []
         for name, entry in scenarios.items():
+            if name not in pooled_scenarios:
+                continue
             for metric in metric_names:
                 if entry["metrics"].get(metric):
                     pooled.extend(entry["metrics"][metric])

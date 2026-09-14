@@ -907,6 +907,64 @@ def test_ctrl_s3_encryption():
 
 # --- Runner ---
 
+def test_ctrl_ebs_encryption_default():
+    """CTRL-05: ctrl-ebs-encryption-default re-enables the account setting"""
+    # The only control outside S3, and the only account-level one: there is no
+    # bucket or volume, the resource is the region's EBS-encryption-by-default
+    # setting. Nothing billable is created — the EC2 calls are free — but the
+    # change is account-wide, so the setting is put back if the loop does not.
+    #
+    # Coverage is preventive: the setting only affects volumes created later. An
+    # existing unencrypted volume stays unencrypted and this control stays
+    # compliant (design.md, L14).
+    ec2 = boto3.client("ec2", region_name=REGION)
+    account = boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
+    # Account-level resources use the synthetic identifier ResolveResource builds
+    # (design.md, L3) — that is the key the audit rows are written under.
+    pseudo_arn = f"arn:aws:{REGION}:{account}"
+    metrics = {}
+    was_enabled = ec2.get_ebs_encryption_by_default()["EbsEncryptionByDefault"]
+    try:
+        t_event = aws_now()
+        ec2.disable_ebs_encryption_by_default()
+        log("EBS encryption by default disabled for the region")
+        time.sleep(WAIT_CLOUDTRAIL)
+
+        execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        assert execs, "No SUCCEEDED executions found"
+        chosen = pick_execution(execs, event_name="DisableEbsEncryptionByDefault")
+        assert json.loads(sfn.describe_execution(executionArn=chosen["executionArn"])["input"]).get(
+            "event_name") == "DisableEbsEncryptionByDefault", "no execution for the Disable event"
+        metrics["t_remediation"] = get_execution_timing(chosen["executionArn"])["duration_s"]
+
+        assert ec2.get_ebs_encryption_by_default()["EbsEncryptionByDefault"] is True, \
+            "EBS encryption by default was not re-enabled"
+
+        verify, vt = verification_round("account-level", chosen["executionArn"], t_event - 60)
+        assert verify["status"] == "SUCCEEDED", f"remediation did not converge: {verify['arn']}"
+        metrics["t_verified"] = round(vt["stop"] - t_event, 2)
+
+        since = datetime.fromtimestamp(t_event - 5, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        rows = [v for v in query_violations(pseudo_arn)
+                if v["control_id"] == "ctrl-ebs-encryption-default" and v["timestamp"] >= since]
+        assert any(v["state"] == "S_violation" and v.get("remediation_status") == "success" for v in rows), \
+            f"no remediated S_violation row under {pseudo_arn}"
+        assert any(v["state"] == "S_nominal" and v.get("origin_execution") == chosen["executionArn"]
+                   for v in rows), "verification left no S_nominal linked to the detection round"
+        assert_no_remediation_echo("account-level", t_event - 5, {"EnableEbsEncryptionByDefault"})
+
+        metrics["t_total"] = round(aws_now() - t_event, 2)
+        log(f"EbsEncryptionByDefault = true  t_remediation={metrics['t_remediation']}s  "
+            f"t_verified={metrics['t_verified']}s  t_total={metrics['t_total']}s", "TIME")
+        log("CTRL-05 PASSED", "OK")
+        return True, metrics
+    finally:
+        wait_quiesce()
+        if was_enabled and not ec2.get_ebs_encryption_by_default()["EbsEncryptionByDefault"]:
+            log("EBS encryption by default left disabled; restoring it", "WARN")
+            ec2.enable_ebs_encryption_by_default()
+
+
 TESTS = [
     ("C1", "Violação simples → remediação automática", test_c1),
     ("C2", "Exceção ativa → S_exception", test_c2),
@@ -920,6 +978,7 @@ TESTS = [
     ("CTRL-02", "ctrl-s3-ssl-only", test_ctrl_s3_ssl_only),
     ("CTRL-03", "ctrl-s3-versioning", test_ctrl_s3_versioning),
     ("CTRL-04", "ctrl-s3-encryption", test_ctrl_s3_encryption),
+    ("CTRL-05", "ctrl-ebs-encryption-default", test_ctrl_ebs_encryption_default),
 ]
 
 
@@ -973,8 +1032,9 @@ def main():
         print(f"  {icon} {name}: {result}  {timing_str}")
 
     # Hypothesis summary
-    h1_tests = {k: v for k, v in all_metrics.items() if "t_remediation" in v}
-    h3_tests = {k: v for k, v in all_metrics.items() if "t_exposure" in v}
+    # Same pooling as benchmark.py: H1/H3 are about the S3 violation scenarios.
+    h1_tests = {k: v for k, v in all_metrics.items() if "t_remediation" in v and k in ("C1", "C3", "C5")}
+    h3_tests = {k: v for k, v in all_metrics.items() if "t_exposure" in v and k in ("C1", "C5")}
 
     if h1_tests:
         print(f"\n  H1 (MTTR):")

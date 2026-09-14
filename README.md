@@ -291,7 +291,7 @@ cobre esse caminho — um bucket inexistente nem chega a ser avaliado.
 | CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 26,34s ± 1,34 |
 | CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 25,90s ± 0,05 |
 | CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | mediana 26,24s (32,48s ± 19,36) |
-| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | validado à parte, fora da suíte |
+| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | 28,2s (observação única, container frio) |
 
 O `t_total` das CTRL-* mede o **teste**: criação de bucket, esperas de CloudTrail
 e a espera pelas rodadas de verificação, já que o harness só encerra quando
@@ -299,10 +299,17 @@ nenhuma execução está em andamento. Não é comparável ao `t_remediation` ne
 classificado em quente/frio. O desvio alto de CTRL-01 e CTRL-04 vem de uma única
 rodada, com o tempo extra fora do loop; as medianas não se alteram.
 
-O CTRL-05 não tem teste automatizado: a `integration_test.py` cobre CTRL-01 a
-CTRL-04. O controle está implantado e foi validado numa execução isolada
-(registrada no `design.md`), mas não entra nas 10 execuções agregadas acima —
-logo, o único serviço com cobertura repetida é o S3.
+O CTRL-05 entrou na `integration_test.py` depois das 10 execuções agregadas:
+desliga a criptografia padrão do EBS na região, exige a remediação e a rodada de
+verificação, e religa a configuração se o loop não o fizer. Não cria nenhum
+recurso cobrável — é uma configuração da conta. Foi exercitado uma vez, a frio,
+então o único serviço com cobertura repetida continua sendo o S3.
+
+O controle é **preventivo**: `EbsEncryptionByDefault` só vale para volumes criados
+depois. Um volume existente sem criptografia continua assim, e o controle fica
+conforme — a AWS não criptografa nem troca a chave de um volume no lugar (é
+snapshot → cópia → volume novo), o que não é remediação para aplicar
+automaticamente. Ver L14 no `design.md`.
 
 ## Performance
 

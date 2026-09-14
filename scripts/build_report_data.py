@@ -31,6 +31,7 @@ PRIMARY = {
     "CTRL-02": "t_total",
     "CTRL-03": "t_total",
     "CTRL-04": "t_total",
+    "CTRL-05": "t_total",
 }
 
 LABELS = {
@@ -46,6 +47,7 @@ LABELS = {
     "CTRL-02": "ctrl-s3-ssl-only",
     "CTRL-03": "ctrl-s3-versioning",
     "CTRL-04": "ctrl-s3-encryption",
+    "CTRL-05": "ctrl-ebs-encryption-default",
     "AUDIT": "Ausência de falhas inesperadas",
 }
 
