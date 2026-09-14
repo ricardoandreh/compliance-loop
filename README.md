@@ -257,33 +257,35 @@ de sucesso aparece ao lado. Métricas com n=1 são marcadas como observação
 Todos aprovados em **10 de 10** execuções da suíte. Valores: média ± desvio,
 **separados em regime quente e frio** por evidência de `Init Duration` na
 invocação da Lambda (`scripts/classify_cold_starts.py`). A única amostra fria
-das 10 execuções é do C1.
+das 10 execuções é do C1. O desvio do `t_remediation` quente (~0,5s) é a mistura
+dos dois tipos de container, não variância do sistema.
 
 | Cenário | Descrição | Resultado | Quente | Frio |
 |---|---|---|---|---|
-| C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 6,19s ± 0,05 (n=9) | 14,78s (n=1) |
-| C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,47s ± 0,04 | nenhuma |
-| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 6,24s ± 0,08 | nenhuma |
-| C4 | Falha na remediação (bucket inexistente) | Escala via GitHub Issue | `t_escalation` 0,58s ± 0,07 | nenhuma |
-| C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 6,18s ± 0,15 | nenhuma |
-| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,47s ± 0,04 | nenhuma |
-| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: 15,64s ± 0,08 | — |
+| C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 5,83s ± 0,52 (n=9) | 14,56s (n=1) |
+| C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,48s ± 0,06 | nenhuma |
+| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 5,42s ± 0,63 | nenhuma |
+| C4 | Falha na remediação (bucket inexistente) | Escala via GitHub Issue | `t_escalation` 0,58s ± 0,04 | nenhuma |
+| C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 5,46s ± 0,57 | nenhuma |
+| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,45s ± 0,03 | nenhuma |
+| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: mediana 15,61s | — |
 | AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além da esperada do C4 | — | — |
 
 ## Controles validados
 
 | Teste | Controle | Verificação | t_total (n=10) |
 |---|---|---|---|
-| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | 44,37s ± 2,04 |
-| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 38,57s ± 1,06 |
-| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 38,05s ± 2,06 |
-| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | 38,98s ± 1,43 |
+| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | mediana 25,95s (34,17s ± 20,46) |
+| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 26,34s ± 1,34 |
+| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 25,90s ± 0,05 |
+| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | mediana 26,24s (32,48s ± 19,36) |
 | CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | validado à parte, fora da suíte |
 
 O `t_total` das CTRL-* mede o **teste**: criação de bucket, esperas de CloudTrail
 e a espera pelas rodadas de verificação, já que o harness só encerra quando
 nenhuma execução está em andamento. Não é comparável ao `t_remediation` nem é
-classificado em quente/frio.
+classificado em quente/frio. O desvio alto de CTRL-01 e CTRL-04 vem de uma única
+rodada, com o tempo extra fora do loop; as medianas não se alteram.
 
 O CTRL-05 não tem teste automatizado: a `integration_test.py` cobre CTRL-01 a
 CTRL-04. O controle está implantado e foi validado numa execução isolada
@@ -292,48 +294,63 @@ logo, o único serviço com cobertura repetida é o S3.
 
 ## Performance
 
-Agregado de **10 execuções completas da suíte** com o laço em duas rodadas
-(120/120 cenários aprovados), via `scripts/benchmark.py`. Desvio amostral (n−1)
-e IC 95% pela distribuição t. **Quente e frio são reportados separadamente**,
-classificados por evidência (`Init Duration` na invocação exata da Lambda),
-sem corte de duração. Uma amostra fria com n=1 é reportada como observação
-única.
+Agregado de **10 execuções completas da suíte** com o laço em duas rodadas e
+leitura imediata na verificação (120/120 cenários aprovados, `results/no-wait/`),
+via `scripts/benchmark.py`. Desvio amostral (n−1) e IC 95% pela distribuição t.
+**Quente e frio são reportados separadamente**, classificados por evidência
+(`Init Duration` na invocação exata da Lambda), sem corte de duração. Uma
+amostra fria com n=1 é reportada como observação única.
 
 | Métrica | Quente | Frio | Total |
 |---|---|---|---|
-| **H1 — t_remediation** | **6,20s** ± 0,10 · IC [6,16 · 6,24] · n=29 | **14,78s** (n=1) | 6,49s ± 1,57 · mediana 6,20 · n=30 |
-| **H3 — t_exposure** | **13,90s** ± 1,87 · IC [13,00 · 14,80] · n=19 | **20,06s** (n=1) | 14,21s ± 2,28 · n=20 |
-| **t_verified** (convergência confirmada) | **29,26s** ± 1,88 · IC [28,35 · 30,16] · n=19 | **35,42s** (n=1) | 29,57s ± 2,29 · n=20 |
-| t_detection (evento → SFN start) | sem classe: 7,59s ± 1,85 · IC [6,73 · 8,46] · n=20 | | |
-| t_classification (recurso conforme) | 0,47s ± 0,04 · n=10 | nenhuma | |
-| t_escalation (falha → fila SQS) | 0,58s ± 0,07 · n=10 | nenhuma | |
+| **H1 — t_remediation**, container lento | **6,24s** ± 0,10 · IC [6,18 · 6,30] · n=12 | **14,56s** (n=1) | |
+| **H1 — t_remediation**, container rápido | **5,08s** ± 0,08 · IC [5,04 · 5,12] · n=17 | | |
+| H1 — agregado | 5,56s ± 0,59 · mediana 5,17 · n=29 | | 5,86s ± 1,74 · n=30 |
+| **H3 — t_exposure** | **12,89s** ± 1,62 · IC [12,11 · 13,67] · n=19 (lento 14,16 · rápido 11,75) | **20,98s** (n=1) | 13,30s ± 2,40 · n=20 |
+| **t_verified** (convergência confirmada) | **13,15s** ± 1,63 · IC [12,36 · 13,93] · n=19 | **21,33s** (n=1) | 13,56s ± 2,42 · n=20 |
+| t_detection (evento → SFN start) | sem classe: 7,22s ± 1,21 · IC [6,65 · 7,78] · n=20 | | |
+| t_classification (recurso conforme) | 0,45–0,48s · n=10 | nenhuma | |
+| t_escalation (falha → fila SQS) | 0,58s ± 0,04 · n=10 | nenhuma | |
 
-**A remediação quente varia 1,6%; a detecção, 24% — quinze vezes mais.** Os três
-cenários que remedeiam por rotas independentes concordam dentro de 0,06s no
-regime quente (C1 6,19 · C3 6,24 · C5 6,18). Toda a dispersão do tempo de
-exposição vem do `t_detection` — latência de entrega do CloudTrail ao
-EventBridge, fora do controle do sistema. A decomposição fecha exatamente:
-`t_detection + t_remediation = t_exposure`. O `t_detection` não recebe classe
-porque termina antes de qualquer Lambda rodar.
+**"Quente" não é um regime só.** O Execute roda ~1,1s mais rápido num dos
+containers da Lambda do que nos outros — 90 das 251 invocações da série, todas no
+mesmo container; nas 280 da série anterior, nenhuma. O atraso fica antes da
+primeira escrita e não depende do tempo ocioso: é o ambiente de execução, não o
+sistema. Por isso H1 e H3 são reportadas por tipo de container, e o agregado não
+deve ser lido como melhoria.
 
-**Cold start** foi a única amostra fria em 30: C1 na primeira execução, após
-horas sem tráfego, com Analyze e Execute em containers novos. O `Init Duration`
-é só ~0,6s; o custo real (~+5s no Execute) é o download do cache de provider
-dentro do handler. O desvio de 1,57s do total é inteiramente essa amostra — a
-mediana fica em 6,20s.
+**A remediação varia 1,6% dentro de cada container; a detecção, 17%.** Os três
+cenários que remedeiam por rotas independentes concordam dentro de cada tipo de
+container (lento: C1 6,17 · C3 6,34 · C5 6,28; rápido: 5,14 · 5,03 · 5,11). A
+dispersão do tempo de exposição vem do `t_detection` — latência de entrega do
+CloudTrail ao EventBridge, fora do controle do sistema. A decomposição fecha
+exatamente: `t_detection + t_remediation = t_exposure`.
 
-**Comparado ao laço anterior** (confirmação por eco do CloudTrail, 60 amostras,
-nenhuma fria): `t_remediation` era 6,03s ± 0,11 · IC [5,98 · 6,07]. Os +0,18s no
-regime quente são o novo estado `ScheduleVerification` (0,156s medidos no
-histórico). `t_exposure` era 14,15s ± 1,48. As execuções por rodada da suíte
-caíram de **48,5 para 36,0 (−26%)**, e um incidente com N controles remediados
-passou de 1 + N para **no máximo 2** execuções. O `t_verified` inclui a espera
-de consistência de 15s da rodada de verificação — uma premissa de projeto.
+**Cold start** foi a única amostra fria em 30: C1 na primeira execução, com
+Analyze e Execute em containers novos. O `Init Duration` é só ~0,5s; o custo real
+é o download do cache de provider dentro do handler.
+
+**Leitura imediata na verificação, medida.** A rodada de verificação lia depois
+de uma espera fixa de 15s, escolhida e não medida. Sem ela, a leitura acontece
+**0,37s** (0,24–0,70) depois da última escrita da remediação, e as **283 leituras
+de controle saíram `verified`** — como as 280 com espera. Taxa de leitura
+desatualizada < ~1,1% com 95% de confiança, para os controles S3 remediados
+(`scripts/verification_consistency.py`). Se ocorrer, o erro é seguro: escalação
+indevida, nunca `S_nominal` falso. O `t_verified` caiu de 29,26s para 13,15s e
+fica só 0,26s acima da exposição.
+
+**Comparado às séries anteriores**, no container lento, que é o único tipo
+presente nas três: `t_remediation` 6,03s (eco) → 6,20s (espera de 15s) → 6,24s
+(atual). Os +0,18s do laço explícito são o estado `ScheduleVerification` (0,156s
+medidos no histórico); a remoção da espera não mudou a remediação. As execuções
+por rodada da suíte caíram de **48,5 (eco) para 36,0 (−26%)**, e um incidente
+com N controles remediados passou de 1 + N para **no máximo 2** execuções.
 
 A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~128MB), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 
 Relatório com os gráficos interativos e a tabela completa: `results/report.html`
-(dados brutos em `results/run-NN.json`, regeneráveis com `scripts/build_report_data.py`).
+(dados brutos em `results/no-wait/run-NN.json`; séries anteriores em
+`results/two-round/` e `results/`, regeneráveis com `scripts/build_report_data.py`).
 
 ## Licença
 

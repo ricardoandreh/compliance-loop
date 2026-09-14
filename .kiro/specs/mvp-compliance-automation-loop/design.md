@@ -214,7 +214,7 @@ A máquina de estados usa JSONata e processa múltiplos controles via Map state.
 ResolveResource          # extrai resource_id/resource_arn dos request_parameters do CloudTrail;
                          # normaliza mode (detect|verify) e a origem da rodada de verificação
   → RouteControlLookup   # Choice, em ordem:
-       ├─ mode = verify → WaitForConsistency (15 s) → InvokeAnalyze
+       ├─ mode = verify → InvokeAnalyze   # lê imediatamente: a consistência foi medida, não presumida
        │                          # usa as definições dos controles remediados que a rodada
        │                          # de detecção carregou; não há consulta a fazer
        ├─ input tem control_id (re-avaliação de exceção) → GetControlById
@@ -255,7 +255,7 @@ O laço agora é explícito:
 
 1. **O eco é filtrado na origem.** A regra do EventBridge descarta eventos cuja identidade é o role da Lambda Execute. Toda escrita de remediação chega ao CloudTrail como `AssumedRole` desse role — verificado no CloudTrail da conta — enquanto mudanças humanas chegam como `IAMUser`, **sem** `sessionContext.sessionIssuer`.
 2. **A rodada de detecção agenda uma única verificação.** Se remediou algo, ela inicia a própria máquina em `mode = verify`, levando as definições dos controles remediados e o mapa controle → `violation_id`.
-3. **A rodada de verificação não remedeia.** Espera 15 s (a configuração de bucket é eventualmente consistente; o eco escondia essa margem), reavalia exatamente os controles remediados e registra `S_nominal` ligado à violação que confirma, ou registra a não convergência e escala.
+3. **A rodada de verificação não remedeia.** Reavalia imediatamente exatamente os controles remediados e registra `S_nominal` ligado à violação que confirma, ou registra a não convergência e escala.
 
 Um incidente custa, portanto, **no máximo duas execuções**, e oscilar é estruturalmente impossível. Essas propriedades são verificadas estaticamente sobre o grafo em `tests/unit/test_state_machine.py`: as regras de verificação precedem a de violação, os ramos de verificação não alcançam `InvokeExecute`, e só uma rodada de detecção agenda verificação.
 
@@ -267,6 +267,16 @@ Um incidente custa, portanto, **no máximo duas execuções**, e oscilar é estr
 | `$or` com `exists: false` | True | False | True |
 
 O primeiro padrão faria o sistema parar de detectar toda violação feita pelo console — o cenário C1 — sem nenhum erro. O `controls-sync` gera o segundo, e `tests/contract/test_event_pattern.py` avalia o padrão gerado no próprio EventBridge para as quatro identidades.
+
+**Consistência de leitura: medida, não presumida.** A configuração de bucket do S3 é eventualmente consistente, e o eco escondia a questão — o evento chegava segundos depois da escrita. A primeira versão do laço explícito compensava com uma espera fixa de 15 s antes de reavaliar, um valor escolhido e não medido. A espera foi removida depois de medir o que acontece sem ela, com `scripts/verification_consistency.py`, que liga cada rodada de verificação ao fim da última remediação da execução de origem:
+
+| | com espera de 15 s (`results/two-round/`) | sem espera (`results/no-wait/`) |
+|---|---|---|
+| rodadas de verificação | 160 | 161 |
+| leituras de controle `verified` | 280 de 280 | **283 de 283** |
+| intervalo escrita → leitura | 15,41 s (15,26–15,66) | **0,37 s** (0,24–0,70) |
+
+Nenhuma leitura desatualizada em 283, lendo ~0,4 s depois da escrita: pela regra de três, a taxa de leitura desatualizada é inferior a ~1,1% por leitura, com 95% de confiança. A afirmação tem dois limites. Vale para os três controles S3 que foram de fato remediados e verificados (public-block, ssl-only, versioning): o `ctrl-s3-encryption` nunca precisou de remediação, e o EBS não está na suíte. E, se uma leitura desatualizada ocorrer, o erro cai do lado seguro — uma escalação de não convergência indevida, nunca um `S_nominal` falso. Para um controle futuro com propagação mais lenta, a mitigação é reavaliar com novas tentativas limitadas antes de escalar, não voltar a uma espera fixa para todos (ver L13).
 
 **O que continua possível**: duas mudanças *externas* simultâneas sobre o mesmo controle (a corrida `CreateBucket` + violação do C1/C5) ainda produzem duas rodadas de detecção e duas de verificação — limitado, mas não deduplicado (ver L6).
 
@@ -633,13 +643,13 @@ O DynamoDB Streams está habilitado na tabela exceptions com `NEW_AND_OLD_IMAGES
 
 O input enviado ao Step Functions carrega o `control_id` da exceção (não um `event_name` sintético). O estado `RouteControlLookup` detecta a presença de `control_id` e resolve o controle exato via `GetControlById` (getItem), em vez do scan por `cloudtrail_events`. Isso garante que a re-avaliação atinja precisamente o controle da exceção expirada — inclusive controles não-S3 (ex: `ctrl-ebs-encryption-default`), cujos eventos CloudTrail não se relacionam com nenhum evento S3 — sem disparar controles alheios contra o recurso.
 
-Este mecanismo substituiu a abordagem anterior baseada em EventBridge Pipe + DynamoDB TTL, que dependia da deleção física de itens expirados — operação com latência não determinística de até 48h. O novo mecanismo reduz essa latência em ordens de grandeza, mas **não é preciso ao segundo**: medido em 10 execuções (C3), o disparo ocorre em média **22,5 s após o instante agendado**, variando de 1,1 s a 40,1 s. O ganho real é de latência **limitada e observável** (dezenas de segundos) contra **ilimitada** (até 48 h) — não de determinismo.
+Este mecanismo substituiu a abordagem anterior baseada em EventBridge Pipe + DynamoDB TTL, que dependia da deleção física de itens expirados — operação com latência não determinística de até 48h. O novo mecanismo reduz essa latência em ordens de grandeza, mas **não é preciso ao segundo**: medido em três séries de 10 execuções (C3), o disparo ocorre em média **17,9 s a 29,5 s após o instante agendado**, conforme a série, com extremos de 0,1 s e 48,1 s. O ganho real é de latência **limitada e observável** (dezenas de segundos) contra **ilimitada** (até 48 h) — não de determinismo.
 
 Isso garante que, após expiração de uma exceção, o recurso seja automaticamente re-avaliado pelo loop MAPE-K completo, mantendo o invariante arquitetural de que o Analyze é sempre o componente decisor.
 
 **Limitação conhecida — Latência do TTL**:
 
-A deleção física de itens expirados pelo DynamoDB TTL é **não-determinística** e pode levar até 48 horas após o timestamp `valid_until`. No entanto, a re-avaliação automática **não depende da deleção física**: o EventBridge Scheduler é agendado para `valid_until + 30s` e dispara dentro de algumas dezenas de segundos desse instante (22,5 s de atraso médio, até 40,1 s observados em 10 execuções), e a Analyze Lambda filtra exceções com `valid_until > now()`, garantindo que exceções logicamente expiradas sejam ignoradas em qualquer avaliação. O TTL permanece habilitado apenas para limpeza eventual dos itens na tabela.
+A deleção física de itens expirados pelo DynamoDB TTL é **não-determinística** e pode levar até 48 horas após o timestamp `valid_until`. No entanto, a re-avaliação automática **não depende da deleção física**: o EventBridge Scheduler é agendado para `valid_until + 30s` e dispara dentro de algumas dezenas de segundos desse instante (atraso médio entre 17,9 s e 29,5 s em três séries de 10 execuções, até 48,1 s observados), e a Analyze Lambda filtra exceções com `valid_until > now()`, garantindo que exceções logicamente expiradas sejam ignoradas em qualquer avaliação. O TTL permanece habilitado apenas para limpeza eventual dos itens na tabela.
 
 
 
@@ -2218,44 +2228,50 @@ vindo do atraso de entrega do Scheduler.
 
 ## Tabela Comparativa de Métricas por Cenário
 
-Agregado de **10 execuções da suíte com o laço em duas rodadas** (`results/two-round/`), média ± desvio amostral, **separado em regime quente e frio** por evidência de `Init Duration` (ver *Síntese por Hipótese*). Todos os cenários aprovados em 10/10. A única amostra fria do conjunto é do C1.
+Agregado de **10 execuções da suíte com o laço em duas rodadas e leitura imediata na verificação** (`results/no-wait/`, a configuração implantada), média ± desvio amostral, **separado em regime quente e frio** por evidência de `Init Duration` (ver *Síntese por Hipótese*). Todos os cenários aprovados em 10/10. A única amostra fria do conjunto é do C1.
 
 | Cenário | Descrição | Estado final | Métrica | Quente | Frio | Hipóteses |
 |---|---|---|---|---|---|---|
-| C1 | Violação simples via console | S_nominal | `t_remediation` | **6,19 s** ± 0,05 (n = 9) | **14,78 s** (n = 1) | H1 |
-| | | | `t_exposure` | **14,84 s** ± 1,28 (n = 9) | **20,06 s** (n = 1) | H3 |
-| | | | `t_verified` | **30,21 s** ± 1,25 (n = 9) | **35,42 s** (n = 1) | H3 |
-| | | | `t_detection` | sem classe: 8,32 s ± 1,60 (n = 10) | | H3 |
-| C2 | Violação com exceção ativa | S_exception | `t_classification` | **0,47 s** ± 0,04 (n = 10) | nenhuma | H2 |
-| C3 | Exceção expira → remediação | S_nominal | `t_remediation` | **6,24 s** ± 0,08 (n = 10) | nenhuma | H1 |
-| | | | `t_remediation_post_expiry`\* | 54,14 s ± 18,66 (n = 10) | nenhuma | H2, H3 |
-| | | | `t_verified_post_expiry`\* | 69,50 s ± 18,65 (n = 10) | nenhuma | H3 |
-| | | | `t_scheduler_fire` | sem classe: 47,91 s ± 18,65 (n = 10) | | H3 |
-| C4 | Bucket inexistente → escalação | Escalado | `t_escalation` | **0,58 s** ± 0,07 (n = 10) | nenhuma | H2 |
-| C5 | Violação originada por IaC | S_nominal | `t_remediation` | **6,18 s** ± 0,15 (n = 10) | nenhuma | H1 |
-| | | | `t_exposure` | **13,05 s** ± 1,97 (n = 10) | nenhuma | H3 |
-| | | | `t_verified` | **28,40 s** ± 1,98 (n = 10) | nenhuma | H3 |
-| | | | `t_detection` | sem classe: 6,87 s ± 1,88 (n = 10) | | H3 |
-| C6 | Recurso já conforme | S_nominal | `t_classification` | **0,47 s** ± 0,04 (n = 10) | nenhuma | H1 |
-| C7 | Novo controle → EventBridge | — | `t_sync_insert` | não classificado: 15,64 s ± 0,08 (n = 10) | | Extensibilidade |
+| C1 | Violação simples via console | S_nominal | `t_remediation`† | **5,83 s** ± 0,52 (n = 9) | **14,56 s** (n = 1) | H1 |
+| | | | `t_exposure` | **13,50 s** ± 0,70 (n = 9) | **20,98 s** (n = 1) | H3 |
+| | | | `t_verified` | **13,75 s** ± 0,70 (n = 9) | **21,33 s** (n = 1) | H3 |
+| | | | `t_detection` | sem classe: 7,54 s ± 0,70 (n = 10) | | H3 |
+| C2 | Violação com exceção ativa | S_exception | `t_classification` | **0,48 s** ± 0,06 (n = 10) | nenhuma | H2 |
+| C3 | Exceção expira → remediação | S_nominal | `t_remediation`† | **5,42 s** ± 0,63 (n = 10) | nenhuma | H1 |
+| | | | `t_remediation_post_expiry`\* | 64,94 s ± 10,27 (n = 10) | nenhuma | H2, H3 |
+| | | | `t_verified_post_expiry`\* | 65,20 s ± 10,27 (n = 10) | nenhuma | H3 |
+| | | | `t_scheduler_fire` | sem classe: 59,51 s ± 10,35 (n = 10) | | H3 |
+| C4 | Bucket inexistente → escalação | Escalado | `t_escalation` | **0,58 s** ± 0,04 (n = 10) | nenhuma | H2 |
+| C5 | Violação originada por IaC | S_nominal | `t_remediation`† | **5,46 s** ± 0,57 (n = 10) | nenhuma | H1 |
+| | | | `t_exposure` | **12,35 s** ± 2,03 (n = 10) | nenhuma | H3 |
+| | | | `t_verified` | **12,60 s** ± 2,04 (n = 10) | nenhuma | H3 |
+| | | | `t_detection` | sem classe: 6,89 s ± 1,54 (n = 10) | | H3 |
+| C6 | Recurso já conforme | S_nominal | `t_classification` | **0,45 s** ± 0,03 (n = 10) | nenhuma | H1 |
+| C7 | Novo controle → EventBridge | — | `t_sync_insert` | não classificado: 18,12 s ± 7,91 · mediana 15,61 (n = 10) | | Extensibilidade |
 
 "Nenhuma" significa que a classificação foi feita e não encontrou amostra fria; "sem classe" marca métricas que terminam antes de a execução começar; "não classificado" marca métricas que medem o teste inteiro, sem uma invocação única a examinar.
 
-\*C3: janelas pós-expiração, não comparáveis às demais — incluem o buffer de 30 s do Scheduler mais o seu atraso de entrega, que é a fonte do desvio de ~18,7 s. O `t_remediation` do C3 é diretamente comparável e concorda com C1/C5 dentro de 0,06 s.
+†O desvio de ~0,5–0,6 s no `t_remediation` quente **não é variância do sistema**: as amostras caíram em dois tipos de container do Execute, um ~1,1 s mais rápido que o outro (L12). Dentro de cada tipo, os três cenários concordam — containers lentos: C1 6,17 · C3 6,34 · C5 6,28 s; container rápido: C1 5,14 · C3 5,03 · C5 5,11 s — e as médias por cenário acima diferem só pela proporção de amostras em cada um.
 
-**Conjunto anterior (eco, `results/`)**, todas as amostras quentes (60 classificadas, nenhuma fria): C1 `t_remediation` 6,02 s ± 0,11 · C3 6,04 s ± 0,10 · C5 6,02 s ± 0,13 · C1 `t_exposure` 13,85 s ± 1,56 · C5 14,45 s ± 1,42 · C2 `t_classification` 0,47 s ± 0,08 · C4 `t_escalation` 0,60 s ± 0,06 · C6 `t_classification` 0,45 s ± 0,04 · C7 `t_sync_insert` 15,93 s ± 1,02.
+\*C3: janelas pós-expiração, não comparáveis às demais — incluem o buffer de 30 s do Scheduler mais o seu atraso de entrega (29,5 s em média nesta série), que é a fonte do desvio de ~10,3 s. O `t_remediation` do C3 é diretamente comparável ao de C1/C5.
+
+**Série com espera de 15 s na verificação (`results/two-round/`)**, mesma classificação: C1 `t_remediation` 6,19 s ± 0,05 (n = 9; frio 14,78 s) · C3 6,24 s ± 0,08 · C5 6,18 s ± 0,15 · C1 `t_exposure` 14,84 s ± 1,28 · C5 13,05 s ± 1,97 · C1 `t_verified` 30,21 s ± 1,25 · C5 28,40 s ± 1,98 · C2 `t_classification` 0,47 s ± 0,04 · C4 `t_escalation` 0,58 s ± 0,07 · C6 `t_classification` 0,47 s ± 0,04 · C7 `t_sync_insert` 15,64 s ± 0,08.
+
+**Série do laço por eco (`results/`)**, todas as amostras quentes (60 classificadas, nenhuma fria): C1 `t_remediation` 6,02 s ± 0,11 · C3 6,04 s ± 0,10 · C5 6,02 s ± 0,13 · C1 `t_exposure` 13,85 s ± 1,56 · C5 14,45 s ± 1,42 · C2 `t_classification` 0,47 s ± 0,08 · C4 `t_escalation` 0,60 s ± 0,06 · C6 `t_classification` 0,45 s ± 0,04 · C7 `t_sync_insert` 15,93 s ± 1,02.
 
 ### Validação por Controle
 
-| Teste | Controle | Serviço | Resultado | `t_total` atual (n = 10) | `t_total` anterior (n = 10) |
-|---|---|---|---|---|---|
-| CTRL-01 | ctrl-s3-public-block | S3 | All 4 settings = true | 44,37 s ± 2,04 | 28,54 s ± 2,10 |
-| CTRL-02 | ctrl-s3-ssl-only | S3 | DenyNonSSLRequests present | 38,57 s ± 1,06 | 26,81 s ± 2,11 |
-| CTRL-03 | ctrl-s3-versioning | S3 | Versioning = Enabled | 38,05 s ± 2,06 | 26,32 s ± 0,99 |
-| CTRL-04 | ctrl-s3-encryption | S3 | SSEAlgorithm = AES256 | 38,98 s ± 1,43 | 27,02 s ± 1,29 |
-| CTRL-05 | ctrl-ebs-encryption-default | EC2 | EbsEncryptionByDefault = true | execução isolada (~35 s) | — |
+| Teste | Controle | Serviço | Resultado | `t_total` sem espera (atual, n = 10) | com espera de 15 s (n = 10) | eco (n = 10) |
+|---|---|---|---|---|---|---|
+| CTRL-01 | ctrl-s3-public-block | S3 | All 4 settings = true | 34,17 s ± 20,46 · mediana 25,95 | 44,37 s ± 2,04 | 28,54 s ± 2,10 |
+| CTRL-02 | ctrl-s3-ssl-only | S3 | DenyNonSSLRequests present | 26,34 s ± 1,34 | 38,57 s ± 1,06 | 26,81 s ± 2,11 |
+| CTRL-03 | ctrl-s3-versioning | S3 | Versioning = Enabled | 25,90 s ± 0,05 | 38,05 s ± 2,06 | 26,32 s ± 0,99 |
+| CTRL-04 | ctrl-s3-encryption | S3 | SSEAlgorithm = AES256 | 32,48 s ± 19,36 · mediana 26,24 | 38,98 s ± 1,43 | 27,02 s ± 1,29 |
+| CTRL-05 | ctrl-ebs-encryption-default | EC2 | EbsEncryptionByDefault = true | execução isolada (~35 s) | — | — |
 
-O `t_total` mede o **teste**, não o loop: inclui criação de bucket, esperas de CloudTrail e — no laço em duas rodadas — a espera pelas rodadas de verificação, já que o harness só encerra quando nenhuma execução está em andamento. Daí os ~12–16 s a mais; não é regressão de latência, e não é comparável ao `t_remediation`. Por medir o teste inteiro, não é classificado em quente/frio. O CTRL-05 não tem teste na `integration_test.py` (ver L6) — o valor é de uma verificação isolada.
+O `t_total` mede o **teste**, não o loop: inclui criação de bucket, esperas de CloudTrail e a espera pelas rodadas de verificação, já que o harness só encerra quando nenhuma execução está em andamento. Por isso a espera de 15 s aparecia inteira aqui (+12 s sobre o eco) e a sua remoção devolve o `t_total` ao nível do eco. Não é comparável ao `t_remediation` e, por medir o teste inteiro, não é classificado em quente/frio.
+
+O desvio alto de CTRL-01 e CTRL-04 vem de **uma única rodada** (07), com 91,7 s e 87,6 s; na mesma rodada o C7 levou 172 s para sincronizar uma remoção. As execuções do laço naquela rodada foram normais — o evento do CTRL-01 chegou ao Step Functions em 9 s e a verificação terminou em seguida —, então o tempo extra ficou fora do loop, nas esperas do harness e na entrega do DynamoDB Streams. As medianas não se alteram. O CTRL-05 não tem teste na `integration_test.py` (ver L6) — o valor é de uma verificação isolada.
 
 ### Metodologia de Medição
 
@@ -2270,7 +2286,7 @@ As métricas de cada cenário são extraídas do histórico de execuções do St
 | `t_exposure` | evento CloudTrail → recurso reconvergido (fim da execução) |
 | `t_classification` | duração da execução para recursos já conformes (sem remediação) |
 | `t_escalation` | início da execução → mensagem na fila de escalação |
-| `t_verified` | evento CloudTrail → fim da rodada de verificação que confirma `S_nominal`. Inclui a espera de consistência de 15 s da própria rodada, portanto é um limite superior de quando a convergência foi *confirmada*, não de quando o recurso convergiu |
+| `t_verified` | evento CloudTrail → fim da rodada de verificação que confirma `S_nominal`. É quando a convergência foi *confirmada*; o recurso já tinha convergido no fim da remediação (`t_exposure`). A rodada lê imediatamente, sem espera (ver *Consistência de leitura*) |
 
 **Alinhamento de relógio**: `t_detection` e `t_exposure` subtraem um timestamp do runner de um timestamp da AWS (`startDate`/`stopDate` do Step Functions). Os dois relógios são independentes, e qualquer desvio entra direto no resultado — um runner adiantado faz o sistema parecer mais rápido do que é, enviesando H1/H3 a favor da própria hipótese. Medição real neste ambiente (WSL2): **+0,9s adiantado**, o que subestimaria `t_detection` em ~11%.
 
@@ -2287,56 +2303,67 @@ Duas decisões afetam a interpretação dos números:
 
 **Ameaças à validade**: as medições foram feitas em conta e região únicas (`us-east-1`), com violações sintéticas induzidas pelo próprio runner, sobre 5 controles — e apenas o S3 tem cobertura repetida (ver L6).
 
-A variância de `t_remediation` no regime quente é pequena (desvio 0,10 s sobre 6,20 s, ou 1,6%) e o cold start **não** se espalha pela amostra: aparece como observação isolada (1 amostra fria em 30 no conjunto atual, nenhuma no anterior), por isso é reportado em separado em vez de diluído na média. Frio e quente são classificados por evidência de `Init Duration` na invocação exata, não por duração — ver *Síntese por Hipótese*. A hipótese inicial de cold start como fonte principal da dispersão foi **refutada** (ver L10). A dispersão relevante está em `t_detection` (desvio 1,85 s), fora do controle do sistema.
+A variância de `t_remediation` no regime quente **depende do ambiente de execução** em que a invocação do Execute cai (L12). Na série atual, um dos containers do Execute remediou em **5,08 s** ± 0,08 (n = 17) e os outros dois em **6,24 s** ± 0,10 (n = 12) — a mesma faixa das duas séries anteriores, em que nenhuma amostra caiu na faixa rápida. Dentro de cada tipo de container a variância é pequena (~1,6%); a média agregada da série (5,56 s ± 0,59) mistura dois regimes e **não** deve ser lida como melhoria do sistema. Comparações entre séries são feitas dentro do mesmo tipo de container.
+
+O cold start também não se espalha pela amostra: aparece como observação isolada (1 amostra fria em 30 em cada série do laço explícito, nenhuma na do eco), por isso é reportado em separado em vez de diluído na média. Frio e quente são classificados por evidência de `Init Duration` na invocação exata, não por duração — ver *Síntese por Hipótese*. A hipótese inicial de cold start como fonte principal da dispersão foi **refutada** (ver L10). A dispersão relevante do sistema está em `t_detection` (desvio 1,21 s), fora do seu controle.
+
+**Janelas de rodada**: cada rodada é delimitada pela duração registrada no `benchmark.log`, e não pelo fim da rodada anterior. Uma tentativa que falhou entre duas rodadas (token expirado) deixou um bucket cujas execuções casavam com o prefixo do cenário; a conferência de duração do classificador detectou a divergência (6,25 s contra 5,21 s gravados) antes de qualquer número ser publicado.
 
 ### Síntese por Hipótese
 
-> **Base**: 10 execuções completas da suíte com o laço em duas rodadas (`results/two-round/`, 120/120 cenários aprovados), comparadas às 10 anteriores a ele, quando a confirmação acontecia por eco do CloudTrail (`results/`).
+> **Base**: 10 execuções completas da suíte com o laço em duas rodadas e **leitura imediata na verificação** (`results/no-wait/`, 120/120 cenários aprovados), comparadas às 10 com espera de 15 s na verificação (`results/two-round/`) e às 10 do laço por eco do CloudTrail (`results/`).
 >
-> **Frio e quente são separados por evidência, não por um corte de duração.** Uma amostra é fria quando alguma Lambda que a atendeu teve `Init Duration` na linha REPORT *daquela* invocação — ligação exata: histórico da execução → `RequestId` → CloudWatch (`scripts/classify_cold_starts.py`, que também confere a duração de cada execução contra o valor gravado na rodada). Foram classificadas 60 amostras por conjunto: **1 fria** no atual — C1 na rodada 01, com Analyze e Execute em containers novos (init 0,56 s e 0,61 s) após horas sem tráfego — e **nenhuma** no anterior. Métricas que terminam antes de a execução começar (`t_detection`, disparo do Scheduler) não recebem classe; CTRL-* e C7 medem o teste inteiro e ficam sem classificação.
+> **Frio e quente são separados por evidência, não por um corte de duração.** Uma amostra é fria quando alguma Lambda que a atendeu teve `Init Duration` na linha REPORT *daquela* invocação — ligação exata: histórico da execução → `RequestId` → CloudWatch (`scripts/classify_cold_starts.py`, que também confere a duração de cada execução contra o valor gravado na rodada). Foram classificadas 60 amostras por série: **1 fria** na atual — C1 na rodada 01, com Analyze e Execute em containers novos (init 0,57 s e 0,50 s) —, 1 fria na de 15 s (também C1 da rodada 01) e **nenhuma** na do eco. Métricas que terminam antes de a execução começar (`t_detection`, disparo do Scheduler) não recebem classe; CTRL-* e C7 medem o teste inteiro e ficam sem classificação.
 >
 > Com uma única amostra fria, ela é reportada como **observação única**: sem desvio nem intervalo, que não teriam significado com n = 1.
+>
+> **Quente não é um regime homogêneo.** Nas 280 invocações do Execute da série de 15 s, distribuídas em 2 containers, nenhuma durou menos de 4,8 s. Na série atual, 90 das 251 invocações ficaram abaixo disso — **todas no mesmo container**; outro container da mesma série nunca foi rápido. O atraso fica antes da primeira escrita: o CloudTrail registra o `PutBucketPublicAccessBlock` 4,19 s após o início da invocação numa amostra rápida e 5,14 s numa lenta. O tempo ocioso do container não explica a diferença (há invocações rápidas em todas as faixas de ociosidade), e a remoção da espera não pode explicá-la: a espera ficava na rodada de verificação, que roda depois da detecção e nunca invoca o Execute. A explicação compatível com os dados é o hardware em que a Lambda posiciona o container, que a AWS não expõe (L12). Por isso H1 e H3 são comparadas **por tipo de container**.
 
 **H1 — Redução do MTTR** (`t_remediation`; C1 · C3 · C5)
 
-| regime | atual (duas rodadas) | anterior (eco) |
-|---|---|---|
-| **quente** | **6,20 s** ± 0,10 · IC 95% [6,16 · 6,24] · mediana 6,19 · faixa 5,93–6,42 · n = 29 | 6,03 s ± 0,11 · IC 95% [5,98 · 6,07] · n = 30 |
-| **frio** | **14,78 s** · observação única (n = 1) | nenhuma amostra fria |
-| total | 6,49 s ± 1,57 · IC 95% [5,90 · 7,07] · mediana 6,20 · n = 30 | 6,03 s ± 0,11 · n = 30 |
+| regime | atual (leitura imediata) | espera de 15 s | eco |
+|---|---|---|---|
+| **quente, container lento** | **6,24 s** ± 0,10 · IC 95% [6,18 · 6,30] · n = 12 | 6,20 s ± 0,10 · IC 95% [6,16 · 6,24] · n = 29 | 6,03 s ± 0,11 · IC 95% [5,98 · 6,07] · n = 30 |
+| **quente, container rápido** | **5,08 s** ± 0,08 · IC 95% [5,04 · 5,12] · n = 17 | nenhuma amostra | nenhuma amostra |
+| quente, agregado | 5,56 s ± 0,59 · IC 95% [5,34 · 5,79] · mediana 5,17 · n = 29 | = container lento | = container lento |
+| **frio** | **14,56 s** · observação única (n = 1) | 14,78 s · observação única | nenhuma amostra fria |
+| total | 5,86 s ± 1,74 · mediana 5,17 · n = 30 | 6,49 s ± 1,57 · mediana 6,20 · n = 30 | 6,03 s ± 0,11 · n = 30 |
 
-- **Concordância entre rotas independentes**, regime quente: C1 **6,19 s** · C3 **6,24 s** · C5 **6,18 s**. Três caminhos distintos — violação via console, expiração de exceção reavaliada pelo Scheduler, violação originada por IaC externo — convergem dentro de 0,06 s. Não é um caminho otimizado: é o custo do loop
-- **+0,18 s no regime quente em relação ao anterior**, atribuído e não presumido: é o estado `ScheduleVerification`, medido no histórico de execução em **0,156 s** (0,137–0,169 s, n = 12). O resíduo cabe no erro padrão
-- **O desvio total de 1,57 s é inteiramente a amostra fria** — a mediana só passa de 6,01 para 6,20 s. Reportar o total sem a separação confundiria a composição da amostra com o comportamento do sistema
-- **Custo de container frio**: a amostra fria levou 8,6 s a mais que a mediana quente. Os dois Execute frios daquela rodada duraram ~10,6 s contra ~5,3 s quentes — o `Init Duration` é só ~0,6 s; o grosso é o download do cache de provider dentro do handler. É raro: 2 das 28 invocações do Execute naquela rodada, e só depois de ociosidade longa
+- **A remoção da espera não mudou a remediação**: no mesmo tipo de container, 6,24 s contra 6,20 s, com intervalos sobrepostos. É o esperado — a espera ficava na rodada de verificação, fora da execução que o `t_remediation` mede
+- **Concordância entre rotas independentes**, dentro de cada tipo de container: lento C1 6,17 · C3 6,34 · C5 6,28 s; rápido C1 5,14 · C3 5,03 · C5 5,11 s. Três caminhos distintos — violação via console, expiração de exceção reavaliada pelo Scheduler, violação originada por IaC externo — convergem dentro de ~0,2 s. Não é um caminho otimizado: é o custo do loop
+- **+0,18 s do laço explícito sobre o eco**, no container lento, atribuído e não presumido: é o estado `ScheduleVerification`, medido no histórico de execução em **0,156 s** (0,137–0,169 s, n = 12). O resíduo cabe no erro padrão
+- **A diferença entre containers (~1,1 s) é maior que qualquer mudança feita no sistema** entre as séries. Reportar só o agregado atribuiria ao sistema uma melhoria de 0,64 s que é do posicionamento do container
+- **Custo de container frio**: ~8,3–8,6 s acima da média quente do container lento, nas duas séries do laço explícito (14,56 contra 6,24 s; 14,78 contra 6,20 s). O `Init Duration` é só ~0,5–0,6 s; o grosso, como medido na série de 15 s, é o download do cache de provider dentro do handler. É raro — uma amostra por série, na primeira rodada
 - Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual
-- Redução: **ordens de grandeza** (segundos vs. dias), em qualquer dos dois regimes
+- Redução: **ordens de grandeza** (segundos vs. dias), em qualquer regime
 
 **H2 — Rastreabilidade**
 - 100% dos cenários com todos os campos obrigatórios no `violations_log`
 - Ciclo completo de exceção documentado com 3 registros consecutivos (C3): S_exception → S_violation → S_nominal
 - Escalação com `github_issue_id` persistido no violations_log (C4)
 - `state=S_violation` preservado mesmo após falha de remediação (C4)
-- Com o laço em duas rodadas, a confirmação `S_nominal` é gravada **ligada à violação que verifica** (`verifies_violation_id`, `origin_execution`), em vez de uma linha solta associada só por recurso e horário. Nenhuma rodada de verificação escalou nas 10 execuções: toda remediação convergiu
+- Com o laço em duas rodadas, a confirmação `S_nominal` é gravada **ligada à violação que verifica** (`verifies_violation_id`, `origin_execution`), em vez de uma linha solta associada só por recurso e horário. Nenhuma rodada de verificação escalou nas 20 execuções do laço explícito: 563 leituras de controle, todas `verified`, com e sem espera
 
 **H3 — Tempo de exposição** (`t_exposure`; C1 · C5)
 
-| regime | atual (duas rodadas) | anterior (eco) |
-|---|---|---|
-| **quente** | **13,90 s** ± 1,87 · IC 95% [13,00 · 14,80] · mediana 13,91 · faixa 9,89–16,31 · n = 19 | 14,15 s ± 1,48 · IC 95% [13,46 · 14,84] · n = 20 |
-| **frio** | **20,06 s** · observação única (n = 1) | nenhuma amostra fria |
-| total | 14,21 s ± 2,28 · IC 95% [13,14 · 15,28] · mediana 14,00 · n = 20 | 14,15 s ± 1,48 · n = 20 |
+| regime | atual (leitura imediata) | espera de 15 s | eco |
+|---|---|---|---|
+| **quente, container lento** | **14,16 s** ± 0,73 · IC 95% [13,60 · 14,72] · n = 9 | 13,90 s ± 1,87 · IC 95% [13,00 · 14,80] · n = 19 | 14,15 s ± 1,48 · IC 95% [13,46 · 14,84] · n = 20 |
+| **quente, container rápido** | **11,75 s** ± 1,31 · IC 95% [10,82 · 12,69] · n = 10 | nenhuma amostra | nenhuma amostra |
+| quente, agregado | 12,89 s ± 1,62 · IC 95% [12,11 · 13,67] · mediana 13,21 · n = 19 | = container lento | = container lento |
+| **frio** | **20,98 s** · observação única (n = 1) | 20,06 s · observação única | nenhuma amostra fria |
+| total | 13,30 s ± 2,40 · mediana 13,27 · n = 20 | 14,21 s ± 2,28 · n = 20 | 14,15 s ± 1,48 · n = 20 |
 
-- **Detecção** (`t_detection`, sem classe — termina antes de qualquer Lambda): atual **7,59 s** ± 1,85 · IC 95% [6,73 · 8,46]; anterior 8,13 s ± 1,46 · IC 95% [7,45 · 8,81]. Os intervalos se sobrepõem; é latência de entrega do CloudTrail, fora do sistema, e a queda não deve ser lida como melhoria
-- **Toda a dispersão do regime quente está na detecção, não no loop**: desvio de 1,85 s na detecção contra 0,10 s na remediação. A decomposição fecha exatamente — `t_detection + t_remediation = t_exposure` em todas as execuções
+- **Detecção** (`t_detection`, sem classe — termina antes de qualquer Lambda): atual **7,22 s** ± 1,21 · IC 95% [6,65 · 7,78]; espera de 15 s 7,59 s ± 1,85; eco 8,13 s ± 1,46. Os intervalos se sobrepõem; é latência de entrega do CloudTrail, fora do sistema
+- **No mesmo tipo de container, a exposição não mudou em três séries** (14,16 · 13,90 · 14,15 s). A dispersão restante está na detecção, não no loop: desvio de 1,21 s na detecção contra 0,10 s na remediação por tipo de container. A decomposição fecha exatamente — `t_detection + t_remediation = t_exposure` em todas as execuções
 - Consequência para otimização: não há folga na remediação. Reduzir `t_exposure` de forma significativa exigiria trocar o Monitor (ex: EventBridge nativo em vez de CloudTrail), não otimizar Analyze ou Execute
-- **Convergência verificada** (`t_verified`; C1 · C5 — do evento ao `S_nominal` da rodada de verificação): quente **29,26 s** ± 1,88 · IC 95% [28,35 · 30,16] · n = 19; frio **35,42 s** (observação única); total 29,57 s ± 2,29. Fica ~15,4 s acima da exposição, e 15 s disso são a espera de consistência escolhida para a rodada de verificação — uma premissa de projeto, não uma medida do sistema
-- Janela de risco pós-expiração de exceção (C3, todas as 10 amostras quentes): **54,14 s** ± 18,66 (anterior 58,55 s ± 13,73) — buffer de 30 s do Scheduler, mais o atraso de entrega dele, mais a execução
-- **Atraso de entrega do Scheduler** (sem classe): agendado para `valid_until + 30s`, dispara em média **17,9 s** depois disso (faixa 0,1–48,1 s, n = 10; anterior 22,5 s, faixa 1,1–40,1 s). É a principal fonte da dispersão do C3. O mecanismo é **limitado**, não determinístico — ver a ressalva em *Expiração de Exceções*
+- **Convergência verificada** (`t_verified`; C1 · C5 — do evento ao `S_nominal` da rodada de verificação): quente **13,15 s** ± 1,63 · IC 95% [12,36 · 13,93] · n = 19 (container lento 14,42 s ± 0,73; rápido 12,00 s ± 1,32); frio **21,33 s** (observação única). Fica **0,26 s** acima da exposição — o custo da própria rodada de verificação (início da execução, Analyze, registro). Com a espera eram 29,26 s ± 1,88, 15,4 s acima da exposição. Da queda de 16,1 s, 15,1 s são a espera removida (a distância até a exposição foi de 15,4 para 0,26 s) e ~1 s é a proporção de amostras no container rápido
+- Janela de risco pós-expiração de exceção (C3, todas as 10 amostras quentes): **64,94 s** ± 10,27 (espera de 15 s: 54,14 s ± 18,66; eco 58,55 s ± 13,73) — buffer de 30 s do Scheduler, mais o atraso de entrega dele, mais a execução. A diferença entre as séries é do Scheduler, não do sistema
+- **Atraso de entrega do Scheduler** (sem classe): agendado para `valid_until + 30s`, dispara em média **29,5 s** depois disso nesta série (faixa 13,1–40,1 s, n = 10); 17,9 s (0,1–48,1 s) na série de 15 s e 22,5 s (1,1–40,1 s) na do eco. A média muda mais entre séries do que qualquer alteração do sistema — o mecanismo é **limitado**, não determinístico; ver a ressalva em *Expiração de Exceções*
 
 **Custo operacional do laço**
-- **Execuções por rodada da suíte: 48,5 → 36,0 (−26%).** O ganho estrutural é maior do que isso: um incidente com N controles remediados custava 1 + N execuções e agora custa **no máximo 2**, qualquer que seja N. A redução na suíte é menor porque vários cenários não remedeiam nada (C2, C4, C6, C7)
-- **Duração de uma rodada da suíte: ~530 s → ~660 s**, e `t_total` das CTRL-* de 26–29 s para 38–44 s. Ambos vêm do harness, que espera as rodadas de verificação terminarem (`wait_for_executions` exige nenhuma execução em andamento) — medem o teste, não a latência de remediação
+- **Execuções por rodada da suíte: 48,5 (eco) → 36,0 (espera de 15 s) → 35,9 (leitura imediata).** A espera não alterava a contagem. O ganho estrutural é maior do que a redução na suíte: um incidente com N controles remediados custava 1 + N execuções e agora custa **no máximo 2**, qualquer que seja N. A redução é menor porque vários cenários não remedeiam nada (C2, C4, C6, C7)
+- **Duração de uma rodada da suíte: ~530 s (eco) → ~660 s (espera de 15 s) → 508 s de mediana (leitura imediata)**; 8 das 10 rodadas ficaram entre 493 e 515 s, e as rodadas 07 e 08 levaram 991 s e 881 s com o tempo extra fora do loop. O `t_total` das CTRL-* volta a ~26 s de mediana. Os valores medem o teste — o harness espera as rodadas de verificação terminarem —, não a latência de remediação
 
 ## Limitações Conhecidas e Trabalhos Futuros
 
@@ -2344,7 +2371,7 @@ Esta seção registra lacunas **identificadas e não fechadas**, com a justifica
 
 ### L1. Ausência de `Retry`/`Catch` nas escritas do Step Functions
 
-**O que**: sete estados de escrita — `RegisterNominal`, `RegisterException`, `RegisterViolation`, `UpdateLogSuccess`, `UpdateLogFailed`, `EnqueueEscalation` e `ControlErrorEscalation` — não declaram `Retry` nem `Catch`. O `ProcessResults` (Map) também não declara `Catch`.
+**O que**: treze estados de escrita não declaram `Retry` nem `Catch`. No Map: `RegisterNominal`, `RegisterException`, `RegisterViolation`, `UpdateLogSuccess`, `UpdateLogFailed`, `EnqueueEscalation`, `ControlErrorEscalation` e, desde o laço em duas rodadas, `RegisterVerified` e `NonConvergenceEscalation`. No nível superior, os próprios estados de escalação: `RequestedControlNotFound`, `AnalyzeFailedEscalation`, `QueryControlsFailedEscalation` e `VerificationNotScheduledEscalation` — uma falha transitória neles faz a escalação se perder. `RegisterNonConvergence` e `RegisterError` têm `Catch`, mas não `Retry`. O `ProcessResults` (Map) também não declara `Catch`.
 
 **Consequência**: uma falha transitória de DynamoDB em `RegisterViolation` faz a iteração falhar; sem `Catch` no Map, a execução termina `FAILED` sem remediação e sem escalação. Com `MaxConcurrency=1`, os controles seguintes daquela avaliação não chegam a ser processados — num evento `CreateBucket` são 4 controles.
 
@@ -2392,6 +2419,8 @@ Isso afeta apenas `t_detection`, a única métrica que cruza os dois relógios n
 
 `wait_for_executions` lista as 15 execuções mais recentes e filtra por horário de início. A própria propriedade de convergência do loop faz cada remediação gerar novos eventos CloudTrail e, portanto, novas execuções — foram observadas 36 execuções numa única rodada da suíte. Cenários cuja verificação demore o suficiente podem ter sua execução empurrada para fora dessa janela de 15, produzindo falha de teste sem falha de sistema.
 
+**Parcialmente mitigado.** As asserções das rodadas de verificação (C1, C3, C5) usam `executions_for`, que pagina e filtra pela entrada da execução em vez de olhar só as 15 mais recentes, e o eco filtrado reduziu a pressão sobre a janela (36 execuções por rodada da suíte, contra 48,5). As outras nove chamadas de `wait_for_executions` ainda usam a janela de 15.
+
 O cenário C4 foi corrigido por não precisar de busca (acompanha o `executionArn` devolvido pelo `StartExecution`). Os cenários disparados por CloudTrail não têm essa opção: a correção seria paginar a listagem ou correlacionar pela entrada da execução em vez do horário.
 
 ### L10. Correlação entre métrica e execução (corrigido, com lição residual)
@@ -2420,3 +2449,18 @@ Hoje a premissa vale por inspeção: o `remediation.tf` do ssl-only gera exatame
 1. **Teste de contrato por controle** — *implementado* em `tests/contract/test_remediation_contract.py`. Para cada controle, deriva o estado remediado do próprio `remediation.tf` (sem fixture transcrita à mão), converte-o para o formato que a API devolve ao `fetch_config` e avalia a política com a **mesma versão do OPA do layer** (1.4.2, lida do `build_analyze.sh`). Cada controle carrega também uma variante quebrada que precisa ser negada, para que o teste não passe por vacuidade, e a suíte falha se um controle novo chegar sem contrato. Validado por mutação: trocar o `status` do versioning para `"Suspended"` derruba exatamente o teste daquele controle. Execução: `scripts/test_policies.sh`. A convergência deixa de ser propriedade inspecionada e passa a ser testada — para os estados que a remediação produz; não cobre um processo externo que desfaça a remediação.
 2. **Disjuntor por (recurso, controle)** — antes do `InvokeExecute`, consultar o GSI `resource_arn-timestamp-index` por remediações recentes do mesmo par; acima de um limiar numa janela, escalar em vez de remediar. Exige atenção à concorrência de L6, que hoje já produz duas remediações legítimas por par.
 
+### L12. Heterogeneidade do ambiente de execução do Lambda
+
+**O que**: no regime quente, a duração do Execute depende do container em que a invocação cai. Na série `results/no-wait/`, um container executou 90 das suas 141 invocações abaixo de 4,8 s, enquanto os outros nunca ficaram abaixo disso; nas 280 invocações da série anterior, nenhuma. A diferença, ~1,1 s, fica antes da primeira escrita do `tofu` e não se correlaciona com o tempo ocioso do container. A causa provável é o hardware do host, que a AWS não expõe e não garante homogêneo.
+
+**Consequência**: médias agregadas de `t_remediation` e `t_exposure` misturam dois regimes, e uma série pode parecer mais rápida só porque mais amostras caíram no container rápido — foi o caso da série atual, cujo agregado sugeria 0,64 s de melhoria que não existe no mesmo tipo de container. Comparações entre séries precisam ser feitas por tipo de container, e o número de containers de cada tipo não é controlável pelo experimento.
+
+**Como mitigar**: reportar por tipo de container, como na *Síntese por Hipótese*; para isolar o sistema do hardware, fixar a arquitetura e forçar containers novos a cada amostra (o que troca heterogeneidade por cold start), ou aumentar o número de séries para que a proporção de containers vire parte da distribuição medida em vez de um acaso da série.
+
+### L13. Consistência de leitura demonstrada só para S3
+
+**O que**: a leitura imediata na rodada de verificação foi medida consistente em 283 de 283 casos (taxa de leitura desatualizada < ~1,1% com 95% de confiança) — para os três controles S3 que a suíte remedeia. O `ctrl-s3-encryption` nunca foi remediado nas séries, e o controle de EBS não está na suíte. Serviços com propagação conhecidamente mais lenta, como o IAM, não foram exercitados.
+
+**Consequência**: um controle novo sobre um serviço mais lento pode ser lido antes de a remediação propagar. O erro cai do lado seguro — escalação de não convergência indevida, nunca `S_nominal` falso —, mas gera ruído operacional (issues para remediações que funcionaram).
+
+**Como fechar**: quando a rodada de verificação encontrar o controle ainda violado, reavaliar com novas tentativas limitadas e espera crescente (ex.: 2, 4, 8 s) antes de registrar a não convergência. Isso preserva a leitura imediata no caminho feliz, trata a consistência eventual de forma estrutural em vez de um número fixo, e continua sem remediar na rodada de verificação. O teto das tentativas deve vir de medição por serviço, com `scripts/verification_consistency.py`.
