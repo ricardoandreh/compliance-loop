@@ -1,0 +1,3012 @@
+{
+  "runs": 10,
+  "classified": true,
+  "by_scenario": {
+    "C1": {
+      "t_detection": {
+        "all": {
+          "n": 10,
+          "mean": 7.541,
+          "sd": 0.7014817650279063,
+          "median": 7.46,
+          "min": 6.42,
+          "max": 8.74,
+          "ci95": [
+            7.039225038085798,
+            8.042774961914203
+          ]
+        }
+      },
+      "t_remediation": {
+        "all": {
+          "n": 10,
+          "mean": 6.703,
+          "sd": 2.803632762447084,
+          "median": 6.145,
+          "min": 5.09,
+          "max": 14.56,
+          "ci95": [
+            4.697541279997019,
+            8.708458720002982
+          ]
+        },
+        "warm": {
+          "n": 9,
+          "mean": 5.83,
+          "sd": 0.5186038950875707,
+          "median": 6.13,
+          "min": 5.09,
+          "max": 6.27,
+          "ci95": [
+            5.431366472642687,
+            6.228633527357313
+          ]
+        },
+        "cold": {
+          "n": 1,
+          "mean": 14.56,
+          "sd": null,
+          "median": 14.56,
+          "min": 14.56,
+          "max": 14.56,
+          "ci95": null
+        }
+      },
+      "t_exposure": {
+        "all": {
+          "n": 10,
+          "mean": 14.244,
+          "sd": 2.4561858416839897,
+          "median": 13.690000000000001,
+          "min": 12.25,
+          "max": 20.98,
+          "ci95": [
+            12.487072566375037,
+            16.000927433624963
+          ]
+        },
+        "warm": {
+          "n": 9,
+          "mean": 13.495555555555555,
+          "sd": 0.6964573050645515,
+          "median": 13.55,
+          "min": 12.25,
+          "max": 14.49,
+          "ci95": [
+            12.960212040395936,
+            14.030899070715174
+          ]
+        },
+        "cold": {
+          "n": 1,
+          "mean": 20.98,
+          "sd": null,
+          "median": 20.98,
+          "min": 20.98,
+          "max": 20.98,
+          "ci95": null
+        }
+      },
+      "t_verified": {
+        "all": {
+          "n": 10,
+          "mean": 14.51,
+          "sd": 2.484731150223075,
+          "median": 13.92,
+          "min": 12.48,
+          "max": 21.33,
+          "ci95": [
+            12.732653901458695,
+            16.287346098541306
+          ]
+        },
+        "warm": {
+          "n": 9,
+          "mean": 13.752222222222223,
+          "sd": 0.6968281312091558,
+          "median": 13.8,
+          "min": 12.48,
+          "max": 14.72,
+          "ci95": [
+            13.216593665366117,
+            14.287850779078328
+          ]
+        },
+        "cold": {
+          "n": 1,
+          "mean": 21.33,
+          "sd": null,
+          "median": 21.33,
+          "min": 21.33,
+          "max": 21.33,
+          "ci95": null
+        }
+      }
+    },
+    "C2": {
+      "t_classification": {
+        "all": {
+          "n": 10,
+          "mean": 0.48,
+          "sd": 0.058878405775518984,
+          "median": 0.47,
+          "min": 0.41,
+          "max": 0.59,
+          "ci95": [
+            0.43788385202799285,
+            0.5221161479720071
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 0.48,
+          "sd": 0.058878405775518984,
+          "median": 0.47,
+          "min": 0.41,
+          "max": 0.59,
+          "ci95": [
+            0.43788385202799285,
+            0.5221161479720071
+          ]
+        },
+        "cold": null
+      }
+    },
+    "C3": {
+      "t_scheduler_fire": {
+        "all": {
+          "n": 10,
+          "mean": 59.513,
+          "sd": 10.350040311247316,
+          "median": 61.6,
+          "min": 43.08,
+          "max": 70.08,
+          "ci95": [
+            52.10954157541788,
+            66.91645842458212
+          ]
+        }
+      },
+      "t_remediation_post_expiry": {
+        "all": {
+          "n": 10,
+          "mean": 64.937,
+          "sd": 10.270737342350623,
+          "median": 67.94999999999999,
+          "min": 48.04,
+          "max": 75.07,
+          "ci95": [
+            57.59026756058477,
+            72.28373243941522
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 64.937,
+          "sd": 10.270737342350623,
+          "median": 67.94999999999999,
+          "min": 48.04,
+          "max": 75.07,
+          "ci95": [
+            57.59026756058477,
+            72.28373243941522
+          ]
+        },
+        "cold": null
+      },
+      "t_remediation": {
+        "all": {
+          "n": 10,
+          "mean": 5.424,
+          "sd": 0.6333719286485626,
+          "median": 5.0649999999999995,
+          "min": 4.95,
+          "max": 6.39,
+          "ci95": [
+            4.970944494897148,
+            5.877055505102852
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 5.424,
+          "sd": 0.6333719286485626,
+          "median": 5.0649999999999995,
+          "min": 4.95,
+          "max": 6.39,
+          "ci95": [
+            4.970944494897148,
+            5.877055505102852
+          ]
+        },
+        "cold": null
+      },
+      "t_verified_post_expiry": {
+        "all": {
+          "n": 10,
+          "mean": 65.20400000000001,
+          "sd": 10.271444991928945,
+          "median": 68.28,
+          "min": 48.24,
+          "max": 75.34,
+          "ci95": [
+            57.85676137374157,
+            72.55123862625845
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 65.20400000000001,
+          "sd": 10.271444991928945,
+          "median": 68.28,
+          "min": 48.24,
+          "max": 75.34,
+          "ci95": [
+            57.85676137374157,
+            72.55123862625845
+          ]
+        },
+        "cold": null
+      }
+    },
+    "C4": {
+      "t_escalation": {
+        "all": {
+          "n": 10,
+          "mean": 0.5760000000000001,
+          "sd": 0.035023801430836506,
+          "median": 0.5700000000000001,
+          "min": 0.54,
+          "max": 0.65,
+          "ci95": [
+            0.5509472224294392,
+            0.601052777570561
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 0.5760000000000001,
+          "sd": 0.035023801430836506,
+          "median": 0.5700000000000001,
+          "min": 0.54,
+          "max": 0.65,
+          "ci95": [
+            0.5509472224294392,
+            0.601052777570561
+          ]
+        },
+        "cold": null
+      }
+    },
+    "C5": {
+      "t_detection": {
+        "all": {
+          "n": 10,
+          "mean": 6.891,
+          "sd": 1.5383717943909976,
+          "median": 6.87,
+          "min": 4.97,
+          "max": 8.91,
+          "ci95": [
+            5.7905915688418235,
+            7.991408431158177
+          ]
+        }
+      },
+      "t_remediation": {
+        "all": {
+          "n": 10,
+          "mean": 5.459,
+          "sd": 0.5701744372460842,
+          "median": 5.145,
+          "min": 5.03,
+          "max": 6.35,
+          "ci95": [
+            5.051150115944604,
+            5.866849884055395
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 5.459,
+          "sd": 0.5701744372460842,
+          "median": 5.145,
+          "min": 5.03,
+          "max": 6.35,
+          "ci95": [
+            5.051150115944604,
+            5.866849884055395
+          ]
+        },
+        "cold": null
+      },
+      "t_exposure": {
+        "all": {
+          "n": 10,
+          "mean": 12.349,
+          "sd": 2.0251993043209904,
+          "median": 11.965,
+          "min": 10.1,
+          "max": 15.19,
+          "ci95": [
+            10.900360342554436,
+            13.797639657445565
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 12.349,
+          "sd": 2.0251993043209904,
+          "median": 11.965,
+          "min": 10.1,
+          "max": 15.19,
+          "ci95": [
+            10.900360342554436,
+            13.797639657445565
+          ]
+        },
+        "cold": null
+      },
+      "t_verified": {
+        "all": {
+          "n": 10,
+          "mean": 12.600999999999999,
+          "sd": 2.043180799091891,
+          "median": 12.239999999999998,
+          "min": 10.31,
+          "max": 15.5,
+          "ci95": [
+            11.13949804975703,
+            14.062501950242968
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 12.600999999999999,
+          "sd": 2.043180799091891,
+          "median": 12.239999999999998,
+          "min": 10.31,
+          "max": 15.5,
+          "ci95": [
+            11.13949804975703,
+            14.062501950242968
+          ]
+        },
+        "cold": null
+      }
+    },
+    "C6": {
+      "t_classification": {
+        "all": {
+          "n": 10,
+          "mean": 0.453,
+          "sd": 0.026267851073127402,
+          "median": 0.455,
+          "min": 0.41,
+          "max": 0.5,
+          "ci95": [
+            0.43421041682207934,
+            0.4717895831779207
+          ]
+        },
+        "warm": {
+          "n": 10,
+          "mean": 0.453,
+          "sd": 0.026267851073127402,
+          "median": 0.455,
+          "min": 0.41,
+          "max": 0.5,
+          "ci95": [
+            0.43421041682207934,
+            0.4717895831779207
+          ]
+        },
+        "cold": null
+      }
+    },
+    "C7": {
+      "t_sync_insert": {
+        "all": {
+          "n": 10,
+          "mean": 18.118,
+          "sd": 7.906483696590061,
+          "median": 15.605,
+          "min": 15.58,
+          "max": 40.62,
+          "ci95": [
+            12.462435231935187,
+            23.77356476806481
+          ]
+        }
+      },
+      "t_sync_delete": {
+        "all": {
+          "n": 10,
+          "mean": 31.289,
+          "sd": 49.51488405856701,
+          "median": 15.575,
+          "min": 15.55,
+          "max": 172.21,
+          "ci95": [
+            -4.129353407497703,
+            66.7073534074977
+          ]
+        }
+      }
+    },
+    "CTRL-01": {
+      "t_total": {
+        "all": {
+          "n": 10,
+          "mean": 34.166,
+          "sd": 20.460386767279516,
+          "median": 25.955,
+          "min": 25.87,
+          "max": 91.73,
+          "ci95": [
+            19.530537892880044,
+            48.801462107119946
+          ]
+        }
+      }
+    },
+    "CTRL-02": {
+      "t_total": {
+        "all": {
+          "n": 10,
+          "mean": 26.336,
+          "sd": 1.3356080596076412,
+          "median": 25.86,
+          "min": 25.82,
+          "max": 30.11,
+          "ci95": [
+            25.380629929595866,
+            27.29137007040413
+          ]
+        }
+      }
+    },
+    "CTRL-03": {
+      "t_total": {
+        "all": {
+          "n": 10,
+          "mean": 25.903,
+          "sd": 0.052715167541125055,
+          "median": 25.89,
+          "min": 25.83,
+          "max": 26.02,
+          "ci95": [
+            25.86529246075385,
+            25.940707539246148
+          ]
+        }
+      }
+    },
+    "CTRL-04": {
+      "t_total": {
+        "all": {
+          "n": 10,
+          "mean": 32.484,
+          "sd": 19.356693473375614,
+          "median": 26.240000000000002,
+          "min": 26.2,
+          "max": 87.57,
+          "ci95": [
+            18.638017660029178,
+            46.329982339970826
+          ]
+        }
+      }
+    }
+  },
+  "scenarios": [
+    {
+      "id": "AUDIT",
+      "label": "Ausência de falhas inesperadas",
+      "pass": 10,
+      "total": 10,
+      "primary": null,
+      "metrics": {}
+    },
+    {
+      "id": "C1",
+      "label": "Violação simples via console",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_remediation",
+      "metrics": {
+        "t_detection": {
+          "values": [
+            6.42,
+            8.41,
+            7.64,
+            7.28,
+            7.66,
+            8.74,
+            7.1,
+            7.08,
+            8.03,
+            7.05
+          ],
+          "n": 10,
+          "mean": 7.541,
+          "sd": 0.7014817650279063,
+          "median": 7.46,
+          "min": 6.42,
+          "max": 8.74,
+          "ci95": [
+            7.039225038085798,
+            8.042774961914203
+          ]
+        },
+        "t_exposure": {
+          "values": [
+            20.98,
+            14.49,
+            12.78,
+            13.55,
+            13.84,
+            13.83,
+            13.32,
+            13.21,
+            14.19,
+            12.25
+          ],
+          "n": 10,
+          "mean": 14.244,
+          "sd": 2.4561858416839897,
+          "median": 13.690000000000001,
+          "min": 12.25,
+          "max": 20.98,
+          "ci95": [
+            12.487072566375037,
+            16.000927433624963
+          ]
+        },
+        "t_remediation": {
+          "values": [
+            14.56,
+            6.08,
+            5.13,
+            6.27,
+            6.18,
+            5.09,
+            6.22,
+            6.13,
+            6.16,
+            5.21
+          ],
+          "n": 10,
+          "mean": 6.703,
+          "sd": 2.803632762447084,
+          "median": 6.145,
+          "min": 5.09,
+          "max": 14.56,
+          "ci95": [
+            4.697541279997019,
+            8.708458720002982
+          ]
+        },
+        "t_verified": {
+          "values": [
+            21.33,
+            14.72,
+            13.05,
+            13.8,
+            14.14,
+            14.04,
+            13.61,
+            13.47,
+            14.46,
+            12.48
+          ],
+          "n": 10,
+          "mean": 14.51,
+          "sd": 2.484731150223075,
+          "median": 13.92,
+          "min": 12.48,
+          "max": 21.33,
+          "ci95": [
+            12.732653901458695,
+            16.287346098541306
+          ]
+        }
+      }
+    },
+    {
+      "id": "C2",
+      "label": "Violação com exceção ativa",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_classification",
+      "metrics": {
+        "t_classification": {
+          "values": [
+            0.42,
+            0.59,
+            0.5,
+            0.45,
+            0.49,
+            0.45,
+            0.43,
+            0.55,
+            0.41,
+            0.51
+          ],
+          "n": 10,
+          "mean": 0.48,
+          "sd": 0.058878405775518984,
+          "median": 0.47,
+          "min": 0.41,
+          "max": 0.59,
+          "ci95": [
+            0.43788385202799285,
+            0.5221161479720071
+          ]
+        }
+      }
+    },
+    {
+      "id": "C3",
+      "label": "Exceção expira → remediação",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_remediation",
+      "metrics": {
+        "t_remediation": {
+          "values": [
+            4.96,
+            5.04,
+            6.39,
+            5.09,
+            5.17,
+            6.3,
+            4.99,
+            5.03,
+            4.95,
+            6.32
+          ],
+          "n": 10,
+          "mean": 5.424,
+          "sd": 0.6333719286485626,
+          "median": 5.0649999999999995,
+          "min": 4.95,
+          "max": 6.39,
+          "ci95": [
+            4.970944494897148,
+            5.877055505102852
+          ]
+        },
+        "t_remediation_post_expiry": {
+          "values": [
+            48.04,
+            52.12,
+            69.49,
+            63.37,
+            74.28,
+            66.41,
+            75.07,
+            73.13,
+            74.08,
+            53.38
+          ],
+          "n": 10,
+          "mean": 64.937,
+          "sd": 10.270737342350623,
+          "median": 67.94999999999999,
+          "min": 48.04,
+          "max": 75.07,
+          "ci95": [
+            57.59026756058477,
+            72.28373243941522
+          ]
+        },
+        "t_scheduler_fire": {
+          "values": [
+            43.08,
+            47.08,
+            63.09,
+            58.28,
+            69.11,
+            60.11,
+            70.08,
+            68.1,
+            69.13,
+            47.07
+          ],
+          "n": 10,
+          "mean": 59.513,
+          "sd": 10.350040311247316,
+          "median": 61.6,
+          "min": 43.08,
+          "max": 70.08,
+          "ci95": [
+            52.10954157541788,
+            66.91645842458212
+          ]
+        },
+        "t_verified_post_expiry": {
+          "values": [
+            48.24,
+            52.36,
+            69.83,
+            63.6,
+            74.46,
+            66.73,
+            75.34,
+            73.4,
+            74.34,
+            53.74
+          ],
+          "n": 10,
+          "mean": 65.20400000000001,
+          "sd": 10.271444991928945,
+          "median": 68.28,
+          "min": 48.24,
+          "max": 75.34,
+          "ci95": [
+            57.85676137374157,
+            72.55123862625845
+          ]
+        }
+      }
+    },
+    {
+      "id": "C4",
+      "label": "Falha de remediação → escalação",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_escalation",
+      "metrics": {
+        "t_escalation": {
+          "values": [
+            0.65,
+            0.58,
+            0.54,
+            0.55,
+            0.6,
+            0.6,
+            0.55,
+            0.54,
+            0.59,
+            0.56
+          ],
+          "n": 10,
+          "mean": 0.5760000000000001,
+          "sd": 0.035023801430836506,
+          "median": 0.5700000000000001,
+          "min": 0.54,
+          "max": 0.65,
+          "ci95": [
+            0.5509472224294392,
+            0.601052777570561
+          ]
+        }
+      }
+    },
+    {
+      "id": "C5",
+      "label": "Violação originada por IaC",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_remediation",
+      "metrics": {
+        "t_detection": {
+          "values": [
+            5.07,
+            5.32,
+            8.91,
+            8.84,
+            6.24,
+            8.23,
+            4.97,
+            7.74,
+            7.5,
+            6.09
+          ],
+          "n": 10,
+          "mean": 6.891,
+          "sd": 1.5383717943909976,
+          "median": 6.87,
+          "min": 4.97,
+          "max": 8.91,
+          "ci95": [
+            5.7905915688418235,
+            7.991408431158177
+          ]
+        },
+        "t_exposure": {
+          "values": [
+            10.11,
+            10.41,
+            15.08,
+            15.19,
+            11.27,
+            14.55,
+            10.1,
+            12.86,
+            12.66,
+            11.26
+          ],
+          "n": 10,
+          "mean": 12.349,
+          "sd": 2.0251993043209904,
+          "median": 11.965,
+          "min": 10.1,
+          "max": 15.19,
+          "ci95": [
+            10.900360342554436,
+            13.797639657445565
+          ]
+        },
+        "t_remediation": {
+          "values": [
+            5.04,
+            5.09,
+            6.17,
+            6.35,
+            5.03,
+            6.32,
+            5.13,
+            5.13,
+            5.16,
+            5.17
+          ],
+          "n": 10,
+          "mean": 5.459,
+          "sd": 0.5701744372460842,
+          "median": 5.145,
+          "min": 5.03,
+          "max": 6.35,
+          "ci95": [
+            5.051150115944604,
+            5.866849884055395
+          ]
+        },
+        "t_verified": {
+          "values": [
+            10.31,
+            10.64,
+            15.32,
+            15.5,
+            11.53,
+            14.79,
+            10.32,
+            13.12,
+            12.95,
+            11.53
+          ],
+          "n": 10,
+          "mean": 12.600999999999999,
+          "sd": 2.043180799091891,
+          "median": 12.239999999999998,
+          "min": 10.31,
+          "max": 15.5,
+          "ci95": [
+            11.13949804975703,
+            14.062501950242968
+          ]
+        }
+      }
+    },
+    {
+      "id": "C6",
+      "label": "Recurso já conforme",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_classification",
+      "metrics": {
+        "t_classification": {
+          "values": [
+            0.46,
+            0.44,
+            0.48,
+            0.42,
+            0.45,
+            0.5,
+            0.41,
+            0.46,
+            0.46,
+            0.45
+          ],
+          "n": 10,
+          "mean": 0.453,
+          "sd": 0.026267851073127402,
+          "median": 0.455,
+          "min": 0.41,
+          "max": 0.5,
+          "ci95": [
+            0.43421041682207934,
+            0.4717895831779207
+          ]
+        }
+      }
+    },
+    {
+      "id": "C7",
+      "label": "Novo controle → EventBridge",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_sync_insert",
+      "metrics": {
+        "t_sync_delete": {
+          "values": [
+            15.58,
+            15.57,
+            15.6,
+            15.56,
+            16.11,
+            15.56,
+            172.21,
+            15.56,
+            15.55,
+            15.59
+          ],
+          "n": 10,
+          "mean": 31.289,
+          "sd": 49.51488405856701,
+          "median": 15.575,
+          "min": 15.55,
+          "max": 172.21,
+          "ci95": [
+            -4.129353407497703,
+            66.7073534074977
+          ]
+        },
+        "t_sync_insert": {
+          "values": [
+            15.6,
+            15.68,
+            15.69,
+            15.58,
+            15.61,
+            15.59,
+            40.62,
+            15.6,
+            15.6,
+            15.61
+          ],
+          "n": 10,
+          "mean": 18.118,
+          "sd": 7.906483696590061,
+          "median": 15.605,
+          "min": 15.58,
+          "max": 40.62,
+          "ci95": [
+            12.462435231935187,
+            23.77356476806481
+          ]
+        }
+      }
+    },
+    {
+      "id": "CTRL-01",
+      "label": "ctrl-s3-public-block",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_total",
+      "metrics": {
+        "t_total": {
+          "values": [
+            30.01,
+            25.89,
+            25.97,
+            25.87,
+            25.94,
+            29.06,
+            91.73,
+            25.89,
+            25.89,
+            35.41
+          ],
+          "n": 10,
+          "mean": 34.166,
+          "sd": 20.460386767279516,
+          "median": 25.955,
+          "min": 25.87,
+          "max": 91.73,
+          "ci95": [
+            19.530537892880044,
+            48.801462107119946
+          ]
+        }
+      }
+    },
+    {
+      "id": "CTRL-02",
+      "label": "ctrl-s3-ssl-only",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_total",
+      "metrics": {
+        "t_total": {
+          "values": [
+            25.86,
+            25.92,
+            25.85,
+            25.86,
+            25.83,
+            25.9,
+            30.11,
+            26.36,
+            25.82,
+            25.85
+          ],
+          "n": 10,
+          "mean": 26.336,
+          "sd": 1.3356080596076412,
+          "median": 25.86,
+          "min": 25.82,
+          "max": 30.11,
+          "ci95": [
+            25.380629929595866,
+            27.29137007040413
+          ]
+        }
+      }
+    },
+    {
+      "id": "CTRL-03",
+      "label": "ctrl-s3-versioning",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_total",
+      "metrics": {
+        "t_total": {
+          "values": [
+            25.9,
+            25.89,
+            26.02,
+            25.83,
+            25.87,
+            25.93,
+            25.88,
+            25.95,
+            25.87,
+            25.89
+          ],
+          "n": 10,
+          "mean": 25.903,
+          "sd": 0.052715167541125055,
+          "median": 25.89,
+          "min": 25.83,
+          "max": 26.02,
+          "ci95": [
+            25.86529246075385,
+            25.940707539246148
+          ]
+        }
+      }
+    },
+    {
+      "id": "CTRL-04",
+      "label": "ctrl-s3-encryption",
+      "pass": 10,
+      "total": 10,
+      "primary": "t_total",
+      "metrics": {
+        "t_total": {
+          "values": [
+            26.22,
+            26.77,
+            26.22,
+            26.33,
+            26.22,
+            26.2,
+            87.57,
+            26.22,
+            26.83,
+            26.26
+          ],
+          "n": 10,
+          "mean": 32.484,
+          "sd": 19.356693473375614,
+          "median": 26.240000000000002,
+          "min": 26.2,
+          "max": 87.57,
+          "ci95": [
+            18.638017660029178,
+            46.329982339970826
+          ]
+        }
+      }
+    }
+  ],
+  "composition": [
+    {
+      "run": 1,
+      "C1": {
+        "detection": 6.42,
+        "remediation": 14.56,
+        "exposure": 20.98,
+        "verified": 21.33,
+        "cold": true
+      },
+      "C5": {
+        "detection": 5.07,
+        "remediation": 5.04,
+        "exposure": 10.11,
+        "verified": 10.31,
+        "cold": false
+      }
+    },
+    {
+      "run": 2,
+      "C1": {
+        "detection": 8.41,
+        "remediation": 6.08,
+        "exposure": 14.49,
+        "verified": 14.72,
+        "cold": false
+      },
+      "C5": {
+        "detection": 5.32,
+        "remediation": 5.09,
+        "exposure": 10.41,
+        "verified": 10.64,
+        "cold": false
+      }
+    },
+    {
+      "run": 3,
+      "C1": {
+        "detection": 7.64,
+        "remediation": 5.13,
+        "exposure": 12.78,
+        "verified": 13.05,
+        "cold": false
+      },
+      "C5": {
+        "detection": 8.91,
+        "remediation": 6.17,
+        "exposure": 15.08,
+        "verified": 15.32,
+        "cold": false
+      }
+    },
+    {
+      "run": 4,
+      "C1": {
+        "detection": 7.28,
+        "remediation": 6.27,
+        "exposure": 13.55,
+        "verified": 13.8,
+        "cold": false
+      },
+      "C5": {
+        "detection": 8.84,
+        "remediation": 6.35,
+        "exposure": 15.19,
+        "verified": 15.5,
+        "cold": false
+      }
+    },
+    {
+      "run": 5,
+      "C1": {
+        "detection": 7.66,
+        "remediation": 6.18,
+        "exposure": 13.84,
+        "verified": 14.14,
+        "cold": false
+      },
+      "C5": {
+        "detection": 6.24,
+        "remediation": 5.03,
+        "exposure": 11.27,
+        "verified": 11.53,
+        "cold": false
+      }
+    },
+    {
+      "run": 6,
+      "C1": {
+        "detection": 8.74,
+        "remediation": 5.09,
+        "exposure": 13.83,
+        "verified": 14.04,
+        "cold": false
+      },
+      "C5": {
+        "detection": 8.23,
+        "remediation": 6.32,
+        "exposure": 14.55,
+        "verified": 14.79,
+        "cold": false
+      }
+    },
+    {
+      "run": 7,
+      "C1": {
+        "detection": 7.1,
+        "remediation": 6.22,
+        "exposure": 13.32,
+        "verified": 13.61,
+        "cold": false
+      },
+      "C5": {
+        "detection": 4.97,
+        "remediation": 5.13,
+        "exposure": 10.1,
+        "verified": 10.32,
+        "cold": false
+      }
+    },
+    {
+      "run": 8,
+      "C1": {
+        "detection": 7.08,
+        "remediation": 6.13,
+        "exposure": 13.21,
+        "verified": 13.47,
+        "cold": false
+      },
+      "C5": {
+        "detection": 7.74,
+        "remediation": 5.13,
+        "exposure": 12.86,
+        "verified": 13.12,
+        "cold": false
+      }
+    },
+    {
+      "run": 9,
+      "C1": {
+        "detection": 8.03,
+        "remediation": 6.16,
+        "exposure": 14.19,
+        "verified": 14.46,
+        "cold": false
+      },
+      "C5": {
+        "detection": 7.5,
+        "remediation": 5.16,
+        "exposure": 12.66,
+        "verified": 12.95,
+        "cold": false
+      }
+    },
+    {
+      "run": 10,
+      "C1": {
+        "detection": 7.05,
+        "remediation": 5.21,
+        "exposure": 12.25,
+        "verified": 12.48,
+        "cold": false
+      },
+      "C5": {
+        "detection": 6.09,
+        "remediation": 5.17,
+        "exposure": 11.26,
+        "verified": 11.53,
+        "cold": false
+      }
+    }
+  ],
+  "samples": [
+    {
+      "run": 1,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 6.42,
+      "cold": null
+    },
+    {
+      "run": 1,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 14.56,
+      "cold": true
+    },
+    {
+      "run": 1,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 20.98,
+      "cold": true
+    },
+    {
+      "run": 1,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 21.33,
+      "cold": true
+    },
+    {
+      "run": 1,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.42,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 43.08,
+      "cold": null
+    },
+    {
+      "run": 1,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 48.04,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 4.96,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 48.24,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.65,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 5.07,
+      "cold": null
+    },
+    {
+      "run": 1,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 5.04,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 10.11,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 10.31,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.46,
+      "cold": false
+    },
+    {
+      "run": 1,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.6,
+      "cold": null
+    },
+    {
+      "run": 1,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 15.58,
+      "cold": null
+    },
+    {
+      "run": 1,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 30.01,
+      "cold": null
+    },
+    {
+      "run": 1,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 25.86,
+      "cold": null
+    },
+    {
+      "run": 1,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.9,
+      "cold": null
+    },
+    {
+      "run": 1,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.22,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 8.41,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.08,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 14.49,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 14.72,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.59,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 47.08,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 52.12,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 5.04,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 52.36,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.58,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 5.32,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 5.09,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 10.41,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 10.64,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.44,
+      "cold": false
+    },
+    {
+      "run": 2,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.68,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 15.57,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 25.89,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 25.92,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.89,
+      "cold": null
+    },
+    {
+      "run": 2,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.77,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 7.64,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 5.13,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 12.78,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 13.05,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.5,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 63.09,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 69.49,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.39,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 69.83,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.54,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 8.91,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.17,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 15.08,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 15.32,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.48,
+      "cold": false
+    },
+    {
+      "run": 3,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.69,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 15.6,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 25.97,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 25.85,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 26.02,
+      "cold": null
+    },
+    {
+      "run": 3,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.22,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 7.28,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.27,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 13.55,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 13.8,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.45,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 58.28,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 63.37,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 5.09,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 63.6,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.55,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 8.84,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.35,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 15.19,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 15.5,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.42,
+      "cold": false
+    },
+    {
+      "run": 4,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.58,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 15.56,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 25.87,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 25.86,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.83,
+      "cold": null
+    },
+    {
+      "run": 4,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.33,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 7.66,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.18,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 13.84,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 14.14,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.49,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 69.11,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 74.28,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 5.17,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 74.46,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.6,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 6.24,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 5.03,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 11.27,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 11.53,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.45,
+      "cold": false
+    },
+    {
+      "run": 5,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.61,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 16.11,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 25.94,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 25.83,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.87,
+      "cold": null
+    },
+    {
+      "run": 5,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.22,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 8.74,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 5.09,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 13.83,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 14.04,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.45,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 60.11,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 66.41,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.3,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 66.73,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.6,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 8.23,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.32,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 14.55,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 14.79,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.5,
+      "cold": false
+    },
+    {
+      "run": 6,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.59,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 15.56,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 29.06,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 25.9,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.93,
+      "cold": null
+    },
+    {
+      "run": 6,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.2,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 7.1,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.22,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 13.32,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 13.61,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.43,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 70.08,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 75.07,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 4.99,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 75.34,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.55,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 4.97,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 5.13,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 10.1,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 10.32,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.41,
+      "cold": false
+    },
+    {
+      "run": 7,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 40.62,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 172.21,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 91.73,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 30.11,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.88,
+      "cold": null
+    },
+    {
+      "run": 7,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 87.57,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 7.08,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.13,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 13.21,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 13.47,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.55,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 68.1,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 73.13,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 5.03,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 73.4,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.54,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 7.74,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 5.13,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 12.86,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 13.12,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.46,
+      "cold": false
+    },
+    {
+      "run": 8,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.6,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 15.56,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 25.89,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 26.36,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.95,
+      "cold": null
+    },
+    {
+      "run": 8,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.22,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 8.03,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.16,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 14.19,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 14.46,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.41,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 69.13,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 74.08,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 4.95,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 74.34,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.59,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 7.5,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 5.16,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 12.66,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 12.95,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.46,
+      "cold": false
+    },
+    {
+      "run": 9,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.6,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 15.55,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 25.89,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 25.82,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.87,
+      "cold": null
+    },
+    {
+      "run": 9,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.83,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "C1",
+      "metric": "t_detection",
+      "value": 7.05,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 5.21,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C1",
+      "metric": "t_exposure",
+      "value": 12.25,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C1",
+      "metric": "t_verified",
+      "value": 12.48,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.51,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C3",
+      "metric": "t_scheduler_fire",
+      "value": 47.07,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "C3",
+      "metric": "t_remediation_post_expiry",
+      "value": 53.38,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.32,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C3",
+      "metric": "t_verified_post_expiry",
+      "value": 53.74,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.56,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C5",
+      "metric": "t_detection",
+      "value": 6.09,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 5.17,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C5",
+      "metric": "t_exposure",
+      "value": 11.26,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C5",
+      "metric": "t_verified",
+      "value": 11.53,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.45,
+      "cold": false
+    },
+    {
+      "run": 10,
+      "scenario": "C7",
+      "metric": "t_sync_insert",
+      "value": 15.61,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "C7",
+      "metric": "t_sync_delete",
+      "value": 15.59,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "CTRL-01",
+      "metric": "t_total",
+      "value": 35.41,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "CTRL-02",
+      "metric": "t_total",
+      "value": 25.85,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "CTRL-03",
+      "metric": "t_total",
+      "value": 25.89,
+      "cold": null
+    },
+    {
+      "run": 10,
+      "scenario": "CTRL-04",
+      "metric": "t_total",
+      "value": 26.26,
+      "cold": null
+    }
+  ],
+  "hypotheses": {
+    "H1": {
+      "metric": "t_remediation",
+      "scenarios": [
+        "C1",
+        "C3",
+        "C5"
+      ],
+      "all": {
+        "n": 30,
+        "mean": 5.862,
+        "sd": 1.7409359353619198,
+        "median": 5.17,
+        "min": 4.95,
+        "max": 14.56,
+        "ci95": [
+          5.211996829776078,
+          6.512003170223922
+        ]
+      },
+      "per_scenario": {
+        "C1": {
+          "n": 10,
+          "mean": 6.703,
+          "sd": 2.803632762447084,
+          "median": 6.145,
+          "min": 5.09,
+          "max": 14.56,
+          "ci95": [
+            4.697541279997019,
+            8.708458720002982
+          ]
+        },
+        "C3": {
+          "n": 10,
+          "mean": 5.424,
+          "sd": 0.6333719286485626,
+          "median": 5.0649999999999995,
+          "min": 4.95,
+          "max": 6.39,
+          "ci95": [
+            4.970944494897148,
+            5.877055505102852
+          ]
+        },
+        "C5": {
+          "n": 10,
+          "mean": 5.459,
+          "sd": 0.5701744372460842,
+          "median": 5.145,
+          "min": 5.03,
+          "max": 6.35,
+          "ci95": [
+            5.051150115944604,
+            5.866849884055395
+          ]
+        }
+      },
+      "warm": {
+        "n": 29,
+        "mean": 5.562068965517241,
+        "sd": 0.5864809052447904,
+        "median": 5.17,
+        "min": 4.95,
+        "max": 6.39,
+        "ci95": [
+          5.339027900487989,
+          5.785110030546494
+        ]
+      },
+      "cold": {
+        "n": 1,
+        "mean": 14.56,
+        "sd": null,
+        "median": 14.56,
+        "min": 14.56,
+        "max": 14.56,
+        "ci95": null
+      },
+      "cold_samples": [
+        {
+          "run": 1,
+          "scenario": "C1",
+          "value": 14.56
+        }
+      ]
+    },
+    "H3": {
+      "metric": "t_exposure",
+      "scenarios": [
+        "C1",
+        "C5"
+      ],
+      "all": {
+        "n": 20,
+        "mean": 13.2965,
+        "sd": 2.396967986084877,
+        "median": 13.265,
+        "min": 10.1,
+        "max": 20.98,
+        "ci95": [
+          12.174697343426667,
+          14.418302656573333
+        ]
+      },
+      "per_scenario": {
+        "C1": {
+          "n": 10,
+          "mean": 14.244,
+          "sd": 2.4561858416839897,
+          "median": 13.690000000000001,
+          "min": 12.25,
+          "max": 20.98,
+          "ci95": [
+            12.487072566375037,
+            16.000927433624963
+          ]
+        },
+        "C5": {
+          "n": 10,
+          "mean": 12.349,
+          "sd": 2.0251993043209904,
+          "median": 11.965,
+          "min": 10.1,
+          "max": 15.19,
+          "ci95": [
+            10.900360342554436,
+            13.797639657445565
+          ]
+        }
+      },
+      "warm": {
+        "n": 19,
+        "mean": 12.892105263157895,
+        "sd": 1.6162424836892118,
+        "median": 13.21,
+        "min": 10.1,
+        "max": 15.19,
+        "ci95": [
+          12.113072415134873,
+          13.671138111180916
+        ]
+      },
+      "cold": {
+        "n": 1,
+        "mean": 20.98,
+        "sd": null,
+        "median": 20.98,
+        "min": 20.98,
+        "max": 20.98,
+        "ci95": null
+      },
+      "cold_samples": [
+        {
+          "run": 1,
+          "scenario": "C1",
+          "value": 20.98
+        }
+      ]
+    },
+    "verified": {
+      "metric": "t_verified",
+      "scenarios": [
+        "C1",
+        "C5"
+      ],
+      "all": {
+        "n": 20,
+        "mean": 13.5555,
+        "sd": 2.4209360412430296,
+        "median": 13.54,
+        "min": 10.31,
+        "max": 21.33,
+        "ci95": [
+          12.422480077236463,
+          14.688519922763538
+        ]
+      },
+      "per_scenario": {
+        "C1": {
+          "n": 10,
+          "mean": 14.51,
+          "sd": 2.484731150223075,
+          "median": 13.92,
+          "min": 12.48,
+          "max": 21.33,
+          "ci95": [
+            12.732653901458695,
+            16.287346098541306
+          ]
+        },
+        "C5": {
+          "n": 10,
+          "mean": 12.600999999999999,
+          "sd": 2.043180799091891,
+          "median": 12.239999999999998,
+          "min": 10.31,
+          "max": 15.5,
+          "ci95": [
+            11.13949804975703,
+            14.062501950242968
+          ]
+        }
+      },
+      "warm": {
+        "n": 19,
+        "mean": 13.146315789473684,
+        "sd": 1.628456019009403,
+        "median": 13.47,
+        "min": 10.31,
+        "max": 15.5,
+        "ci95": [
+          12.361395987419359,
+          13.93123559152801
+        ]
+      },
+      "cold": {
+        "n": 1,
+        "mean": 21.33,
+        "sd": null,
+        "median": 21.33,
+        "min": 21.33,
+        "max": 21.33,
+        "ci95": null
+      },
+      "cold_samples": [
+        {
+          "run": 1,
+          "scenario": "C1",
+          "value": 21.33
+        }
+      ]
+    },
+    "detection": {
+      "metric": "t_detection",
+      "scenarios": [
+        "C1",
+        "C5"
+      ],
+      "all": {
+        "n": 20,
+        "mean": 7.216,
+        "sd": 1.210490983466061,
+        "median": 7.390000000000001,
+        "min": 4.97,
+        "max": 8.91,
+        "ci95": [
+          6.649479291799683,
+          7.782520708200318
+        ]
+      }
+    }
+  }
+}

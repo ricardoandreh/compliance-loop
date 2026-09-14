@@ -1,0 +1,23 @@
+{
+  "results": "results/no-wait",
+  "verification_rounds": 161,
+  "controls_checked": {
+    "ctrl-s3-public-block": {
+      "verified": 82
+    },
+    "ctrl-s3-ssl-only": {
+      "verified": 100
+    },
+    "ctrl-s3-versioning": {
+      "verified": 101
+    }
+  },
+  "not_verified": [],
+  "read_after_write_gap_s": {
+    "n": 161,
+    "mean": 0.37,
+    "median": 0.38,
+    "min": 0.24,
+    "max": 0.7
+  }
+}

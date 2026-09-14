@@ -100,13 +100,15 @@ def test_verification_round_is_marked_as_such(sm):
     assert "$states.context.Execution.Id" in started["origin_execution"]
 
 
-def test_verification_round_waits_before_reading(sm):
+def test_verification_round_reads_straight_away(sm):
+    # No fixed consistency wait: whether a read right after the remediation can
+    # be stale is measured, not assumed (a stale read shows up as a
+    # non-convergence escalation, never as a false S_nominal).
     top = sm["States"]
     route = top["RouteControlLookup"]["Choices"]
-    assert route[0]["Next"] == "WaitForConsistency", "verify mode must be routed first"
+    assert route[0]["Next"] == "InvokeAnalyze", "verify mode must be routed first"
     assert "mode = 'verify'" in route[0]["Condition"]
-    assert top["WaitForConsistency"]["Type"] == "Wait"
-    assert top["WaitForConsistency"]["Next"] == "InvokeAnalyze"
+    assert not any(s["Type"] == "Wait" for s in top.values())
 
 
 def test_unverifiable_remediation_escalates(sm):

@@ -1,0 +1,23 @@
+{
+  "results": "results/two-round",
+  "verification_rounds": 160,
+  "controls_checked": {
+    "ctrl-s3-public-block": {
+      "verified": 80
+    },
+    "ctrl-s3-ssl-only": {
+      "verified": 100
+    },
+    "ctrl-s3-versioning": {
+      "verified": 100
+    }
+  },
+  "not_verified": [],
+  "read_after_write_gap_s": {
+    "n": 160,
+    "mean": 15.41,
+    "median": 15.42,
+    "min": 15.26,
+    "max": 15.66
+  }
+}

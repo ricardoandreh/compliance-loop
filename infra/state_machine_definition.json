@@ -23,18 +23,12 @@
     },
     "RouteControlLookup": {
       "Type": "Choice",
-      "Comment": "Verification rounds (mode=verify) carry the controls to re-check → wait for consistency, then re-evaluate. Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events carry neither → fan out by event_name.",
+      "Comment": "Verification rounds (mode=verify) carry the controls to re-check → re-evaluate them straight away, with the definitions that round carried over (nothing to look up). Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events carry neither → fan out by event_name.",
       "Choices": [
-        { "Condition": "{% $states.input.mode = 'verify' %}", "Next": "WaitForConsistency" },
+        { "Condition": "{% $states.input.mode = 'verify' %}", "Next": "InvokeAnalyze" },
         { "Condition": "{% $states.input.control_id != '' %}", "Next": "GetControlById" }
       ],
       "Default": "QueryControls"
-    },
-    "WaitForConsistency": {
-      "Type": "Wait",
-      "Comment": "Verification round. It re-checks exactly the controls the detection round remediated, using the control definitions that round carried over, so there is nothing to look up. S3 bucket configuration is eventually consistent: the CloudTrail echo this round replaces used to arrive several seconds after a remediation, which quietly gave the read time to settle. With the echo filtered out, that margin has to be explicit, or a stale read would escalate a remediation that actually worked.",
-      "Seconds": 15,
-      "Next": "InvokeAnalyze"
     },
     "GetControlById": {
       "Type": "Task",

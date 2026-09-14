@@ -56,12 +56,27 @@ SCENARIOS = {
 
 
 def run_windows(results_dir):
-    """(start, end] for each run, from the run files' write times."""
+    """(start, end] for each run, from the run files' write times.
+
+    When the benchmark log is present, each run starts its own duration before
+    its file was written. Without it, a run is assumed to start where the
+    previous one ended — which also swallows an attempt that crashed in
+    between (an expired token, say) and the bucket it left behind, whose
+    executions then match the scenario's prefix.
+    """
     files = sorted(glob.glob(os.path.join(results_dir, "run-*.json")))
     ends = [os.path.getmtime(f) for f in files]
     gaps = [b - a for a, b in zip(ends, ends[1:])]
     typical = statistics.median(gaps) if gaps else 700
     starts = [ends[0] - typical] + ends[:-1]
+
+    log = os.path.join(results_dir, "benchmark.log")
+    if os.path.exists(log):
+        took = {f"run-{int(m.group(1)):02d}.json": float(m.group(2))
+                for m in re.finditer(r"run (\d+): .*\(ok, ([\d.]+)s\)", open(log).read())}
+        # A little slack for the process start before the suite's own clock.
+        starts = [e - took[os.path.basename(f)] - 5 if os.path.basename(f) in took else s
+                  for f, s, e in zip(files, starts, ends)]
     return [(os.path.basename(f), s, e) for f, s, e in zip(files, starts, ends)]
 
 
