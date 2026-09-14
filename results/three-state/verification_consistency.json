@@ -1,0 +1,26 @@
+{
+  "results": "results/three-state",
+  "verification_rounds": 190,
+  "controls_checked": {
+    "ctrl-ebs-encryption-default": {
+      "verified": 10
+    },
+    "ctrl-s3-public-block": {
+      "verified": 80
+    },
+    "ctrl-s3-ssl-only": {
+      "verified": 120
+    },
+    "ctrl-s3-versioning": {
+      "verified": 110
+    }
+  },
+  "not_verified": [],
+  "read_after_write_gap_s": {
+    "n": 190,
+    "mean": 0.37,
+    "median": 0.38,
+    "min": 0.22,
+    "max": 0.62
+  }
+}

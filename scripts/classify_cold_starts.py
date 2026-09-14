@@ -15,7 +15,7 @@ silently absorbed, because it would mean the classification describes a
 different execution than the metric.
 
 Classified: the primary metric of C1, C3, C5 (t_remediation), C2, C6
-(t_classification), C4 and C8 (t_escalation). t_exposure and t_verified of C1/C5
+(t_classification), C4 and C8 (t_escalation), CTRL-05 (t_remediation). t_exposure and t_verified of C1/C5
 come from the same detection execution, so they inherit its class.
 t_detection happens before any Lambda runs and is not affected. CTRL-* and C7
 time the whole test rather than one execution and are left unclassified.
@@ -50,6 +50,8 @@ SCENARIOS = {
     "C6": ("compliance-inttest-c6-", {"event_name": "PutBucketPublicAccessBlock"}, "t_classification", "earliest"),
     "C4": ("bucket-inexistente-c4-", {"event_name": "PutBucketPublicAccessBlock"}, "t_escalation", "earliest"),
     "C8": ("compliance-inttest-c8-", {"event_name": "PutBucketPublicAccessBlock"}, "t_escalation", "earliest"),
+    # Account-level: no bucket to key on, so the event name itself is the prefix.
+    "CTRL-05": ("DisableEbsEncryptionByDefault", {"event_name": "DisableEbsEncryptionByDefault"}, "t_remediation", "earliest"),
     # Not classified: CTRL-* and C7 time the whole test (bucket setup,
     # CloudTrail waits, a stream propagation), not one execution, so there is no
     # single invocation whose container state could explain the sample.
