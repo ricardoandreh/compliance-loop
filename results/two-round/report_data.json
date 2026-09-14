@@ -753,7 +753,7 @@
     },
     {
       "id": "C4",
-      "label": "Falha de remediação → escalação",
+      "label": "Falha do sistema → escalação",
       "pass": 10,
       "total": 10,
       "primary": "t_escalation",

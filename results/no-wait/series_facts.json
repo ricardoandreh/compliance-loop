@@ -1,0 +1,199 @@
+{
+  "executions_per_round": 35.9,
+  "executions_by_round": [
+    36,
+    36,
+    36,
+    35,
+    36,
+    36,
+    36,
+    36,
+    36,
+    36
+  ],
+  "round_duration_s": {
+    "median": 508.2,
+    "min": 493.1,
+    "max": 990.6
+  },
+  "execute_invocations": {
+    "total": 283,
+    "fast": 98,
+    "fast_threshold_s": 4.8,
+    "containers": {
+      "e0fcdc": {
+        "invocations": 146,
+        "fast": 94
+      },
+      "55a081": {
+        "invocations": 111,
+        "fast": 0
+      },
+      "bb3b3e": {
+        "invocations": 14,
+        "fast": 0
+      },
+      "3bafee": {
+        "invocations": 8,
+        "fast": 4
+      },
+      "ce2191": {
+        "invocations": 4,
+        "fast": 0
+      }
+    }
+  },
+  "remediation_samples": {
+    "run-01.json/C1": {
+      "container": "55a081",
+      "execute_s": 10.529,
+      "fast": false
+    },
+    "run-01.json/C5": {
+      "container": "e0fcdc",
+      "execute_s": 4.114,
+      "fast": true
+    },
+    "run-01.json/C3": {
+      "container": "e0fcdc",
+      "execute_s": 4.032,
+      "fast": true
+    },
+    "run-02.json/C1": {
+      "container": "55a081",
+      "execute_s": 5.295,
+      "fast": false
+    },
+    "run-02.json/C5": {
+      "container": "e0fcdc",
+      "execute_s": 4.226,
+      "fast": true
+    },
+    "run-02.json/C3": {
+      "container": "e0fcdc",
+      "execute_s": 4.155,
+      "fast": true
+    },
+    "run-03.json/C1": {
+      "container": "e0fcdc",
+      "execute_s": 4.16,
+      "fast": true
+    },
+    "run-03.json/C5": {
+      "container": "55a081",
+      "execute_s": 5.376,
+      "fast": false
+    },
+    "run-03.json/C3": {
+      "container": "55a081",
+      "execute_s": 5.444,
+      "fast": false
+    },
+    "run-04.json/C1": {
+      "container": "55a081",
+      "execute_s": 5.318,
+      "fast": false
+    },
+    "run-04.json/C5": {
+      "container": "55a081",
+      "execute_s": 5.384,
+      "fast": false
+    },
+    "run-04.json/C3": {
+      "container": "e0fcdc",
+      "execute_s": 4.121,
+      "fast": true
+    },
+    "run-05.json/C1": {
+      "container": "55a081",
+      "execute_s": 5.284,
+      "fast": false
+    },
+    "run-05.json/C5": {
+      "container": "e0fcdc",
+      "execute_s": 4.201,
+      "fast": true
+    },
+    "run-05.json/C3": {
+      "container": "e0fcdc",
+      "execute_s": 4.222,
+      "fast": true
+    },
+    "run-06.json/C1": {
+      "container": "e0fcdc",
+      "execute_s": 4.118,
+      "fast": true
+    },
+    "run-06.json/C5": {
+      "container": "55a081",
+      "execute_s": 5.279,
+      "fast": false
+    },
+    "run-06.json/C3": {
+      "container": "55a081",
+      "execute_s": 5.384,
+      "fast": false
+    },
+    "run-07.json/C1": {
+      "container": "55a081",
+      "execute_s": 5.381,
+      "fast": false
+    },
+    "run-07.json/C5": {
+      "container": "e0fcdc",
+      "execute_s": 4.251,
+      "fast": true
+    },
+    "run-07.json/C3": {
+      "container": "e0fcdc",
+      "execute_s": 4.042,
+      "fast": true
+    },
+    "run-08.json/C1": {
+      "container": "55a081",
+      "execute_s": 5.282,
+      "fast": false
+    },
+    "run-08.json/C5": {
+      "container": "e0fcdc",
+      "execute_s": 4.084,
+      "fast": true
+    },
+    "run-08.json/C3": {
+      "container": "e0fcdc",
+      "execute_s": 4.02,
+      "fast": true
+    },
+    "run-09.json/C1": {
+      "container": "55a081",
+      "execute_s": 5.234,
+      "fast": false
+    },
+    "run-09.json/C5": {
+      "container": "e0fcdc",
+      "execute_s": 4.186,
+      "fast": true
+    },
+    "run-09.json/C3": {
+      "container": "e0fcdc",
+      "execute_s": 4.036,
+      "fast": true
+    },
+    "run-10.json/C1": {
+      "container": "e0fcdc",
+      "execute_s": 4.202,
+      "fast": true
+    },
+    "run-10.json/C5": {
+      "container": "e0fcdc",
+      "execute_s": 4.137,
+      "fast": true
+    },
+    "run-10.json/C3": {
+      "container": "bb3b3e",
+      "execute_s": 5.317,
+      "fast": false
+    }
+  }
+}

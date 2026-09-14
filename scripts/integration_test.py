@@ -216,21 +216,31 @@ def aws_now():
     return time.time() - CLOCK_OFFSET
 
 
-def wait_for_executions(after_ts, expected_statuses, min_count=1, timeout=90):
+def wait_for_executions(needle, since, expected_statuses, min_count=1, timeout=90):
+    """Executions about this scenario that started after `since`, once they finish.
+
+    `needle` is matched against the execution input: the bucket name, or the
+    event name for account-level resources that have no name of their own.
+    Waits until at least `min_count` finished with one of `expected_statuses`
+    and none of them is still RUNNING — which includes the verification rounds,
+    since they carry the resource too.
+
+    Replaces a listing of the 15 most recent executions across the whole state
+    machine (design.md, L9): with remediations and verification rounds of other
+    resources overlapping, the scenario's own execution could fall out of that
+    window and fail the test without any fault in the system.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
-        resp = sfn.list_executions(stateMachineArn=SFN_ARN, maxResults=15)
-        recent = [e for e in resp["executions"] if e["startDate"].timestamp() > after_ts]
-        done = [e for e in recent if e["status"] in expected_statuses]
-        running = [e for e in recent if e["status"] == "RUNNING"]
-        if len(done) >= min_count and not running:
+        found = executions_for(needle, since)
+        done = [x for x in found if x["status"] in expected_statuses]
+        if len(done) >= min_count and not any(x["status"] == "RUNNING" for x in found):
             return done
         time.sleep(3)
     return []
 
 
-def pick_execution(execs, event_name=None, trigger=None, resource_id=None,
-                   longest=False):
+def pick_execution(execs, event_name=None, trigger=None, longest=False):
     """Pick the execution that corresponds to the step under test.
 
     Unrelated executions overlap in time, and taking execs[0] measured whichever
@@ -249,41 +259,23 @@ def pick_execution(execs, event_name=None, trigger=None, resource_id=None,
       regresses, and assert_no_remediation_echo() is what detects that.
 
     Matching on fields of the execution input ties each metric to the event the
-    scenario caused. Falls back to the most recent execution if nothing matches,
-    so a scenario never silently loses its metric — but says so.
+    scenario caused. Nothing matching is a test failure: the fallback this
+    replaced took the most recent execution with only a warning, so a scenario
+    could time an unrelated execution and still pass.
     """
-    matches = []
-    for e in execs:
-        try:
-            raw = sfn.describe_execution(executionArn=e["executionArn"]).get("input") or "{}"
-            inp = json.loads(raw)
-        except Exception:
-            continue
-        if event_name is not None and inp.get("event_name") != event_name:
-            continue
-        if trigger is not None and inp.get("trigger") != trigger:
-            continue
-        if resource_id is not None and resource_id not in raw:
-            continue
-        matches.append(e)
-
-    if matches:
-        if not longest:
-            return matches[0]
-        # A single event name can cover several executions: the violation that
-        # remediates (~5s) and the re-evaluations the remediation itself
-        # triggers (~0.4s each). Filtering by event alone would pick whichever
-        # the listing returned first — measuring a re-evaluation as if it were
-        # the remediation. Taking the longest WITHIN the matching event is what
-        # separates them; taking the longest across ALL events was the original
-        # bug, since it picked the CreateBucket fan-out instead.
-        return max(matches, key=lambda e: get_execution_timing(
-            e["executionArn"])["duration_s"])
-
-    wanted = {k: v for k, v in
-              (("event_name", event_name), ("trigger", trigger)) if v is not None}
-    log(f"no execution matched {wanted}; falling back to most recent", "WARN")
-    return execs[0]
+    matches = [e for e in execs
+               if (event_name is None or e["input"].get("event_name") == event_name)
+               and (trigger is None or e["input"].get("trigger") == trigger)]
+    wanted = {k: v for k, v in (("event_name", event_name), ("trigger", trigger)) if v is not None}
+    assert matches, f"no execution matched {wanted} among {len(execs)} for this scenario"
+    if not longest:
+        return min(matches, key=lambda e: e["start"])
+    # A single event name can cover several executions: the violation that
+    # remediates (~5s) and the re-evaluations the remediation itself used to
+    # trigger (~0.4s each). Taking the longest WITHIN the matching event is what
+    # separates them; taking the longest across ALL events was the original bug,
+    # since it picked the CreateBucket fan-out instead.
+    return max(matches, key=lambda e: get_execution_timing(e["arn"])["duration_s"])
 
 
 def executions_for(resource_id, since, max_items=120):
@@ -299,6 +291,7 @@ def executions_for(resource_id, since, max_items=120):
             raw = sfn.describe_execution(executionArn=e["executionArn"]).get("input") or "{}"
             if resource_id in raw:
                 found.append({"arn": e["executionArn"], "status": e["status"],
+                              "start": e["startDate"].timestamp(),
                               "input": json.loads(raw)})
     return found
 
@@ -397,7 +390,7 @@ def test_c1():
         log(f"Violation triggered on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
 
-        execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        execs = wait_for_executions(name, t_event, ["SUCCEEDED"])
         assert execs, "No SUCCEEDED executions found"
 
         # Select by the event this scenario triggered, NOT by max(duration).
@@ -409,9 +402,8 @@ def test_c1():
         # together). The violation under test remediates one control in ~6s, so
         # max() reported the setup's fan-out as this scenario's MTTR — inflating
         # H1 by roughly 3x and attributing the fan-out's spread to it.
-        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
-                                resource_id=name, longest=True)
-        remediation = (chosen, get_execution_timing(chosen["executionArn"]))
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock", longest=True)
+        remediation = (chosen, get_execution_timing(chosen["arn"]))
         t_sfn_start = remediation[1]["start"]
         t_sfn_end = remediation[1]["stop"]
 
@@ -428,12 +420,12 @@ def test_c1():
 
         # The loop closes itself: one verification round, linked to this
         # detection round, re-evaluates what it remediated.
-        verify, vt = verification_round(name, chosen["executionArn"], t_event - 60)
+        verify, vt = verification_round(name, chosen["arn"], t_event - 60)
         assert verify["status"] == "SUCCEEDED", f"remediation did not converge: {verify['arn']}"
         metrics["t_verified"] = round(vt["stop"] - t_event, 2)
         confirmed = [v for v in query_violations(arn)
                      if v.get("round") == "verification" and v["state"] == "S_nominal"
-                     and v.get("origin_execution") == chosen["executionArn"]]
+                     and v.get("origin_execution") == chosen["arn"]]
         assert confirmed, "verification round left no S_nominal linked to the detection round"
         assert_no_remediation_echo(name, t_event - 60, {"PutBucketVersioning", "PutBucketPolicy"})
 
@@ -460,12 +452,11 @@ def test_c2():
         log(f"Violation with exception on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
 
-        execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        execs = wait_for_executions(name, t_event, ["SUCCEEDED"])
         assert execs, "No SUCCEEDED executions found"
 
-        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
-                                resource_id=name)
-        metrics["t_classification"] = get_execution_timing(chosen["executionArn"])["duration_s"]
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock")
+        metrics["t_classification"] = get_execution_timing(chosen["arn"])["duration_s"]
 
         cfg = get_public_access(name)
         assert not any(cfg.values()), f"Bucket remediated despite exception: {cfg}"
@@ -510,7 +501,7 @@ def test_c3():
         log(f"Waiting {int(remaining)}s for expiry + scheduler + remediation...")
         time.sleep(remaining)
 
-        execs = wait_for_executions(ttl - 5, ["SUCCEEDED"], min_count=1, timeout=60)
+        execs = wait_for_executions(name, ttl - 5, ["SUCCEEDED"], timeout=60)
 
         cfg = get_public_access(name)
         assert all(cfg.values()), f"Bucket not remediated: {cfg}"
@@ -520,18 +511,18 @@ def test_c3():
         assert "S_exception" in states, f"No S_exception: {states}"
         assert "S_violation" in states, f"No S_violation: {states}"
 
-        # Timing: scheduler precision
-        if execs:
-            chosen = pick_execution(execs, trigger="exception_ttl_expiry",
-                                    resource_id=name)
-            sched_exec = get_execution_timing(chosen["executionArn"])
-            metrics["t_scheduler_fire"] = round(sched_exec["start"] - ttl, 2)
-            metrics["t_remediation_post_expiry"] = round(sched_exec["stop"] - ttl, 2)
-            metrics["t_remediation"] = sched_exec["duration_s"]
-            verify, vt = verification_round(name, chosen["executionArn"], ttl - 5)
-            assert verify["status"] == "SUCCEEDED", f"remediation did not converge: {verify['arn']}"
-            metrics["t_verified_post_expiry"] = round(vt["stop"] - ttl, 2)
-            log(f"t_scheduler_fire={metrics['t_scheduler_fire']}s (after TTL)  t_remediation={metrics['t_remediation']}s  t_total_post_expiry={metrics['t_remediation_post_expiry']}s  t_verified_post_expiry={metrics['t_verified_post_expiry']}s", "TIME")
+        # Timing: scheduler precision. A missing scheduler-triggered execution is a
+        # failure, not a reason to skip the scenario's metrics.
+        assert execs, "no finished execution after the exception expired"
+        chosen = pick_execution(execs, trigger="exception_ttl_expiry")
+        sched_exec = get_execution_timing(chosen["arn"])
+        metrics["t_scheduler_fire"] = round(sched_exec["start"] - ttl, 2)
+        metrics["t_remediation_post_expiry"] = round(sched_exec["stop"] - ttl, 2)
+        metrics["t_remediation"] = sched_exec["duration_s"]
+        verify, vt = verification_round(name, chosen["arn"], ttl - 5)
+        assert verify["status"] == "SUCCEEDED", f"remediation did not converge: {verify['arn']}"
+        metrics["t_verified_post_expiry"] = round(vt["stop"] - ttl, 2)
+        log(f"t_scheduler_fire={metrics['t_scheduler_fire']}s (after TTL)  t_remediation={metrics['t_remediation']}s  t_total_post_expiry={metrics['t_remediation_post_expiry']}s  t_verified_post_expiry={metrics['t_verified_post_expiry']}s", "TIME")
 
         log("C3 PASSED", "OK")
         return True, metrics
@@ -605,7 +596,7 @@ def test_c5():
         log(f"IaC-simulated violation on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
 
-        execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        execs = wait_for_executions(name, t_event, ["SUCCEEDED"])
         assert execs, "No SUCCEEDED executions found"
 
         # Select by the event this scenario triggered, NOT by max(duration).
@@ -617,9 +608,8 @@ def test_c5():
         # together). The violation under test remediates one control in ~6s, so
         # max() reported the setup's fan-out as this scenario's MTTR — inflating
         # H1 by roughly 3x and attributing the fan-out's spread to it.
-        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
-                                resource_id=name, longest=True)
-        remediation = (chosen, get_execution_timing(chosen["executionArn"]))
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock", longest=True)
+        remediation = (chosen, get_execution_timing(chosen["arn"]))
 
         metrics["t_detection"] = round(remediation[1]["start"] - t_event, 2)
         metrics["t_remediation"] = remediation[1]["duration_s"]
@@ -628,7 +618,7 @@ def test_c5():
         cfg = get_public_access(name)
         assert all(cfg.values()), f"Bucket not remediated: {cfg}"
 
-        verify, vt = verification_round(name, chosen["executionArn"], t_event - 60)
+        verify, vt = verification_round(name, chosen["arn"], t_event - 60)
         assert verify["status"] == "SUCCEEDED", f"remediation did not converge: {verify['arn']}"
         metrics["t_verified"] = round(vt["stop"] - t_event, 2)
         assert_no_remediation_echo(name, t_event - 60, {"PutBucketVersioning", "PutBucketPolicy"})
@@ -652,12 +642,11 @@ def test_c6():
         log(f"Already compliant: {name}")
         time.sleep(WAIT_CLOUDTRAIL)
 
-        execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        execs = wait_for_executions(name, t_event, ["SUCCEEDED"])
         assert execs, "No SUCCEEDED executions found"
 
-        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock",
-                                resource_id=name)
-        metrics["t_classification"] = get_execution_timing(chosen["executionArn"])["duration_s"]
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock")
+        metrics["t_classification"] = get_execution_timing(chosen["arn"])["duration_s"]
 
         violations = query_violations(arn)
         nominals = [v for v in violations if v["state"] == "S_nominal" and v["control_id"] == "ctrl-s3-public-block"]
@@ -758,17 +747,17 @@ def test_c8():
         log(f"Violation on {name}, remediation denied to the Execute role")
         time.sleep(WAIT_CLOUDTRAIL)
 
-        execs = wait_for_executions(t_event, ["FAILED"], min_count=1)
+        execs = wait_for_executions(name, t_event, ["FAILED"])
         assert execs, "No FAILED execution found"
-        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock", resource_id=name)
-        desc = sfn.describe_execution(executionArn=chosen["executionArn"])
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock")
+        desc = sfn.describe_execution(executionArn=chosen["arn"])
         assert desc["status"] == "FAILED" and desc["error"] == "ComplianceEscalation", \
             f"Expected FAILED/ComplianceEscalation, got {desc['status']}/{desc.get('error')}"
 
         # The escalation is the remediation-failure one, not a system failure.
-        reasons = escalation_reasons(chosen["executionArn"])
+        reasons = escalation_reasons(chosen["arn"])
         assert reasons == ["remediation_failed"], f"escalation reasons: {reasons}"
-        metrics["t_escalation"] = get_execution_timing(chosen["executionArn"])["duration_s"]
+        metrics["t_escalation"] = get_execution_timing(chosen["arn"])["duration_s"]
 
         # The state stays S_violation, with the failure recorded next to it
         # (Property 24) — not a new state.
@@ -781,7 +770,7 @@ def test_c8():
         # remediation schedules no verification round.
         assert not any(get_public_access(name).values()), "bucket changed despite the failure"
         rounds = [x for x in executions_for(name, t_event - 5)
-                  if x["input"].get("origin_execution") == chosen["executionArn"]]
+                  if x["input"].get("origin_execution") == chosen["arn"]]
         assert not rounds, f"{len(rounds)} verification round(s) for a failed remediation"
 
         # The issue is linked back to the violation row (Property 22). The link is
@@ -814,7 +803,7 @@ def test_ctrl_s3_public_block():
         set_public_access(name, block=False)
         log(f"Public access disabled on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
-        wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        wait_for_executions(name, t_event, ["SUCCEEDED"])
 
         cfg = get_public_access(name)
         assert all(cfg.values()), f"Not remediated: {cfg}"
@@ -840,7 +829,7 @@ def test_ctrl_s3_ssl_only():
             pass
         log(f"Policy deleted on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
-        wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        wait_for_executions(name, t_event, ["SUCCEEDED"])
 
         policy = json.loads(s3.get_bucket_policy(Bucket=name)["Policy"])
         sids = [st.get("Sid", "") for st in policy.get("Statement", [])]
@@ -864,7 +853,7 @@ def test_ctrl_s3_versioning():
         s3.put_bucket_versioning(Bucket=name, VersioningConfiguration={"Status": "Suspended"})
         log(f"Versioning suspended on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
-        wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        wait_for_executions(name, t_event, ["SUCCEEDED"])
 
         resp = s3.get_bucket_versioning(Bucket=name)
         assert resp.get("Status") == "Enabled", f"Not enabled: {resp}"
@@ -886,7 +875,7 @@ def test_ctrl_s3_encryption():
     try:
         log(f"Checking encryption on {name}")
         time.sleep(WAIT_CLOUDTRAIL)
-        wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        wait_for_executions(name, t_event, ["SUCCEEDED"])
 
         # Assert through the system's own classification, not a direct API
         # call from the runner's (admin) credentials — a direct call passes
@@ -930,17 +919,15 @@ def test_ctrl_ebs_encryption_default():
         log("EBS encryption by default disabled for the region")
         time.sleep(WAIT_CLOUDTRAIL)
 
-        execs = wait_for_executions(t_event, ["SUCCEEDED"], min_count=1)
+        execs = wait_for_executions("DisableEbsEncryptionByDefault", t_event, ["SUCCEEDED"])
         assert execs, "No SUCCEEDED executions found"
         chosen = pick_execution(execs, event_name="DisableEbsEncryptionByDefault")
-        assert json.loads(sfn.describe_execution(executionArn=chosen["executionArn"])["input"]).get(
-            "event_name") == "DisableEbsEncryptionByDefault", "no execution for the Disable event"
-        metrics["t_remediation"] = get_execution_timing(chosen["executionArn"])["duration_s"]
+        metrics["t_remediation"] = get_execution_timing(chosen["arn"])["duration_s"]
 
         assert ec2.get_ebs_encryption_by_default()["EbsEncryptionByDefault"] is True, \
             "EBS encryption by default was not re-enabled"
 
-        verify, vt = verification_round("account-level", chosen["executionArn"], t_event - 60)
+        verify, vt = verification_round("account-level", chosen["arn"], t_event - 60)
         assert verify["status"] == "SUCCEEDED", f"remediation did not converge: {verify['arn']}"
         metrics["t_verified"] = round(vt["stop"] - t_event, 2)
 
@@ -949,7 +936,7 @@ def test_ctrl_ebs_encryption_default():
                 if v["control_id"] == "ctrl-ebs-encryption-default" and v["timestamp"] >= since]
         assert any(v["state"] == "S_violation" and v.get("remediation_status") == "success" for v in rows), \
             f"no remediated S_violation row under {pseudo_arn}"
-        assert any(v["state"] == "S_nominal" and v.get("origin_execution") == chosen["executionArn"]
+        assert any(v["state"] == "S_nominal" and v.get("origin_execution") == chosen["arn"]
                    for v in rows), "verification left no S_nominal linked to the detection round"
         assert_no_remediation_echo("account-level", t_event - 5, {"EnableEbsEncryptionByDefault"})
 

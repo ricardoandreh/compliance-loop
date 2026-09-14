@@ -22,7 +22,7 @@ time the whole test rather than one execution and are left unclassified.
 
 Usage:
     python3 scripts/classify_cold_starts.py --results results/two-round
-    python3 scripts/classify_cold_starts.py --results results
+    python3 scripts/classify_cold_starts.py --results results/echo
 """
 
 import argparse

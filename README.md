@@ -245,11 +245,12 @@ demonstrar o loop, insuficiente para afirmar uma latência. O `benchmark.py`
 repete a suíte, preserva o JSON bruto de cada rodada e agrega:
 
 ```bash
-# 10 execuções -> results/run-NN.json + summary.{json,md}
-lambdas/analyze/.venv/bin/python scripts/benchmark.py --runs 10
+# 10 execuções -> results/<série>/run-NN.json + summary.{json,md}
+# Cada série é uma configuração do sistema: uma pasta por série, nunca misturadas
+lambdas/analyze/.venv/bin/python scripts/benchmark.py --runs 10 --out results/<série>
 
 # Reagrega o que já está em disco, sem tocar na AWS
-lambdas/analyze/.venv/bin/python scripts/benchmark.py --aggregate-only --out results/
+lambdas/analyze/.venv/bin/python scripts/benchmark.py --aggregate-only --out results/three-state
 ```
 
 Reporta n, média, desvio amostral, mediana, amplitude e IC 95% por cenário e
@@ -368,10 +369,27 @@ e sobem a 43,0 na série atual só porque C8 e CTRL-05 entraram na suíte.
 
 A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~128MB), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 
-Relatório com os gráficos interativos e a tabela completa: `results/report.html`
-(dados brutos em `results/three-state/run-NN.json`; séries anteriores em
-`results/no-wait/`, `results/two-round/` e `results/`, regeneráveis com
-`scripts/build_report_data.py`).
+Relatório com os gráficos interativos e a tabela completa: `results/report.html`.
+Cada série fica numa pasta própria — `results/echo/`, `results/two-round/`,
+`results/no-wait/` e `results/three-state/` (a atual) — com os `run-NN.json` brutos,
+e a página é regenerada a partir delas:
+
+```bash
+S=results/three-state
+# Com acesso à conta (uma vez por série, enquanto o histórico existe):
+lambdas/analyze/.venv/bin/python scripts/classify_cold_starts.py --results $S
+lambdas/analyze/.venv/bin/python scripts/verification_consistency.py --results $S
+lambdas/analyze/.venv/bin/python scripts/report/collect_series_facts.py --results $S
+# Offline, a partir dos arquivos acima:
+python3 scripts/build_report_data.py --results $S --out $S/report_data.json
+python3 scripts/report/render_report.py        # -> results/report.html
+```
+
+O Step Functions guarda o histórico por 90 dias; os três primeiros passos gravam
+em cada série o que só existe na conta (classificação frio/quente, consistência
+de leitura, containers do Execute e execuções por rodada), e daí em diante a
+página é reconstruída só com o repositório. O CSS, os gráficos e as notas de
+metodologia ficam em `scripts/report/`.
 
 ## Licença
 

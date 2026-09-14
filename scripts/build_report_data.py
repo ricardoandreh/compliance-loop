@@ -6,8 +6,8 @@ Keeps the page reproducible: re-run this after collecting more runs and paste
 the output back in, rather than hand-editing numbers into the HTML.
 
 Usage:
-    python3 scripts/build_report_data.py                  # print JSON
-    python3 scripts/build_report_data.py --out data.json
+    python3 scripts/build_report_data.py --results results/three-state               # print JSON
+    python3 scripts/build_report_data.py --results results/three-state --out data.json
 """
 
 import argparse
@@ -203,7 +203,8 @@ def build(results_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--results", default="results")
+    ap.add_argument("--results", required=True,
+                    help="one series directory, e.g. results/three-state")
     ap.add_argument("--out")
     args = ap.parse_args()
     data = build(args.results)

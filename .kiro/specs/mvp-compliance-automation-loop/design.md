@@ -2347,7 +2347,7 @@ Agregado de **10 execuções da suíte com o grafo de três estados, leitura ime
 
 **Série com espera de 15 s na verificação (`results/two-round/`)**: C1 `t_remediation` 6,19 s ± 0,05 (n = 9; frio 14,78 s) · C3 6,24 s ± 0,08 · C5 6,18 s ± 0,15 · C1 `t_exposure` 14,84 s ± 1,28 · C5 13,05 s ± 1,97 · C1 `t_verified` 30,21 s ± 1,25 · C5 28,40 s ± 1,98 · C2 0,47 s ± 0,04 · C4 0,58 s ± 0,07 · C6 0,47 s ± 0,04 · C7 15,64 s ± 0,08.
 
-**Série do laço por eco (`results/`)**, todas as amostras quentes (60 classificadas, nenhuma fria): C1 `t_remediation` 6,02 s ± 0,11 · C3 6,04 s ± 0,10 · C5 6,02 s ± 0,13 · C1 `t_exposure` 13,85 s ± 1,56 · C5 14,45 s ± 1,42 · C2 `t_classification` 0,47 s ± 0,08 · C4 `t_escalation` 0,60 s ± 0,06 · C6 `t_classification` 0,45 s ± 0,04 · C7 `t_sync_insert` 15,93 s ± 1,02.
+**Série do laço por eco (`results/echo/`)**, todas as amostras quentes (60 classificadas, nenhuma fria): C1 `t_remediation` 6,02 s ± 0,11 · C3 6,04 s ± 0,10 · C5 6,02 s ± 0,13 · C1 `t_exposure` 13,85 s ± 1,56 · C5 14,45 s ± 1,42 · C2 `t_classification` 0,47 s ± 0,08 · C4 `t_escalation` 0,60 s ± 0,06 · C6 `t_classification` 0,45 s ± 0,04 · C7 `t_sync_insert` 15,93 s ± 1,02.
 
 ### Validação por Controle
 
@@ -2384,7 +2384,7 @@ O runner mede o desvio contra o header `Date` das respostas da AWS no início da
 
 O mesmo desvio causava um falso negativo no cenário C4: a busca por execuções filtra `startDate > referência_local`, e a execução do C4 — iniciada diretamente por `StartExecution` e concluída em 0,6s — caía fora do filtro. Os demais cenários absorviam o desvio nos ~8s de latência do CloudTrail. O C4 passou a acompanhar o `executionArn` que o próprio `StartExecution` devolve, eliminando a busca por tempo onde ela é dispensável.
 
-**Agregação sobre repetições**: `scripts/benchmark.py` executa a suíte N vezes, preserva o JSON bruto de cada execução (`results/run-NN.json`) e reporta n, média, desvio amostral (n−1), mediana, amplitude e intervalo de confiança de 95% pela distribuição t de Student — por cenário e agrupado por hipótese.
+**Agregação sobre repetições**: `scripts/benchmark.py` executa a suíte N vezes, preserva o JSON bruto de cada execução (`results/<série>/run-NN.json`, uma pasta por configuração do sistema: `echo`, `two-round`, `no-wait`, `three-state`) e reporta n, média, desvio amostral (n−1), mediana, amplitude e intervalo de confiança de 95% pela distribuição t de Student — por cenário e agrupado por hipótese.
 
 Duas decisões afetam a interpretação dos números:
 
@@ -2401,7 +2401,7 @@ O cold start também não se espalha pela amostra: aparece como observação iso
 
 ### Síntese por Hipótese
 
-> **Base**: 10 execuções completas da suíte com o grafo de três estados, leitura imediata na verificação, C8 e CTRL-05 (`results/three-state/`, 140/140 cenários aprovados), comparadas às séries de leitura imediata (`results/no-wait/`), de espera de 15 s (`results/two-round/`) e do laço por eco (`results/`), cada uma com 10 execuções.
+> **Base**: 10 execuções completas da suíte com o grafo de três estados, leitura imediata na verificação, C8 e CTRL-05 (`results/three-state/`, 140/140 cenários aprovados), comparadas às séries de leitura imediata (`results/no-wait/`), de espera de 15 s (`results/two-round/`) e do laço por eco (`results/echo/`), cada uma com 10 execuções.
 >
 > **Frio e quente são separados por evidência, não por um corte de duração.** Uma amostra é fria quando alguma Lambda que a atendeu teve `Init Duration` na linha REPORT *daquela* invocação — ligação exata: histórico da execução → `RequestId` → CloudWatch (`scripts/classify_cold_starts.py`, que também confere a duração de cada execução contra o valor gravado na rodada). Foram classificadas 80 amostras na série atual e 60 em cada anterior: **1 fria** na atual — C1 na rodada 01, com Analyze e Execute em containers novos (init 0,58 s e 0,51 s) —, 1 fria em cada série do laço explícito (sempre o C1 da rodada 01) e **nenhuma** na do eco. Métricas que terminam antes de a execução começar (`t_detection`, disparo do Scheduler) não recebem classe; CTRL-01 a CTRL-04 e C7 medem o teste inteiro e ficam sem classificação.
 >
@@ -2504,13 +2504,13 @@ A compensação de desvio entre o relógio do runner e o da AWS (ver *Metodologi
 
 Isso afeta apenas `t_detection`, a única métrica que cruza os dois relógios num intervalo de poucos segundos. `t_remediation` e `t_exposure` são medidos entre dois instantes da própria AWS e não carregam esse erro. Eliminá-lo exigiria uma fonte de tempo comum (NTP sincronizado com a AWS, ou derivar o instante do evento do próprio registro do CloudTrail em vez do relógio local) — esta última é a correção estruturalmente certa e fica como trabalho futuro.
 
-### L9. Fragilidade da busca por execuções recentes
+### L9. Fragilidade da busca por execuções recentes *(resolvido)*
 
-`wait_for_executions` lista as 15 execuções mais recentes e filtra por horário de início. A própria propriedade de convergência do loop faz cada remediação gerar novos eventos CloudTrail e, portanto, novas execuções — foram observadas 36 execuções numa única rodada da suíte. Cenários cuja verificação demore o suficiente podem ter sua execução empurrada para fora dessa janela de 15, produzindo falha de teste sem falha de sistema.
+> **Estado atual**: resolvido. Toda busca do harness é feita por `executions_for`, que pagina a listagem e filtra pela entrada da execução (o nome do bucket, ou o nome do evento para recursos de conta). `wait_for_executions` passou a esperar pelas execuções *daquele recurso* — incluindo as rodadas de verificação, que carregam o recurso — em vez de olhar as 15 mais recentes da máquina inteira. `pick_execution` deixou de ter fallback: se nenhuma execução corresponde ao evento esperado, o teste falha, em vez de medir a mais recente com um aviso. Pelo mesmo motivo, o C3 falha se a execução disparada pelo Scheduler não aparecer, em vez de pular as métricas. O texto a seguir descreve o problema como foi identificado.
 
-**Parcialmente mitigado.** As asserções das rodadas de verificação (C1, C3, C5) usam `executions_for`, que pagina e filtra pela entrada da execução em vez de olhar só as 15 mais recentes, e o eco filtrado reduziu a pressão sobre a janela (36 execuções por rodada da suíte, contra 48,5). As outras nove chamadas de `wait_for_executions` ainda usam a janela de 15.
+`wait_for_executions` listava as 15 execuções mais recentes e filtrava por horário de início. A própria propriedade de convergência do loop faz cada remediação gerar novos eventos CloudTrail e, portanto, novas execuções — foram observadas 36 execuções numa única rodada da suíte. Cenários cuja verificação demorasse o suficiente podiam ter sua execução empurrada para fora dessa janela de 15, produzindo falha de teste sem falha de sistema.
 
-O cenário C4 foi corrigido por não precisar de busca (acompanha o `executionArn` devolvido pelo `StartExecution`). Os cenários disparados por CloudTrail não têm essa opção: a correção seria paginar a listagem ou correlacionar pela entrada da execução em vez do horário.
+**Efeito sobre o `t_total` das CTRL-\***: a espera deixou de incluir execuções de outros recursos ainda em andamento. Como os cenários rodam em sequência e cada um aguarda o próprio teardown, a diferença esperada é pequena, mas séries coletadas antes e depois dessa mudança medem o teste de forma ligeiramente diferente.
 
 ### L10. Correlação entre métrica e execução (corrigido, com lição residual)
 
@@ -2563,3 +2563,17 @@ Hoje a premissa vale por inspeção: o `remediation.tf` do ssl-only gera exatame
 **Por que não foi fechado**: a AWS não criptografa um volume existente nem troca a sua chave no lugar. A correção é snapshot → cópia do snapshot com criptografia/chave nova → volume novo → troca na instância, com parada, ID de volume novo e referências a atualizar. Não é uma remediação que o loop deva aplicar sozinho.
 
 **Como fechar**: um controle detectivo por volume (ex.: `ctrl-ebs-volume-encrypted`, `DescribeVolumes` com `Encrypted` e `KmsKeyId`) que classifique `S_violation` e **escale sem remediar**. No grafo atual isso pede uma regra no `PlanAction` — por exemplo, controle sem `remediation_s3_key` → `Escalate` com `reason = manual_remediation_required`. O teste teria custo, ainda que pequeno: um volume e um snapshot de 1 GiB por poucos minutos, e US$ 1/mês se usar CMK.
+
+### L15. Sem reconciliação periódica: o laço só fecha para o que o CloudTrail entrega *(trabalho futuro)*
+
+**O que**: o Monitor é puramente orientado a eventos. Se um evento do CloudTrail não chegar ao EventBridge, ou se uma mudança de configuração não gerar evento, o desvio não é detectado, e para aquele recurso o laço fica aberto até a próxima mudança que gere evento. Não há varredura periódica.
+
+**Consequência**: a afirmação de laço fechado vale para as mudanças observadas. Um recurso criado antes do sistema, ou alterado num intervalo em que a entrega de eventos falhou, pode permanecer não conforme indefinidamente sem que nenhuma execução o avalie.
+
+**Abordagem proposta (híbrida, não implementada)**: manter o caminho por eventos como principal — é ele que dá a exposição de segundos — e acrescentar uma reconciliação periódica como rede de segurança:
+
+1. Um EventBridge Scheduler com expressão `rate(...)` (por exemplo, a cada hora ou dia) inicia a mesma máquina de estados com `trigger = reconciliation`.
+2. O `RouteControlLookup` ganha uma rota para esse gatilho: lista os recursos de cada tipo coberto (ex.: `ListBuckets`; para controles de conta, um único recurso) e percorre-os num Map — com `MaxConcurrency` limitado, ou num Distributed Map se a quantidade crescer.
+3. Cada recurso segue o caminho existente: Analyze → classificação → `PlanAction`. Uma violação encontrada pela varredura é tratada como qualquer outra, com rodada de verificação e escalação.
+
+Nada do modelo muda: a reconciliação é só outra origem de evento, como já é o Scheduler das exceções. O que muda é custo e ruído — cada varredura avalia todos os recursos, então a frequência é a troca entre janela máxima de exposição para desvios não observados e número de execuções. Também fica a decidir se violações achadas pela varredura remedeiam automaticamente ou só escalam, já que o evento original, e portanto o autor da mudança, é desconhecido.

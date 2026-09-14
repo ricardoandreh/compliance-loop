@@ -17,9 +17,9 @@ Two properties are deliberate:
   audited without re-running against AWS.
 
 Usage:
-    python3 scripts/benchmark.py --runs 10
-    python3 scripts/benchmark.py --runs 10 --test C1
-    python3 scripts/benchmark.py --aggregate-only --out results/
+    python3 scripts/benchmark.py --runs 10 --out results/three-state
+    python3 scripts/benchmark.py --runs 10 --test C1 --out results/c1-only
+    python3 scripts/benchmark.py --aggregate-only --out results/three-state
 """
 
 import argparse
@@ -284,7 +284,9 @@ def main():
                         help="number the first run N instead of 1, so a batch can be "
                              "added to an existing set without overwriting it "
                              "(runs accumulate; --aggregate-only re-reads them all)")
-    parser.add_argument("--out", default="results", help="directory for raw and aggregated output")
+    # Required: each series is a configuration of the system, and runs of different
+    # configurations written to the same directory would be aggregated together.
+    parser.add_argument("--out", required=True, help="series directory for raw and aggregated output, e.g. results/three-state")
     parser.add_argument("--test", help="restrict every run to one scenario (e.g. C1)")
     parser.add_argument("--region", default="us-east-1")
     parser.add_argument("--prefix", default="compliance-loop")
