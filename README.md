@@ -259,51 +259,50 @@ de sucesso aparece ao lado. Métricas com n=1 são marcadas como observação
 
 ## Cenários validados
 
-Todos aprovados em **10 de 10** execuções da suíte. Valores: média ± desvio,
-**separados em regime quente e frio** por evidência de `Init Duration` na
-invocação da Lambda (`scripts/classify_cold_starts.py`). A única amostra fria
-das 10 execuções é do C1. O desvio do `t_remediation` quente (~0,5s) é a mistura
-dos dois tipos de container, não variância do sistema.
+Todos aprovados em **10 de 10** execuções da suíte (140/140, `results/three-state/`).
+Valores: média ± desvio, **separados em regime quente e frio** por evidência de
+`Init Duration` na invocação da Lambda (`scripts/classify_cold_starts.py`). A única
+amostra fria das 10 execuções é do C1.
 
 | Cenário | Descrição | Resultado | Quente | Frio |
 |---|---|---|---|---|
-| C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 5,83s ± 0,52 (n=9) | 14,56s (n=1) |
-| C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,48s ± 0,06 | nenhuma |
-| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 5,42s ± 0,63 | nenhuma |
-| C4 | Falha do sistema (bucket inexistente) | Sem estado; escala via GitHub Issue | `t_escalation` 0,58s ± 0,04 | nenhuma |
-| C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 5,46s ± 0,57 | nenhuma |
-| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,45s ± 0,03 | nenhuma |
-| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: mediana 15,61s | — |
-| C8 | Remediação falha (Execute sem permissão) | S_violation preservado, escala com o erro | `t_escalation` 6,23s (observação única)† | — |
+| C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 6,26s ± 0,11 (n=9) | 14,44s (n=1) |
+| C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,48s ± 0,07 | nenhuma |
+| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 6,27s ± 0,12 | nenhuma |
+| C4 | Falha do sistema (bucket inexistente) | Sem estado; escala via GitHub Issue | `t_escalation` 0,48s ± 0,05 | nenhuma |
+| C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 6,24s ± 0,11 | nenhuma |
+| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,47s ± 0,03 | nenhuma |
+| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: 15,62s ± 0,03 | — |
+| C8 | Remediação falha (Execute sem permissão) | S_violation preservado, escala com o erro | `t_escalation` 6,03s ± 0,13 | nenhuma |
 | AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4 e do C8 | — | — |
 
-†O C8 entrou na suíte depois das 10 execuções agregadas. Uma bucket policy nega
-`s3:PutBucketPublicAccessBlock` só à role do Execute: o Analyze classifica
-`S_violation`, a remediação falha com `AccessDenied`, o estado é preservado com
-`remediation_status=failed` e a issue é vinculada à linha da violação. O C4 não
-cobre esse caminho — um bucket inexistente nem chega a ser avaliado.
+No C8, uma bucket policy nega `s3:PutBucketPublicAccessBlock` só à role do
+Execute: o Analyze classifica `S_violation`, a remediação falha com
+`AccessDenied`, o estado é preservado com `remediation_status=failed` e a issue é
+vinculada à linha da violação. O C4 não cobre esse caminho — um bucket
+inexistente nem chega a ser avaliado. O C4 ficou 0,10s mais rápido que nas séries
+anteriores: é o `putItem` do antigo `RegisterError`, que deixou de existir.
 
 ## Controles validados
 
 | Teste | Controle | Verificação | t_total (n=10) |
 |---|---|---|---|
-| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | mediana 25,95s (34,17s ± 20,46) |
-| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 26,34s ± 1,34 |
-| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 25,90s ± 0,05 |
-| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | mediana 26,24s (32,48s ± 19,36) |
-| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | 28,2s (observação única, container frio) |
+| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | 29,56s ± 2,43 |
+| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 26,18s ± 1,05 |
+| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 25,91s ± 0,09 |
+| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | 26,27s ± 0,04 |
+| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | 28,54s ± 0,23 |
 
 O `t_total` das CTRL-* mede o **teste**: criação de bucket, esperas de CloudTrail
 e a espera pelas rodadas de verificação, já que o harness só encerra quando
 nenhuma execução está em andamento. Não é comparável ao `t_remediation` nem é
-classificado em quente/frio. O desvio alto de CTRL-01 e CTRL-04 vem de uma única
-rodada, com o tempo extra fora do loop; as medianas não se alteram.
+classificado em quente/frio.
 
-O CTRL-05 entrou na `integration_test.py` depois das 10 execuções agregadas:
-desliga a criptografia padrão do EBS na região, exige a remediação e a rodada de
-verificação, e religa a configuração se o loop não o fizer. Não cria nenhum
-recurso cobrável — é uma configuração da conta. Foi exercitado uma vez, a frio,
-então o único serviço com cobertura repetida continua sendo o S3.
+O **CTRL-05** desliga a criptografia padrão do EBS na região, exige a remediação e
+a rodada de verificação, e religa a configuração se o loop não o fizer. Não cria
+nenhum recurso cobrável — é uma configuração da conta. A remediação de EBS custa
+o mesmo que a de S3: `t_remediation` **6,24s ± 0,24** (n=10), contra 6,26s — o
+tempo do loop é dominado pela inicialização do `tofu`, não pelo serviço.
 
 O controle é **preventivo**: `EbsEncryptionByDefault` só vale para volumes criados
 depois. Um volume existente sem criptografia continua assim, e o controle fica
@@ -313,37 +312,38 @@ automaticamente. Ver L14 no `design.md`.
 
 ## Performance
 
-Agregado de **10 execuções completas da suíte** com o laço em duas rodadas e
-leitura imediata na verificação (120/120 cenários aprovados, `results/no-wait/`),
-via `scripts/benchmark.py`. Desvio amostral (n−1) e IC 95% pela distribuição t.
-**Quente e frio são reportados separadamente**, classificados por evidência
-(`Init Duration` na invocação exata da Lambda), sem corte de duração. Uma
-amostra fria com n=1 é reportada como observação única.
+Agregado de **10 execuções completas da suíte** com o grafo de três estados,
+leitura imediata na verificação, C8 e CTRL-05 (140/140 cenários aprovados,
+`results/three-state/`), via `scripts/benchmark.py`. Desvio amostral (n−1) e IC 95%
+pela distribuição t. **Quente e frio são reportados separadamente**,
+classificados por evidência (`Init Duration` na invocação exata da Lambda), sem
+corte de duração. Uma amostra fria com n=1 é reportada como observação única.
 
 | Métrica | Quente | Frio | Total |
 |---|---|---|---|
-| **H1 — t_remediation**, container lento | **6,24s** ± 0,10 · IC [6,18 · 6,30] · n=12 | **14,56s** (n=1) | |
-| **H1 — t_remediation**, container rápido | **5,08s** ± 0,08 · IC [5,04 · 5,12] · n=17 | | |
-| H1 — agregado | 5,56s ± 0,59 · mediana 5,17 · n=29 | | 5,86s ± 1,74 · n=30 |
-| **H3 — t_exposure** | **12,89s** ± 1,62 · IC [12,11 · 13,67] · n=19 (lento 14,16 · rápido 11,75) | **20,98s** (n=1) | 13,30s ± 2,40 · n=20 |
-| **t_verified** (convergência confirmada) | **13,15s** ± 1,63 · IC [12,36 · 13,93] · n=19 | **21,33s** (n=1) | 13,56s ± 2,42 · n=20 |
-| t_detection (evento → SFN start) | sem classe: 7,22s ± 1,21 · IC [6,65 · 7,78] · n=20 | | |
-| t_classification (recurso conforme) | 0,45–0,48s · n=10 | nenhuma | |
-| t_escalation (falha → fila SQS) | 0,58s ± 0,04 · n=10 | nenhuma | |
+| **H1 — t_remediation** (C1 · C3 · C5) | **6,26s** ± 0,11 · IC [6,22 · 6,30] · n=29 | **14,44s** (n=1) | 6,53s ± 1,50 · mediana 6,26 · n=30 |
+| **H3 — t_exposure** (C1 · C5) | **13,31s** ± 1,77 · IC [12,46 · 14,17] · n=19 | **23,50s** (n=1) | 13,82s ± 2,86 · n=20 |
+| **t_verified** (convergência confirmada) | **13,58s** ± 1,76 · IC [12,73 · 14,43] · n=19 | **23,84s** (n=1) | 14,09s ± 2,86 · n=20 |
+| t_detection (evento → SFN start) | sem classe: 7,16s ± 1,81 · IC [6,31 · 8,01] · n=20 | | |
+| t_remediation EBS (CTRL-05) | 6,24s ± 0,24 · IC [6,07 · 6,41] · n=10 | nenhuma | |
+| t_classification (recurso conforme) | 0,47–0,48s · n=10 | nenhuma | |
+| t_escalation, falha de remediação (C8) | 6,03s ± 0,13 · n=10 | nenhuma | |
+| t_escalation, falha do sistema (C4) | 0,48s ± 0,05 · n=10 | nenhuma | |
 
-**"Quente" não é um regime só.** O Execute roda ~1,1s mais rápido num dos
-containers da Lambda do que nos outros — 90 das 251 invocações da série, todas no
-mesmo container; nas 280 da série anterior, nenhuma. O atraso fica antes da
-primeira escrita e não depende do tempo ocioso: é o ambiente de execução, não o
-sistema. Por isso H1 e H3 são reportadas por tipo de container, e o agregado não
-deve ser lido como melhoria.
+**A remediação varia 1,8%; a detecção, 25%.** Os três cenários que remedeiam por
+rotas independentes concordam dentro de 0,03s (C1 6,26 · C3 6,27 · C5 6,24), e o
+CTRL-05, sobre outro serviço, cai no mesmo valor (6,24). A dispersão do tempo de
+exposição vem do `t_detection` — latência de entrega do CloudTrail ao
+EventBridge, fora do controle do sistema. A decomposição fecha exatamente:
+`t_detection + t_remediation = t_exposure`.
 
-**A remediação varia 1,6% dentro de cada container; a detecção, 17%.** Os três
-cenários que remedeiam por rotas independentes concordam dentro de cada tipo de
-container (lento: C1 6,17 · C3 6,34 · C5 6,28; rápido: 5,14 · 5,03 · 5,11). A
-dispersão do tempo de exposição vem do `t_detection` — latência de entrega do
-CloudTrail ao EventBridge, fora do controle do sistema. A decomposição fecha
-exatamente: `t_detection + t_remediation = t_exposure`.
+**"Quente" não é um regime só.** Na série anterior (leitura imediata), o Execute
+rodou ~1,1s mais rápido em alguns containers da Lambda: 98 das 283 invocações, em
+2 dos 5 containers, e as 17 amostras rápidas de `t_remediation` num só deles. O
+agregado daquela série (5,56s) sugeria uma melhoria que era do container. Nesta
+série nenhum container foi rápido e o valor voltou a 6,26s — o patamar lento das
+séries anteriores (6,24s e 6,20s). Por isso as séries são comparadas por tipo de
+container.
 
 **Cold start** foi a única amostra fria em 30: C1 na primeira execução, com
 Analyze e Execute em containers novos. O `Init Duration` é só ~0,5s; o custo real
@@ -351,25 +351,27 @@ Analyze e Execute em containers novos. O `Init Duration` é só ~0,5s; o custo r
 
 **Leitura imediata na verificação, medida.** A rodada de verificação lia depois
 de uma espera fixa de 15s, escolhida e não medida. Sem ela, a leitura acontece
-**0,37s** (0,24–0,70) depois da última escrita da remediação, e as **283 leituras
-de controle saíram `verified`** — como as 280 com espera. Taxa de leitura
-desatualizada < ~1,1% com 95% de confiança, para os controles S3 remediados
+**0,37s** depois da última escrita da remediação, e as **603 leituras de controle**
+das duas séries sem espera saíram `verified` (10 delas do EBS) — como as 280 com
+espera. Taxa de leitura desatualizada < ~0,5% com 95% de confiança
 (`scripts/verification_consistency.py`). Se ocorrer, o erro é seguro: escalação
-indevida, nunca `S_nominal` falso. O `t_verified` caiu de 29,26s para 13,15s e
-fica só 0,26s acima da exposição.
+indevida, nunca `S_nominal` falso. O `t_verified` caiu de 29,26s para ~13,6s e
+fica só ~0,27s acima da exposição.
 
-**Comparado às séries anteriores**, no container lento, que é o único tipo
-presente nas três: `t_remediation` 6,03s (eco) → 6,20s (espera de 15s) → 6,24s
-(atual). Os +0,18s do laço explícito são o estado `ScheduleVerification` (0,156s
-medidos no histórico); a remoção da espera não mudou a remediação. As execuções
-por rodada da suíte caíram de **48,5 (eco) para 36,0 (−26%)**, e um incidente
-com N controles remediados passou de 1 + N para **no máximo 2** execuções.
+**Comparado às séries anteriores**, no container lento: `t_remediation` 6,03s
+(eco) → 6,20s (espera de 15s) → 6,24s (leitura imediata) → 6,26s (três estados).
+Os +0,18s do laço explícito são o estado `ScheduleVerification` (0,156s medidos
+no histórico); nem a remoção da espera nem o grafo de três estados mudaram a
+remediação. Um incidente com N controles remediados passou de 1 + N para **no
+máximo 2** execuções; as execuções por rodada da suíte foram de 48,5 (eco) a 36,0,
+e sobem a 43,0 na série atual só porque C8 e CTRL-05 entraram na suíte.
 
 A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~128MB), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 
 Relatório com os gráficos interativos e a tabela completa: `results/report.html`
-(dados brutos em `results/no-wait/run-NN.json`; séries anteriores em
-`results/two-round/` e `results/`, regeneráveis com `scripts/build_report_data.py`).
+(dados brutos em `results/three-state/run-NN.json`; séries anteriores em
+`results/no-wait/`, `results/two-round/` e `results/`, regeneráveis com
+`scripts/build_report_data.py`).
 
 ## Licença
 
