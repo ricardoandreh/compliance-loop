@@ -96,15 +96,51 @@ def test_verification_round_never_reaches_execute(sm):
     assert "InvokeExecute" not in reachable(inner, "Escalate")
 
 
-def test_a_failed_violation_record_never_remediates(sm):
-    inner = map_states(sm)
-    catch = inner["RegisterViolation"]["Catch"]
-    assert [c["Next"] for c in catch] == ["PlanAction"]
-    assert "audit_write_failed" in catch[0]["Output"]
-    targets = {c["Next"] for c in inner["PlanAction"]["Choices"]
-               if "audit_write_failed" in c["Condition"]}
-    assert targets == {"ViolationNotRecorded"}
-    assert inner["ViolationNotRecorded"]["Type"] == "Fail"
+def test_every_choice_has_a_default(sm):
+    """A Choice without Default fails the execution with States.NoChoiceMatched
+    when no rule matches — an unhandled path that reads like a crash."""
+    for scope in (sm["States"], map_states(sm)):
+        missing = [n for n, st in scope.items() if st["Type"] == "Choice" and "Default" not in st]
+        assert not missing, f"Choice states without Default: {missing}"
+
+
+def test_every_state_is_reachable(sm):
+    for scope, start in ((sm["States"], sm["StartAt"]),
+                         (map_states(sm), sm["States"]["ProcessResults"]["ItemProcessor"]["StartAt"])):
+        unreachable = set(scope) - reachable(scope, start)
+        assert not unreachable, f"unreachable states: {sorted(unreachable)}"
+
+
+def test_retries_use_the_error_prefix_of_their_integration(sm):
+    """aws-sdk integrations name errors after the SDK client (DynamoDb.*), the
+    optimized integrations after the service (DynamoDB.*). A Retry with the
+    other spelling never matches — which is how the control lookups went without
+    any retry. Observed with test-state against both integrations."""
+    for scope in (sm["States"], map_states(sm)):
+        for name, st in scope.items():
+            resource = st.get("Resource", "")
+            for retry in st.get("Retry", []):
+                for err in retry["ErrorEquals"]:
+                    if "aws-sdk:dynamodb" in resource:
+                        assert err.startswith("DynamoDb."), f"{name}: {err}"
+                    elif ":::dynamodb:" in resource:
+                        assert err.startswith("DynamoDB."), f"{name}: {err}"
+
+
+def test_a_verification_round_without_controls_escalates(sm):
+    """Otherwise it would re-evaluate nothing and succeed."""
+    route = sm["States"]["RouteControlLookup"]["Choices"]
+    assert "$count($states.input.controls) > 0" in route[0]["Condition"]
+    assert route[0]["Next"] == "InvokeAnalyze"
+    assert "mode = 'verify'" in route[1]["Condition"]
+    assert route[1]["Next"] == "UnverifiableRemediationEscalation"
+
+
+def test_a_partial_verification_is_not_scheduled(sm):
+    choices = sm["States"]["ScheduleVerificationIfNeeded"]["Choices"]
+    assert choices[0]["Next"] == "ScheduleVerification"
+    assert "$count($states.input.controls[control_id.S in $ids])" in choices[0]["Condition"]
+    assert choices[1]["Next"] == "UnverifiableRemediationEscalation"
 
 
 def test_escalation_names_its_reason(sm):
@@ -145,5 +181,5 @@ def test_verification_round_reads_straight_away(sm):
 
 def test_unverifiable_remediation_escalates(sm):
     catch = sm["States"]["ScheduleVerification"]["Catch"]
-    assert [c["Next"] for c in catch] == ["VerificationNotScheduledEscalation"]
-    assert sm["States"]["VerificationNotScheduledEscalation"]["Next"] == "ExecutionFailed"
+    assert [c["Next"] for c in catch] == ["UnverifiableRemediationEscalation"]
+    assert sm["States"]["UnverifiableRemediationEscalation"]["Next"] == "ExecutionFailed"

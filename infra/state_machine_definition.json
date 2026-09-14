@@ -23,10 +23,20 @@
     },
     "RouteControlLookup": {
       "Type": "Choice",
-      "Comment": "Verification rounds (mode=verify) carry the controls to re-check → re-evaluate them straight away, with the definitions that round carried over (nothing to look up). Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events carry neither → fan out by event_name.",
+      "Comment": "Verification rounds (mode=verify) carry the controls to re-check → re-evaluate them straight away; a verification round without controls would re-evaluate nothing and succeed, so it escalates instead. Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events carry neither → fan out by event_name.",
       "Choices": [
-        { "Condition": "{% $states.input.mode = 'verify' %}", "Next": "InvokeAnalyze" },
-        { "Condition": "{% $states.input.control_id != '' %}", "Next": "GetControlById" }
+        {
+          "Condition": "{% $states.input.mode = 'verify' and $count($states.input.controls) > 0 %}",
+          "Next": "InvokeAnalyze"
+        },
+        {
+          "Condition": "{% $states.input.mode = 'verify' %}",
+          "Next": "UnverifiableRemediationEscalation"
+        },
+        {
+          "Condition": "{% $states.input.control_id != '' %}",
+          "Next": "GetControlById"
+        }
       ],
       "Default": "QueryControls"
     },
@@ -35,7 +45,11 @@
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
       "Arguments": {
         "TableName": "${controls_table}",
-        "Key": { "control_id": { "S": "{% $states.input.control_id %}" } }
+        "Key": {
+          "control_id": {
+            "S": "{% $states.input.control_id %}"
+          }
+        }
       },
       "Output": {
         "resource_arn": "{% $states.input.resource_arn %}",
@@ -48,11 +62,23 @@
         "controls": "{% $exists($states.result.Item) ? [$states.result.Item] : [] %}"
       },
       "Retry": [
-        { "ErrorEquals": ["DynamoDB.ProvisionedThroughputExceededException"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2.0 }
+        {
+          "ErrorEquals": [
+            "DynamoDb.ProvisionedThroughputExceededException",
+            "DynamoDb.RequestLimitExceededException",
+            "DynamoDb.InternalServerErrorException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0,
+          "Comment": "aws-sdk integrations name errors DynamoDb.* (lowercase b); DynamoDB.* is the optimized integration's prefix and would never match here."
+        }
       ],
       "Catch": [
         {
-          "ErrorEquals": ["States.ALL"],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Output": {
             "resource_arn": "{% $states.input.resource_arn %}",
             "resource_id": "{% $states.input.resource_id %}",
@@ -60,7 +86,7 @@
             "region": "{% $states.input.region %}",
             "error": "{% $states.errorOutput %}"
           },
-          "Next": "QueryControlsFailedEscalation"
+          "Next": "ControlLookupFailedEscalation"
         }
       ],
       "Next": "CheckRequestedControlFound"
@@ -90,7 +116,9 @@
         "TableName": "${controls_table}",
         "FilterExpression": "contains(cloudtrail_events, :evt)",
         "ExpressionAttributeValues": {
-          ":evt": { "S": "{% $states.input.event_name %}" }
+          ":evt": {
+            "S": "{% $states.input.event_name %}"
+          }
         }
       },
       "Output": {
@@ -103,11 +131,23 @@
         "controls": "{% $states.result.Items %}"
       },
       "Retry": [
-        { "ErrorEquals": ["DynamoDB.ProvisionedThroughputExceededException"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2.0 }
+        {
+          "ErrorEquals": [
+            "DynamoDb.ProvisionedThroughputExceededException",
+            "DynamoDb.RequestLimitExceededException",
+            "DynamoDb.InternalServerErrorException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0,
+          "Comment": "aws-sdk integrations name errors DynamoDb.* (lowercase b); DynamoDB.* is the optimized integration's prefix and would never match here."
+        }
       ],
       "Catch": [
         {
-          "ErrorEquals": ["States.ALL"],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Output": {
             "resource_arn": "{% $states.input.resource_arn %}",
             "resource_id": "{% $states.input.resource_id %}",
@@ -115,7 +155,7 @@
             "region": "{% $states.input.region %}",
             "error": "{% $states.errorOutput %}"
           },
-          "Next": "QueryControlsFailedEscalation"
+          "Next": "ControlLookupFailedEscalation"
         }
       ],
       "Next": "CheckControlsFound"
@@ -154,11 +194,23 @@
         "results": "{% $states.result.Payload.results %}"
       },
       "Retry": [
-        { "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
       ],
       "Catch": [
         {
-          "ErrorEquals": ["States.ALL"],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Output": {
             "resource_arn": "{% $states.input.resource_arn %}",
             "resource_id": "{% $states.input.resource_id %}",
@@ -268,23 +320,13 @@
           },
           "RegisterViolation": {
             "Type": "Task",
-            "Comment": "In a verification round the violation is a non-convergence: a remediation reported success and the policy still fails, so the row carries the link to the violation it verifies and remediation_status=not_converged.",
+            "Comment": "In a verification round the violation is a non-convergence: a remediation reported success and the policy still fails, so the row carries the link to the violation it verifies and remediation_status=not_converged. Like every other write, no Retry/Catch (design.md, L1).",
             "Resource": "arn:aws:states:::dynamodb:putItem",
             "Arguments": {
               "TableName": "${violations_log_table}",
               "Item": "{% $merge([{'violation_id': {'S': $states.input.analyze_result.violation_id}, 'resource_arn': {'S': $states.input.resource_arn}, 'control_id': {'S': $states.input.analyze_result.control_id}, 'state': {'S': 'S_violation'}, 'timestamp': {'S': $states.input.analyze_result.timestamp}, 'policy_version': {'S': $states.input.analyze_result.policy_version}, 'account_id': {'S': $states.input.account_id}, 'region': {'S': $states.input.region}}, $states.input.mode = 'verify' ? {'round': {'S': 'verification'}, 'origin_execution': {'S': $states.input.origin_execution}, 'verifies_violation_id': {'S': ($lookup($states.input.origin_violations, $states.input.analyze_result.control_id) ? $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) : 'unknown')}, 'remediation_status': {'S': 'not_converged'}} : {}]) %}"
             },
             "Output": "{% $states.input %}",
-            "Catch": [
-              {
-                "ErrorEquals": [
-                  "States.ALL"
-                ],
-                "Comment": "A failed audit write must not suppress a non-convergence alert. In a detection round it still stops the iteration, as before (design.md, L1).",
-                "Output": "{% $merge([$states.input, {'audit_write_failed': true}]) %}",
-                "Next": "PlanAction"
-              }
-            ],
             "Next": "PlanAction"
           },
           "PlanAction": {
@@ -294,18 +336,9 @@
               {
                 "Condition": "{% $states.input.mode = 'verify' %}",
                 "Next": "Escalate"
-              },
-              {
-                "Condition": "{% $states.input.audit_write_failed = true %}",
-                "Next": "ViolationNotRecorded"
               }
             ],
             "Default": "InvokeExecute"
-          },
-          "ViolationNotRecorded": {
-            "Type": "Fail",
-            "Error": "AuditWriteFailed",
-            "Cause": "The S_violation row could not be written, so the remediation is not attempted without its audit record (design.md, L1)."
           },
           "InvokeExecute": {
             "Type": "Task",
@@ -341,7 +374,8 @@
                 "ErrorEquals": [
                   "Lambda.ServiceException",
                   "Lambda.AWSLambdaException",
-                  "Lambda.SdkClientException"
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
                 ],
                 "IntervalSeconds": 5,
                 "MaxAttempts": 2,
@@ -372,14 +406,11 @@
           },
           "CheckRemediationStatus": {
             "Type": "Choice",
+            "Comment": "Anything but an explicit success is a failure: 'failed', a missing status or an unexpected value all escalate.",
             "Choices": [
               {
                 "Condition": "{% $states.input.execute_result.remediation_status = 'success' %}",
                 "Next": "UpdateLogSuccess"
-              },
-              {
-                "Condition": "{% $states.input.execute_result.remediation_status = 'failed' %}",
-                "Next": "UpdateLogFailed"
               }
             ],
             "Default": "UpdateLogFailed"
@@ -478,9 +509,16 @@
     },
     "ScheduleVerificationIfNeeded": {
       "Type": "Choice",
-      "Comment": "Close the MAPE-K loop with exactly one more round. Only a detection round that remediated something schedules it, and a verification round never does, so an incident costs at most two executions and cannot oscillate. The remediation's own CloudTrail events no longer start executions: the EventBridge rule filters out the Execute role.",
+      "Comment": "A detection round that remediated schedules one verification round carrying every remediated control. If the controls it would carry do not match what was remediated, the verification could pass without checking some of them — so that escalates instead of scheduling a partial check.",
       "Choices": [
-        { "Condition": "{% $not($states.input.mode = 'verify') and $count($states.input.outcomes[outcome = 'remediated']) > 0 %}", "Next": "ScheduleVerification" }
+        {
+          "Condition": "{% $not($states.input.mode = 'verify') and $count($states.input.outcomes[outcome = 'remediated']) > 0 and ( $ids := $states.input.outcomes[outcome = 'remediated'].control_id; $count($states.input.controls[control_id.S in $ids]) ) = $count($states.input.outcomes[outcome = 'remediated']) %}",
+          "Next": "ScheduleVerification"
+        },
+        {
+          "Condition": "{% $not($states.input.mode = 'verify') and $count($states.input.outcomes[outcome = 'remediated']) > 0 %}",
+          "Next": "UnverifiableRemediationEscalation"
+        }
       ],
       "Default": "EvaluateOutcome"
     },
@@ -504,11 +542,20 @@
       },
       "Output": "{% $states.input %}",
       "Retry": [
-        { "ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2.0 }
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
       ],
       "Catch": [
         {
-          "ErrorEquals": ["States.ALL"],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Comment": "A remediation whose convergence can no longer be verified is a governance gap, not a success.",
           "Output": {
             "resource_arn": "{% $states.input.resource_arn %}",
@@ -517,19 +564,20 @@
             "region": "{% $states.input.region %}",
             "error": "{% $states.errorOutput %}"
           },
-          "Next": "VerificationNotScheduledEscalation"
+          "Next": "UnverifiableRemediationEscalation"
         }
       ],
       "Next": "EvaluateOutcome"
     },
-    "VerificationNotScheduledEscalation": {
+    "UnverifiableRemediationEscalation": {
       "Type": "Task",
+      "Comment": "Convergence cannot be verified: the verification round could not be started, would carry fewer controls than were remediated, or arrived without controls.",
       "Resource": "arn:aws:states:::sqs:sendMessage",
       "Arguments": {
         "QueueUrl": "${escalation_queue_url}",
-        "MessageBody": "{% $string({'violation_id': 'verification-not-scheduled-' & $states.context.Execution.Name, 'resource_arn': $states.input.resource_arn, 'control_id': 'remediated-controls', 'error': 'Remediation succeeded but the verification round could not be scheduled; convergence is unverified: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+        "MessageBody": "{% $string({'violation_id': 'unverifiable-remediation-' & $states.context.Execution.Name, 'resource_arn': $states.input.resource_arn, 'control_id': 'remediated-controls', 'error': 'Remediation convergence cannot be verified: ' & ($states.input.error ? $string($states.input.error) : ($states.input.mode = 'verify' ? 'the verification round carries no controls to re-evaluate' : 'the controls to verify do not match the remediated controls')), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
         "MessageGroupId": "{% $states.input.resource_id & '#verification' %}",
-        "MessageDeduplicationId": "{% 'verification-not-scheduled-' & $states.context.Execution.Name %}"
+        "MessageDeduplicationId": "{% 'unverifiable-remediation-' & $states.context.Execution.Name %}"
       },
       "Next": "ExecutionFailed"
     },
@@ -551,14 +599,15 @@
       },
       "Next": "ExecutionFailed"
     },
-    "QueryControlsFailedEscalation": {
+    "ControlLookupFailedEscalation": {
       "Type": "Task",
+      "Comment": "Covers both control lookups: the scan by event (QueryControls) and the lookup by id (GetControlById).",
       "Resource": "arn:aws:states:::sqs:sendMessage",
       "Arguments": {
         "QueueUrl": "${escalation_queue_url}",
-        "MessageBody": "{% $string({'violation_id': 'query-controls-failed-' & $states.input.resource_id & '-' & $now(), 'resource_arn': $states.input.resource_arn, 'control_id': 'unknown', 'error': 'QueryControls failed: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
-        "MessageGroupId": "{% $states.input.resource_id & '#query-controls' %}",
-        "MessageDeduplicationId": "{% 'query-controls-failed-' & $states.input.resource_id & '-' & $now() %}"
+        "MessageBody": "{% $string({'violation_id': 'control-lookup-failed-' & $states.input.resource_id & '-' & $now(), 'resource_arn': $states.input.resource_arn, 'control_id': 'unknown', 'error': 'Control lookup failed: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+        "MessageGroupId": "{% $states.input.resource_id & '#control-lookup' %}",
+        "MessageDeduplicationId": "{% 'control-lookup-failed-' & $states.input.resource_id & '-' & $now() %}"
       },
       "Next": "ExecutionFailed"
     },
@@ -568,7 +617,7 @@
     "ExecutionFailed": {
       "Type": "Fail",
       "Error": "ComplianceEscalation",
-      "Cause": "One or more controls required escalation"
+      "Cause": "The execution escalated to a human; the escalation message carries the reason."
     }
   }
 }

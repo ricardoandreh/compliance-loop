@@ -222,16 +222,20 @@ A máquina de estados usa JSONata e processa múltiplos controles via Map state.
 ResolveResource          # extrai resource_id/resource_arn dos request_parameters do CloudTrail;
                          # normaliza mode (detect|verify) e a origem da rodada de verificação
   → RouteControlLookup   # Choice, em ordem:
-       ├─ mode = verify → InvokeAnalyze   # lê imediatamente: a consistência foi medida, não presumida
+       ├─ mode = verify e há controles → InvokeAnalyze   # lê imediatamente: consistência medida
        │                          # usa as definições dos controles remediados que a rodada
        │                          # de detecção carregou; não há consulta a fazer
+       ├─ mode = verify sem controles → UnverifiableRemediationEscalation → ExecutionFailed
+       │                          # uma verificação sem controles reavaliaria nada e passaria
        ├─ input tem control_id (re-avaliação de exceção) → GetControlById
        │          → CheckRequestedControlFound
        │               ├─ achou → InvokeAnalyze
        │               └─ não   → RequestedControlNotFound (SQS) → ExecutionFailed
        │                          # controle referenciado por exceção foi renomeado/removido:
        │                          # erro de governança, NUNCA sucesso silencioso
+       │          (lookup falhou → ControlLookupFailedEscalation → ExecutionFailed)
        └─ não → QueryControls             # scan na tabela controls por cloudtrail_events
+                  (falhou → ControlLookupFailedEscalation → ExecutionFailed)
                   → CheckControlsFound    # Choice: há controles? senão → ExecutionSucceeded
   → InvokeAnalyze        # Lambda; recebe controls completos, retorna results[] (um por controle)
        (Catch States.ALL → AnalyzeFailedEscalation → ExecutionFailed)
@@ -246,17 +250,21 @@ ResolveResource          # extrai resource_id/resource_arn dos request_parameter
             │          ├─ mode = verify        → Escalate (non_convergence) → outcome=escalated
             │          │                          # primeira regra de propósito: numa rodada de
             │          │                          # verificação uma violação nunca alcança InvokeExecute
-            │          ├─ gravação falhou      → ViolationNotRecorded (Fail)
             │          └─ senão → InvokeExecute
             │                → CheckRemediationStatus
             │                     ├─ success → UpdateLogSuccess (updateItem) → outcome=remediated
-            │                     └─ failed  → UpdateLogFailed  (updateItem) → Escalate (remediation_failed)
+            │                     └─ default → UpdateLogFailed  (updateItem) → Escalate (remediation_failed)
+            │                                  # qualquer coisa que não seja success explícito
             │                (Catch States.ALL → UpdateLogFailed → Escalate)
             └─ default (sem estado) → Escalate (system_failure) → outcome=escalated
                                        # falha do sistema, fora do modelo: sem registro de estado
-  → ScheduleVerificationIfNeeded   # Choice: não é verify E algum outcome=remediated?
-       └─ sim → ScheduleVerification  # states:startExecution na própria máquina (mode=verify)
-                 (Catch → VerificationNotScheduledEscalation → ExecutionFailed)
+  → ScheduleVerificationIfNeeded   # Choice, em ordem:
+       ├─ detecção, remediou, e os controles a verificar cobrem todos os remediados
+       │     → ScheduleVerification  # states:startExecution na própria máquina (mode=verify)
+       │          (Catch → UnverifiableRemediationEscalation → ExecutionFailed)
+       ├─ detecção, remediou, mas faltam controles → UnverifiableRemediationEscalation
+       │                          # uma verificação parcial passaria sem checar os que faltam
+       └─ default → EvaluateOutcome
   → EvaluateOutcome      # Choice: algum outcome=escalated? → ExecutionFailed; senão → ExecutionSucceeded
 ```
 
@@ -1336,11 +1344,13 @@ O valor anterior (Lambda 15s) não cobria sequer o pior caso nominal de 4 contro
 
 **State Machine Errors**:
 - Lambda invocation failure: `Retry` explícito em `InvokeAnalyze` e `InvokeExecute`, com `Catch States.ALL` para escalação
-- Leitura da tabela `controls` (`QueryControls` / `GetControlById`): `Retry` em `ProvisionedThroughputExceededException` + `Catch` → `QueryControlsFailedEscalation`
-- Escrita do `RegisterViolation`: `Catch States.ALL` → `PlanAction`, que numa rodada de verificação ainda escala (a falha da gravação não suprime o alerta de não convergência) e numa rodada de detecção termina em `ViolationNotRecorded` — não remedia sem o registro
+- Lambda: `Retry` em `Lambda.ServiceException`, `Lambda.AWSLambdaException`, `Lambda.SdkClientException` e `Lambda.TooManyRequestsException` — o último, throttling, faltava na lista
+- Leitura da tabela `controls` (`QueryControls` / `GetControlById`): `Retry` em `DynamoDb.ProvisionedThroughputExceededException`, `DynamoDb.RequestLimitExceededException` e `DynamoDb.InternalServerErrorException` + `Catch` → `ControlLookupFailedEscalation`. **Correção**: o `Retry` anterior usava o prefixo `DynamoDB.`, que é o da integração otimizada; a integração `aws-sdk` nomeia os erros `DynamoDb.*` (observado com `test-state` nas duas integrações), então o retry nunca casava e um throttling na leitura dos controles escalava na primeira tentativa. `tests/unit/test_state_machine.py` agora exige o prefixo de cada integração
+- Rodada de verificação que não pode verificar tudo: não iniciou, carregaria menos controles que os remediados, ou chegou sem controles → `UnverifiableRemediationEscalation`. Antes, uma rodada de verificação sem controles reavaliava nada e terminava `SUCCEEDED`
+- Todo `Choice` tem `Default` e todo estado é alcançável — verificado estaticamente
 - Global timeout (600s): encerra a execução como `FAILED`
 
-**Nota sobre retry nas escritas**: o Step Functions aplica retry *default* apenas às integrações otimizadas de **Lambda**. Integrações DynamoDB e SQS **não** têm retry implícito — o retry precisa ser declarado estado a estado. Os estados `RegisterNominal`, `RegisterException`, `UpdateLogSuccess`, `UpdateLogFailed` e `Escalate` **não** declaram `Retry` nem `Catch`, e o `RegisterViolation` declara `Catch` mas não `Retry`; ver *Limitações Conhecidas*.
+**Nota sobre retry nas escritas**: o Step Functions aplica retry *default* apenas às integrações otimizadas de **Lambda**. Integrações DynamoDB e SQS **não** têm retry implícito — o retry precisa ser declarado estado a estado. Os estados `RegisterNominal`, `RegisterException`, `UpdateLogSuccess`, `UpdateLogFailed` e `Escalate` **não** declaram `Retry` nem `Catch`, nem o `RegisterViolation`; ver *Limitações Conhecidas*.
 
 **Error Recovery**: `Retry` e `Catch` declarados por estado nos pontos listados acima. Erros não capturados resultam em execução `FAILED`, visível no console e nas métricas do Step Functions.
 
@@ -2426,15 +2436,15 @@ Esta seção registra lacunas **identificadas e não fechadas**, com a justifica
 
 ### L1. Ausência de `Retry`/`Catch` nas escritas do Step Functions
 
-**O que**: nove estados de escrita não declaram `Retry` nem `Catch`. No Map: `RegisterNominal`, `RegisterException`, `UpdateLogSuccess`, `UpdateLogFailed` e `Escalate`. No nível superior, os próprios estados de escalação: `RequestedControlNotFound`, `AnalyzeFailedEscalation`, `QueryControlsFailedEscalation` e `VerificationNotScheduledEscalation` — uma falha transitória neles faz a escalação se perder. `RegisterViolation` tem `Catch` (→ `PlanAction`), mas não `Retry`. O `ProcessResults` (Map) também não declara `Catch`.
+**O que**: dez estados de escrita não declaram `Retry` nem `Catch`. No Map: `RegisterNominal`, `RegisterException`, `RegisterViolation`, `UpdateLogSuccess`, `UpdateLogFailed` e `Escalate`. No nível superior, os próprios estados de escalação: `RequestedControlNotFound`, `AnalyzeFailedEscalation`, `ControlLookupFailedEscalation` e `UnverifiableRemediationEscalation` — uma falha transitória neles faz a escalação se perder. O `ProcessResults` (Map) também não declara `Catch`. A lacuna é uniforme de propósito: um `Catch` isolado no `RegisterViolation`, que existiu por um tempo com um `Fail` próprio (`ViolationNotRecorded`), protegia um único alerta enquanto o próprio `Escalate` continuava sem proteção, e nunca chegou a executar.
 
-**Consequência**: uma falha transitória de DynamoDB em `RegisterViolation` numa rodada de detecção termina em `ViolationNotRecorded`; sem `Catch` no Map, a execução termina `FAILED` sem remediação e sem escalação. Com `MaxConcurrency=1`, os controles seguintes daquela avaliação não chegam a ser processados — num evento `CreateBucket` são 4 controles.
+**Consequência**: uma falha transitória de DynamoDB em `RegisterViolation` faz a iteração falhar; sem `Catch` no Map, a execução termina `FAILED` sem remediação e sem escalação. Com `MaxConcurrency=1`, os controles seguintes daquela avaliação não chegam a ser processados — num evento `CreateBucket` são 4 controles.
 
 **Por que não foi fechado**: o modo de falha exige throttling de DynamoDB numa tabela `PAY_PER_REQUEST` com 5 controles e volume de teste. Não é alcançável nos cenários de avaliação, portanto a correção não seria **demonstrável** — apenas afirmada. Fechá-la sem poder exercitá-la adicionaria superfície não verificada ao artefato.
 
 **Como fechar**: o princípio é que nenhum estado dentro do Map pode lançar exceção — toda saída termina num `outcome`. Isso exige `Retry` (throttling/erros internos) e `Catch` por estado, com destino coerente: `RegisterViolation` → `InvokeExecute` (a remediação não pode ser bloqueada pela auditoria), `RegisterNominal`/`RegisterException` → estado de escalação de auditoria degradada, `UpdateLogFailed` → `Escalate`. Um `Catch` no próprio `ProcessResults` cobre o resto. Observação: `ToleratedFailureCount` **não** resolve — só existe em Distributed Map, e `ProcessResults` é `INLINE`.
 
-**Efeito colateral a tratar junto**: se o `ViolationNotRecorded` for trocado por seguir para `InvokeExecute`, os `UpdateLog*` viram *upsert* e criam linha fantasma — o mesmo defeito que o `ConditionExpression attribute_exists(violation_id)` corrigiu na Lambda de escalação. A correção é simétrica: aplicar a mesma condição aos dois `UpdateLog*`.
+**Efeito colateral a tratar junto**: se `RegisterViolation` falhar e o fluxo seguir para `InvokeExecute`, os `UpdateLog*` viram *upsert* e criam linha fantasma — o mesmo defeito que o `ConditionExpression attribute_exists(violation_id)` corrigiu na Lambda de escalação. A correção é simétrica: aplicar a mesma condição aos dois `UpdateLog*`.
 
 ### L2. `Scan` sem paginação na resolução de controles
 
