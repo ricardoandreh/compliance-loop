@@ -206,13 +206,37 @@ O padrão gerado pelo `controls-sync` inclui ainda uma cláusula de identidade: 
 **Responsibility**: Coordenar transições entre componentes do loop MAPE-K baseado em classificação de estado.
 
 **Implementation**:
-- Step Functions Standard workflow (não Express) para histórico de 90 dias
+- Step Functions **Standard** (não Express) — ver *Por que Standard e não Express*
 - Choice states para decisão baseada em `$.state`
 - SDK integrations diretas para DynamoDB (sem Lambda intermediária)
 - Timeout global de 600 segundos (ver a cadeia de timeouts em *Correctness Properties*)
 - Estados terminais explícitos: `ExecutionSucceeded` (Succeed) e `ExecutionFailed` (Fail com `Error: ComplianceEscalation`)
 - **Laço fechado em duas rodadas**: uma rodada de detecção que remediou algo agenda exatamente uma rodada de verificação (`mode = verify`), que confirma `S_nominal` ou escala — nunca remedeia de novo. Ver *Fechamento do laço em duas rodadas*
 - Após o Map state, `EvaluateOutcome` verifica se algum controle foi escalado — se sim, a execução termina como FAILED
+
+#### Por que Standard e não Express
+
+A escolha não é por custo — nesse quesito o Express ganharia —, e sim por três propriedades de que o projeto depende. Nenhum recurso de orquestração exclusivo do Standard é usado (`.sync`, callback com token, `Wait` longo), então são essas três que justificam o tipo.
+
+| Propriedade | Standard | Express | Onde o projeto depende dela |
+|---|---|---|---|
+| **Histórico consultável por API** | `DescribeExecution`, `GetExecutionHistory` e `ListExecutions`, por 90 dias | Não disponíveis; o histórico existe apenas nos CloudWatch Logs | Toda a medição — `integration_test.py`, `benchmark.py`, `classify_cold_starts.py`, `verification_consistency.py` — lê o histórico por API. Na auditoria (H2), a issue aponta o ARN da execução, que o Standard mantém consultável |
+| **Semântica de execução** | Exatamente uma vez por disparo | Pelo menos uma vez quando iniciada de forma assíncrona (EventBridge, `startExecution`) | Uma violação deve gerar uma remediação, uma linha de `S_violation` e, se falhar, uma issue. Uma execução duplicada teria outro `violation_id` — gerado pelo Analyze a cada avaliação —, então nem a deduplicação da fila FIFO nem a de issues a pegariam: duas linhas e duas escalações para o mesmo incidente |
+| **Duração máxima** | 1 ano | 5 minutos | O `TimeoutSeconds` global é 600 s porque o pior caso serial é 550 s (ver *Property 28*). O caso típico caberia com folga — a execução mais longa de uma rodada da suíte levou 19,4 s —, mas o limite existiria só no caso típico |
+
+As três propriedades vêm da documentação do Step Functions; a primeira e a segunda são exercitadas por construção em cada execução da suíte, e a terceira pelo orçamento de timeouts.
+
+**Custo, medido numa rodada real do benchmark** (`results/three-state/`, rodada 05, 43 execuções):
+
+| | Transições por execução | Standard (US$ 0,025 por 1.000 transições) | Express (US$ 1 por milhão de requisições + GB-s; estimativa) |
+|---|---|---|---|
+| Rodada de detecção | 19,8 em média (máx. 30) | ~US$ 0,00050 | ~US$ 0,000006 |
+| Rodada de verificação | 10,4 em média | ~US$ 0,00026 | ~US$ 0,000002 |
+| Rodada inteira da suíte | 673 transições, 225 s somados | **~US$ 0,017** | **~US$ 0,0002** |
+
+O Express seria ~100× mais barato. Em valor absoluto é irrelevante para a avaliação: as 4.000 transições mensais gratuitas cobrem ~6 rodadas da suíte. Em produção, a 100 mil incidentes por mês (~30 transições cada), o Standard custaria ~US$ 75/mês contra menos de US$ 1 do Express. A diferença encolhe por um motivo: o log da máquina já está em `level: ALL` com `includeExecutionData`, e o Express dependeria dele para ter qualquer histórico — o custo de ingestão no CloudWatch Logs passaria a pesar mais que as transições.
+
+**Quando o Express seria a escolha**: alto volume de eventos curtos, com deduplicação própria (por exemplo, `violation_id` derivado do evento em vez de gerado por avaliação), auditoria reconstruída a partir dos logs e o pior caso de duração abaixo de 5 minutos. Nenhuma das três condições vale neste escopo.
 
 **State Machine Definition** (estrutura real):
 
