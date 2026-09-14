@@ -98,10 +98,11 @@ def wait_for_revocation_cascade(grace=30):
 def close_escalation_issue(resource_id, control_id, timeout=75):
     """Close the GitHub issue this scenario opened on purpose.
 
-    C4 escalates by design — a bucket that does not exist, so remediation fails
-    and the loop raises an issue. That is the behaviour under test, but without
-    cleanup every benchmark run leaves one more issue behind for a bucket that
-    never existed; 71 had accumulated before this was added.
+    C4 and C8 escalate by design — a bucket that does not exist (C4, a system
+    failure) and a remediation the Execute role is denied (C8). That is the
+    behaviour under test, but without cleanup every benchmark run leaves more
+    issues behind for fixtures the test invented; 71 had accumulated before this
+    was added.
 
     The issue arrives asynchronously (SQS → Lambda → GitHub API), so poll for it
     rather than assume it is already there. Nothing here is fatal: the scenario's
@@ -338,6 +339,17 @@ def assert_no_remediation_echo(resource_id, since, remediation_only_events):
         f"rule is not filtering the Execute role")
 
 
+def escalation_reasons(exec_arn):
+    """The `reason` of every escalation an execution enqueued, in order."""
+    reasons = []
+    for ev in sfn.get_execution_history(executionArn=exec_arn, maxResults=1000)["events"]:
+        sched = ev.get("taskScheduledEventDetails")
+        if sched and sched.get("resourceType") == "sqs":
+            body = json.loads(json.loads(sched["parameters"])["MessageBody"])
+            reasons.append(body.get("reason"))
+    return reasons
+
+
 def get_execution_timing(exec_arn):
     """Extract start/stop timestamps and duration from execution history."""
     desc = sfn.describe_execution(executionArn=exec_arn)
@@ -530,7 +542,12 @@ def test_c3():
 
 
 def test_c4():
-    """C4: Bucket inexistente → escalação → FAILED"""
+    """C4: Falha do sistema (bucket inexistente) → escalação → FAILED
+
+    The bucket does not exist, so Analyze cannot read it: the control gets no
+    state and escalates as a system failure. Nothing is remediated — the failed
+    remediation path is C8.
+    """
     bucket_name = f"bucket-inexistente-c4-{int(time.time())}"
     metrics = {}
     # StartExecution returns the ARN, so this scenario can poll the exact
@@ -560,6 +577,9 @@ def test_c4():
 
     assert desc["error"] == "ComplianceEscalation", \
         f"Expected ComplianceEscalation, got {desc.get('error')}"
+
+    reasons = escalation_reasons(exec_arn)
+    assert reasons == ["system_failure"], f"escalation reasons: {reasons}"
 
     metrics["t_escalation"] = get_execution_timing(exec_arn)["duration_s"]
 
@@ -697,6 +717,93 @@ def test_c7():
 
 # --- Per-Control Validation Tests ---
 
+def test_c8():
+    """C8: Remediação falha → S_violation preservado → escalação (remediation_failed)"""
+    # C4 never reaches remediation: the bucket does not exist, so Analyze cannot
+    # read it and the control escalates as a system failure, with no state. This
+    # scenario covers the other escalation path — the resource is really in
+    # S_violation, Analyze says so, and the remediation itself fails.
+    #
+    # The failure is induced, not mocked: a bucket policy denies exactly one
+    # action, s3:PutBucketPublicAccessBlock, to exactly one principal, the
+    # Execute role. Analyze (another role) still reads the bucket, and this
+    # runner (an IAM user) can still break it and delete it.
+    name = f"compliance-inttest-c8-{int(time.time())}"
+    arn = f"arn:aws:s3:::{name}"
+    metrics = {}
+    role_arn = boto3.client("lambda", region_name=REGION).get_function_configuration(
+        FunctionName=f"{PREFIX}-execute-{ENV}")["Role"]
+    deny = {"Sid": "DenyRemediationForC8", "Effect": "Deny", "Principal": "*",
+            "Action": "s3:PutBucketPublicAccessBlock", "Resource": arn,
+            "Condition": {"ArnEquals": {"aws:PrincipalArn": role_arn}}}
+    create_bucket(name)
+    try:
+        # Let the CreateBucket round finish first: it remediates ssl-only by
+        # merging into the bucket policy, and a merge that read the policy before
+        # the Deny was written would drop it.
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_quiesce()
+        s3.put_bucket_policy(Bucket=name, Policy=json.dumps(
+            {"Version": "2012-10-17", "Statement": [deny]}))
+        # That write is a PutBucketPolicy event of its own: ssl-only merges its
+        # statement back in, keeping the Deny. Wait for it and make sure.
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_quiesce()
+        statements = json.loads(s3.get_bucket_policy(Bucket=name)["Policy"])["Statement"]
+        assert any(st.get("Sid") == "DenyRemediationForC8" for st in statements), \
+            "setup: the Deny statement did not survive the ssl-only merge"
+
+        t_event = aws_now()
+        set_public_access(name, block=False)
+        log(f"Violation on {name}, remediation denied to the Execute role")
+        time.sleep(WAIT_CLOUDTRAIL)
+
+        execs = wait_for_executions(t_event, ["FAILED"], min_count=1)
+        assert execs, "No FAILED execution found"
+        chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock", resource_id=name)
+        desc = sfn.describe_execution(executionArn=chosen["executionArn"])
+        assert desc["status"] == "FAILED" and desc["error"] == "ComplianceEscalation", \
+            f"Expected FAILED/ComplianceEscalation, got {desc['status']}/{desc.get('error')}"
+
+        # The escalation is the remediation-failure one, not a system failure.
+        reasons = escalation_reasons(chosen["executionArn"])
+        assert reasons == ["remediation_failed"], f"escalation reasons: {reasons}"
+        metrics["t_escalation"] = get_execution_timing(chosen["executionArn"])["duration_s"]
+
+        # The state stays S_violation, with the failure recorded next to it
+        # (Property 24) — not a new state.
+        failed = [v for v in query_violations(arn)
+                  if v["state"] == "S_violation" and v.get("remediation_status") == "failed"]
+        assert len(failed) == 1, f"expected one failed S_violation row, got {len(failed)}"
+        assert "AccessDenied" in failed[0].get("remediation_error", ""), failed[0].get("remediation_error")
+
+        # The resource is left as the violation left it, and a failed
+        # remediation schedules no verification round.
+        assert not any(get_public_access(name).values()), "bucket changed despite the failure"
+        rounds = [x for x in executions_for(name, t_event - 5)
+                  if x["input"].get("origin_execution") == chosen["executionArn"]]
+        assert not rounds, f"{len(rounds)} verification round(s) for a failed remediation"
+
+        # The issue is linked back to the violation row (Property 22). The link is
+        # written by the escalation Lambda, asynchronously.
+        deadline = time.time() + 90
+        linked = None
+        while time.time() < deadline and not linked:
+            row = dynamodb.Table(VIOLATIONS_TABLE).get_item(
+                Key={"violation_id": failed[0]["violation_id"]}).get("Item", {})
+            linked = row.get("github_issue_url")
+            if not linked:
+                time.sleep(3)
+        assert linked, "the GitHub issue was not linked to the violation row"
+
+        log(f"t_escalation={metrics['t_escalation']}s  issue={linked}", "TIME")
+        log("C8 PASSED", "OK")
+        close_escalation_issue(name, "ctrl-s3-public-block")
+        return True, metrics
+    finally:
+        delete_bucket(name)
+
+
 def test_ctrl_s3_public_block():
     """CTRL-01: ctrl-s3-public-block remediates to all true"""
     name = f"compliance-ctrl01-{int(time.time())}"
@@ -804,10 +911,11 @@ TESTS = [
     ("C1", "Violação simples → remediação automática", test_c1),
     ("C2", "Exceção ativa → S_exception", test_c2),
     ("C3", "Exceção expira → remediação", test_c3),
-    ("C4", "Bucket inexistente → escalação", test_c4),
+    ("C4", "Falha do sistema (bucket inexistente) → escalação", test_c4),
     ("C5", "Violação por IaC → remediação", test_c5),
     ("C6", "Recurso já conforme → S_nominal", test_c6),
     ("C7", "Controls-sync → EventBridge dinâmico", test_c7),
+    ("C8", "Remediação falha → escalação", test_c8),
     ("CTRL-01", "ctrl-s3-public-block", test_ctrl_s3_public_block),
     ("CTRL-02", "ctrl-s3-ssl-only", test_ctrl_s3_ssl_only),
     ("CTRL-03", "ctrl-s3-versioning", test_ctrl_s3_versioning),
@@ -892,7 +1000,8 @@ def main():
     failed_execs = []
     resp = sfn.list_executions(stateMachineArn=SFN_ARN, statusFilter="FAILED", maxResults=100)
     failed_execs = [e for e in resp["executions"] if e["startDate"].timestamp() > suite_start]
-    expected_failed = 1 if "C4" in results else 0  # C4 ends FAILED by design
+    # C4 (system failure) and C8 (failed remediation) end FAILED by design.
+    expected_failed = sum(1 for n in ("C4", "C8") if n in results)
     unexpected = len(failed_execs) - expected_failed
     if unexpected > 0:
         log(f"AUDIT: {unexpected} unexpected FAILED execution(s) during the run "

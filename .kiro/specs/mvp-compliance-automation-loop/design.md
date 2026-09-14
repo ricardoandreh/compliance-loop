@@ -1521,7 +1521,7 @@ def test_compliant_resource_classification(
 5. Verify Execute remediates to compliant state
 6. Verify violations_log contains entry with state S_violation and remediation_status "success"
 
-**C4: Failed Remediation**:
+**C8: Failed Remediation** (implementado como `test_c8`; a especificação era a do C4 original, mas o C4 da suíte usa um bucket inexistente e cobre falha do sistema — ver Teste 6 e Teste 11):
 1. Create S3 bucket with public access enabled
 2. Remove IAM permissions for Execute Lambda
 3. Trigger CloudTrail event
@@ -2066,7 +2066,9 @@ confirmação. É o argumento empírico central de H2 (rastreabilidade/completud
 - **Execução 3 (confirmação)**: `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:95c2fd63-9ad9-0dd5-fb68-3bf442fbf5fa_32237787-e46e-cefc-09a6-13aa378b691c`
   - Duração: <1s | Resultado: `S_nominal`
 
-### Teste 6 (C4): Falha na Remediação → Escalação via GitHub Issue
+### Teste 6 (C4): Falha do Sistema (Bucket Inexistente) → Escalação via GitHub Issue
+
+> **Nota de nomenclatura**: este cenário se chamou "Falha na Remediação", mas nunca remediou — um bucket inexistente faz o Analyze falhar ao ler a configuração, e o Execute não é invocado. É o caminho de **falha do sistema**: o controle fica sem estado e escala com `reason = system_failure`, sem linha de estado no `violations_log`. A falha de remediação propriamente dita é o Teste 11 (C8).
 
 **Data**: 2026-04-13 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::bucket-inexistente-c4v2-test` (bucket propositalmente inexistente)
@@ -2102,7 +2104,7 @@ O Execute nunca é invocado, eliminando o loop.
 - Execute Lambda **não invocada**
 - **Zero re-triggers** (loop eliminado)
 - GitHub Issue criada com detalhes do erro
-- `state=S_violation` preservado no violations_log (regra: não sobrescrever por falha de remediação)
+- Nenhum registro de estado no violations_log: o controle não foi avaliado. Uma versão anterior deste registro afirmava `state=S_violation` preservado, o que não se aplica aqui — a preservação de `S_violation` após falha de remediação é demonstrada no Teste 11 (C8)
 
 #### Referência de Execução
 
@@ -2196,7 +2198,7 @@ os settings em `true`. O sistema detecta, avalia, confirma conformidade e encerr
 - `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:5e252252-38ae-a97d-61fd-dd0385390608_a9a58871-ab59-b36a-9548-d7f27b5e93fa`
   - Duração: <1s | Resultado: `S_nominal`
 
-### Teste 9 (C7): TTL Expira em S_exception
+### Teste 9: TTL Expira em S_exception
 
 Coberto pelo Teste 5 (C3). O ciclo completo de exceção — criação, período de tolerância,
 expiração via EventBridge Scheduler, re-avaliação como S_violation, remediação e confirmação
@@ -2207,7 +2209,7 @@ vindo do atraso de entrega do Scheduler.
 ---
 
 
-### Teste 10 (C8): Atualização Dinâmica do EventBridge via Controls Sync
+### Teste 10 (C7 na suíte automatizada): Atualização Dinâmica do EventBridge via Controls Sync
 
 **Objetivo**: Validar que INSERT, MODIFY e DELETE na tabela `controls` atualizam automaticamente o EventBridge rule.
 
@@ -2239,6 +2241,44 @@ vindo do atraso de entrega do Scheduler.
 
 **Propriedades validadas**: extensibilidade sem rebuild, idempotência do `PutRule`, consistência via scan completo, cobertura de INSERT/MODIFY/DELETE (CDC completo).
 
+---
+
+### Teste 11 (C8): Falha na Remediação → S_violation Preservado → Escalação
+
+**Data**: 2026-09-14 (execução isolada, depois do benchmark de 10 rodadas)
+**Recurso**: `arn:aws:s3:::compliance-inttest-c8-1789351669`
+**Control**: `ctrl-s3-public-block`
+**Hipótese validada**: H2 (rastreabilidade do caminho de falha)
+
+**Como a falha é induzida**: sem mock. Uma bucket policy nega exatamente uma ação, `s3:PutBucketPublicAccessBlock`, a exatamente um principal, a role do Execute (`aws:PrincipalArn`). O Analyze, com outra role, continua lendo o bucket; o runner, um usuário IAM, continua violando e apagando. O teste espera a rodada do `CreateBucket` terminar antes de gravar a policy — a remediação do ssl-only faz merge na policy e, se tivesse lido antes, descartaria o `Deny` — e confere que o `Deny` sobreviveu antes de disparar a violação.
+
+#### Timeline da execução
+
+| t (s) | Estado | Resultado |
+|---|---|---|
+| 0,00 | `ResolveResource` → `QueryControls` | evento `PutBucketPublicAccessBlock` |
+| 0,14 | `InvokeAnalyze` | `S_violation` |
+| 0,40 | `RegisterViolation` → `PlanAction` | rodada de detecção → remediar |
+| 0,52 | `InvokeExecute` | `tofu apply` → `AccessDenied` em `PutPublicAccessBlock` |
+| 5,92 | `UpdateLogFailed` | `remediation_status = failed`, erro gravado |
+| 6,05 | `Escalate` | `reason = remediation_failed` |
+| 6,19 | `EvaluateOutcome` → `ExecutionFailed` | sem rodada de verificação agendada |
+
+#### Resultado
+
+- `t_escalation` = **6,23 s** — dominado pelo Execute, que tenta a remediação antes de falhar; no C4 a escalação leva ~0,5 s porque nada é tentado
+- `state = S_violation` preservado, com `remediation_status = failed` e `remediation_error` contendo o `AccessDenied` do provider (Property 24)
+- `github_issue_url` gravado na mesma linha pela Escalation Lambda (Property 22), issue #217 — fechada pelo próprio teste
+- Bucket permaneceu violado; nenhuma rodada de verificação foi agendada para a remediação que falhou
+- AUDIT: nenhuma execução falha além da esperada
+
+#### Referência de Execução
+
+- `arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:46d87f8e-150d-ff75-3693-f461529f1674_0160f296-3513-9312-fa71-f5e2fd7be488`
+  - Duração: 6,23 s | Resultado: `FAILED` / `ComplianceEscalation`, `reason = remediation_failed`
+
+O C8 entrou na suíte depois do benchmark de 10 rodadas, então não tem série repetida: o valor acima é uma observação única.
+
 ## Tabela Comparativa de Métricas por Cenário
 
 Agregado de **10 execuções da suíte com o laço em duas rodadas e leitura imediata na verificação** (`results/no-wait/`, a configuração implantada), média ± desvio amostral, **separado em regime quente e frio** por evidência de `Init Duration` (ver *Síntese por Hipótese*). Todos os cenários aprovados em 10/10. A única amostra fria do conjunto é do C1.
@@ -2254,12 +2294,13 @@ Agregado de **10 execuções da suíte com o laço em duas rodadas e leitura ime
 | | | | `t_remediation_post_expiry`\* | 64,94 s ± 10,27 (n = 10) | nenhuma | H2, H3 |
 | | | | `t_verified_post_expiry`\* | 65,20 s ± 10,27 (n = 10) | nenhuma | H3 |
 | | | | `t_scheduler_fire` | sem classe: 59,51 s ± 10,35 (n = 10) | | H3 |
-| C4 | Bucket inexistente → escalação | Escalado | `t_escalation` | **0,58 s** ± 0,04 (n = 10) | nenhuma | H2 |
+| C4 | Falha do sistema (bucket inexistente) → escalação | Sem estado, escalado | `t_escalation` | **0,58 s** ± 0,04 (n = 10) | nenhuma | H2 |
 | C5 | Violação originada por IaC | S_nominal | `t_remediation`† | **5,46 s** ± 0,57 (n = 10) | nenhuma | H1 |
 | | | | `t_exposure` | **12,35 s** ± 2,03 (n = 10) | nenhuma | H3 |
 | | | | `t_verified` | **12,60 s** ± 2,04 (n = 10) | nenhuma | H3 |
 | | | | `t_detection` | sem classe: 6,89 s ± 1,54 (n = 10) | | H3 |
 | C6 | Recurso já conforme | S_nominal | `t_classification` | **0,45 s** ± 0,03 (n = 10) | nenhuma | H1 |
+| C8 | Remediação falha (Execute sem permissão) → escalação | S_violation, escalado | `t_escalation` | observação única: 6,23 s (execução isolada, fora da série) | — | H2 |
 | C7 | Novo controle → EventBridge | — | `t_sync_insert` | não classificado: 18,12 s ± 7,91 · mediana 15,61 (n = 10) | | Extensibilidade |
 
 "Nenhuma" significa que a classificação foi feita e não encontrou amostra fria; "sem classe" marca métricas que terminam antes de a execução começar; "não classificado" marca métricas que medem o teste inteiro, sem uma invocação única a examinar.
@@ -2353,8 +2394,9 @@ O cold start também não se espalha pela amostra: aparece como observação iso
 **H2 — Rastreabilidade**
 - 100% dos cenários com todos os campos obrigatórios no `violations_log`
 - Ciclo completo de exceção documentado com 3 registros consecutivos (C3): S_exception → S_violation → S_nominal
-- Escalação com `github_issue_id` persistido no violations_log (C4)
-- `state=S_violation` preservado mesmo após falha de remediação (C4)
+- Escalação com `github_issue_url` persistido na linha da violação (C8)
+- `state=S_violation` preservado após falha de remediação, com `remediation_status=failed` e o erro (C8)
+- Falha do sistema escalada sem registro de estado, com `reason=system_failure` (C4)
 - Com o laço em duas rodadas, a confirmação `S_nominal` é gravada **ligada à violação que verifica** (`verifies_violation_id`, `origin_execution`), em vez de uma linha solta associada só por recurso e horário. Nenhuma rodada de verificação escalou nas 20 execuções do laço explícito: 563 leituras de controle, todas `verified`, com e sem espera
 
 **H3 — Tempo de exposição** (`t_exposure`; C1 · C5)

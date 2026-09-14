@@ -270,11 +270,18 @@ dos dois tipos de container, não variância do sistema.
 | C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 5,83s ± 0,52 (n=9) | 14,56s (n=1) |
 | C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,48s ± 0,06 | nenhuma |
 | C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 5,42s ± 0,63 | nenhuma |
-| C4 | Falha na remediação (bucket inexistente) | Escala via GitHub Issue | `t_escalation` 0,58s ± 0,04 | nenhuma |
+| C4 | Falha do sistema (bucket inexistente) | Sem estado; escala via GitHub Issue | `t_escalation` 0,58s ± 0,04 | nenhuma |
 | C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 5,46s ± 0,57 | nenhuma |
 | C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,45s ± 0,03 | nenhuma |
 | C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: mediana 15,61s | — |
-| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além da esperada do C4 | — | — |
+| C8 | Remediação falha (Execute sem permissão) | S_violation preservado, escala com o erro | `t_escalation` 6,23s (observação única)† | — |
+| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4 e do C8 | — | — |
+
+†O C8 entrou na suíte depois das 10 execuções agregadas. Uma bucket policy nega
+`s3:PutBucketPublicAccessBlock` só à role do Execute: o Analyze classifica
+`S_violation`, a remediação falha com `AccessDenied`, o estado é preservado com
+`remediation_status=failed` e a issue é vinculada à linha da violação. O C4 não
+cobre esse caminho — um bucket inexistente nem chega a ser avaliado.
 
 ## Controles validados
 
