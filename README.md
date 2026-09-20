@@ -276,115 +276,91 @@ de sucesso aparece ao lado. Métricas com n=1 são marcadas como observação
 
 ## Cenários validados
 
-Todos aprovados em **10 de 10** execuções da suíte (140/140, `results/three-state/`).
+Todos aprovados em **10 de 10** execuções da suíte (160/160, `results/session-policy/`).
 Valores: média ± desvio, **separados em regime quente e frio** por evidência de
 `Init Duration` na invocação da Lambda (`scripts/classify_cold_starts.py`). A única
-amostra fria das 10 execuções é do C1.
+amostra fria das 10 execuções é do C5.
 
 | Cenário | Descrição | Resultado | Quente | Frio |
 |---|---|---|---|---|
-| C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 6,26s ± 0,11 (n=9) | 14,44s (n=1) |
-| C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,48s ± 0,07 | nenhuma |
-| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 6,27s ± 0,12 | nenhuma |
-| C4 | Falha do sistema (bucket inexistente) | Sem estado; escala via GitHub Issue | `t_escalation` 0,48s ± 0,05 | nenhuma |
-| C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 6,24s ± 0,11 | nenhuma |
-| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,47s ± 0,03 | nenhuma |
-| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: 15,62s ± 0,03 | — |
-| C8 | Remediação falha (Execute sem permissão) | S_violation preservado, escala com o erro | `t_escalation` 6,03s ± 0,13 | nenhuma |
-| C9 | Violação reincidente (disjuntor) | Escala sem remediar de novo | a medir na próxima série | — |
-| C10 | Sessão de remediação escopada | Template adulterado é barrado por IAM | — | — |
+| C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 6,56s ± 0,14 | nenhuma |
+| C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,49s ± 0,04 | nenhuma |
+| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 6,53s ± 0,10 | nenhuma |
+| C4 | Falha do sistema (bucket inexistente) | Sem estado; escala via GitHub Issue | `t_escalation` 0,46s ± 0,03 | nenhuma |
+| C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 6,52s ± 0,08 (n=9) | 8,45s (n=1) |
+| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,47s ± 0,05 | nenhuma |
+| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | 15,73s ± 0,22 | — |
+| C8 | Remediação falha (Execute negado) | S_violation preservado, escala com o erro | `t_escalation` 6,27s ± 0,08 | nenhuma |
+| C9 | Violação reincidente | Disjuntor escala sem remediar de novo | `t_escalation` 0,76s ± 0,05 | nenhuma |
+| C10 | Sessão de remediação escopada | Template adulterado barrado por IAM | 10/10 | — |
 | AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4, C8, C9 e CTRL-06 | — | — |
 
-No C8, uma bucket policy nega `s3:PutBucketPublicAccessBlock` só à role do
-Execute: o Analyze classifica `S_violation`, a remediação falha com
-`AccessDenied`, o estado é preservado com `remediation_status=failed` e a issue é
-vinculada à linha da violação. O C4 não cobre esse caminho — um bucket
-inexistente nem chega a ser avaliado. O C4 ficou 0,10s mais rápido que nas séries
-anteriores: é o `putItem` do antigo `RegisterError`, que deixou de existir.
+O **disjuntor disparou na quarta violação em 10 de 10 rodadas**: com limiar 3, as três
+primeiras são remediadas e a quarta é a primeira a enxergar três remediações na janela.
+No C8, uma bucket policy nega `s3:PutBucketPublicAccessBlock` à role da remediação,
+então o `AccessDenied` é real: o estado fica `S_violation` com `remediation_status=failed`
+e a issue é vinculada à linha da violação.
 
 ## Controles validados
 
-| Teste | Controle | Verificação | t_total (n=10) |
+| Teste | Controle | Verificação | Resultado (n=10) |
 |---|---|---|---|
-| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | 29,56s ± 2,43 |
-| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | 26,18s ± 1,05 |
-| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 25,91s ± 0,09 |
-| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | 26,27s ± 0,04 |
-| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | 28,54s ± 0,23 |
-| CTRL-06 | ctrl-ebs-volume-encrypted (detectivo) | Volume sem criptografia escala sem remediação | a medir na próxima série |
+| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | `t_total` 30,90s ± 0,21 |
+| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | `t_total` 27,29s ± 1,22 |
+| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | `t_total` 26,79s ± 0,08 |
+| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | `t_total` 26,91s ± 0,10 |
+| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | `t_remediation` 6,51s ± 0,24 |
+| CTRL-06 | ctrl-ebs-volume-encrypted (detectivo) | Volume sem criptografia escala sem remediação | `t_escalation` 0,85s ± 0,07 |
 
-O `t_total` das CTRL-* mede o **teste**: criação de bucket, esperas de CloudTrail
-e a espera pelas rodadas de verificação, já que o harness só encerra quando
-nenhuma execução está em andamento. Não é comparável ao `t_remediation` nem é
-classificado em quente/frio.
+O `t_total` das CTRL-* mede o **teste**: criação de bucket, esperas de CloudTrail e a
+espera pelas rodadas de verificação. Não é comparável ao `t_remediation`.
 
-O **CTRL-05** desliga a criptografia padrão do EBS na região, exige a remediação e
-a rodada de verificação, e religa a configuração se o loop não o fizer. Não cria
-nenhum recurso cobrável — é uma configuração da conta. A remediação de EBS custa
-o mesmo que a de S3: `t_remediation` **6,24s ± 0,24** (n=10), contra 6,26s — o
-tempo do loop é dominado pela inicialização do `tofu`, não pelo serviço.
-
-O controle é **preventivo**: `EbsEncryptionByDefault` só vale para volumes criados
-depois. Um volume existente sem criptografia continua assim, e o controle fica
-conforme — a AWS não criptografa nem troca a chave de um volume no lugar (é
-snapshot → cópia → volume novo), o que não é remediação para aplicar
-automaticamente. Ver L14 no `design.md`.
+**Remediar EBS custa o mesmo que remediar S3** (6,51s contra 6,54s): o tempo do loop
+é dominado pela inicialização do `tofu`, não pelo serviço. O **CTRL-06 é detectivo**:
+`EbsEncryptionByDefault` só vale para volumes criados depois, e um volume existente não
+pode ser criptografado no lugar — o loop classifica e escala, sem tocar no recurso (L14).
 
 ## Performance
 
-Agregado de **10 execuções completas da suíte** com o grafo de três estados,
-leitura imediata na verificação, C8 e CTRL-05 (140/140 cenários aprovados,
-`results/three-state/`), via `scripts/benchmark.py`. Desvio amostral (n−1) e IC 95%
-pela distribuição t. **Quente e frio são reportados separadamente**,
-classificados por evidência (`Init Duration` na invocação exata da Lambda), sem
-corte de duração. Uma amostra fria com n=1 é reportada como observação única.
+Agregado de **10 execuções completas da suíte** na configuração final
+(160/160 cenários aprovados, `results/session-policy/`), via `scripts/benchmark.py`.
+Desvio amostral (n−1) e IC 95% pela distribuição t. **Quente e frio são reportados
+separadamente**, classificados por evidência (`Init Duration` na invocação exata da
+Lambda), sem corte de duração.
 
 | Métrica | Quente | Frio | Total |
 |---|---|---|---|
-| **H1 — t_remediation** (C1 · C3 · C5) | **6,26s** ± 0,11 · IC [6,22 · 6,30] · n=29 | **14,44s** (n=1) | 6,53s ± 1,50 · mediana 6,26 · n=30 |
-| **H3 — t_exposure** (C1 · C5) | **13,31s** ± 1,77 · IC [12,46 · 14,17] · n=19 | **23,50s** (n=1) | 13,82s ± 2,86 · n=20 |
-| **t_verified** (convergência confirmada) | **13,58s** ± 1,76 · IC [12,73 · 14,43] · n=19 | **23,84s** (n=1) | 14,09s ± 2,86 · n=20 |
-| t_detection (evento → SFN start) | sem classe: 7,16s ± 1,81 · IC [6,31 · 8,01] · n=20 | | |
-| t_remediation EBS (CTRL-05) | 6,24s ± 0,24 · IC [6,07 · 6,41] · n=10 | nenhuma | |
-| t_classification (recurso conforme) | 0,47–0,48s · n=10 | nenhuma | |
-| t_escalation, falha de remediação (C8) | 6,03s ± 0,13 · n=10 | nenhuma | |
-| t_escalation, falha do sistema (C4) | 0,48s ± 0,05 · n=10 | nenhuma | |
+| **H1 — t_remediation** (C1 · C3 · C5) | **6,54s** ± 0,11 · IC [6,50 · 6,58] · n=29 | **8,45s** (n=1) | 6,60s ± 0,36 · n=30 |
+| **H3 — t_exposure** (C1 · C5) | **14,24s** ± 1,63 · IC [13,46 · 15,02] · n=19 | **15,90s** (n=1) | 14,32s ± 1,63 · n=20 |
+| **t_verified** (convergência confirmada) | **14,54s** ± 1,63 · IC [13,76 · 15,33] · n=19 | **16,23s** (n=1) | 14,63s ± 1,63 · n=20 |
+| t_detection (evento → SFN start) | sem classe: 7,68s ± 1,58 · IC [6,95 · 8,42] · n=20 | | |
+| t_remediation EBS (CTRL-05) | 6,51s ± 0,24 · n=10 | nenhuma | |
 
-**A remediação varia 1,8%; a detecção, 25%.** Os três cenários que remedeiam por
-rotas independentes concordam dentro de 0,03s (C1 6,26 · C3 6,27 · C5 6,24), e o
-CTRL-05, sobre outro serviço, cai no mesmo valor (6,24). A dispersão do tempo de
-exposição vem do `t_detection` — latência de entrega do CloudTrail ao
-EventBridge, fora do controle do sistema. A decomposição fecha exatamente:
+**Toda a variação acumulada do MTTR entre as séries é atribuível, estado a estado:**
+6,03s no laço por eco → +0,18s do estado que agenda a verificação → +0,28s da sessão
+escopada = 6,54s. As demais mudanças (leitura imediata, grafo de três estados, disjuntor
+e controle detectivo) não mexeram no MTTR.
+
+**O menor privilégio dinâmico custou 4,5% do MTTR.** Os cinco caminhos que remedeiam
+subiram juntos (C1 +0,30 · C3 +0,26 · C5 +0,28 · CTRL-05 +0,27 · C8 +0,24) e os que não
+remedeiam ficaram parados (C4 0,46 · C2 0,49 · C6 0,47). Dentro do Execute, a duração
+mediana subiu 0,20s — o `sts:AssumeRole`.
+
+**A remediação varia 1,7%; a detecção, 21%.** Quatro caminhos independentes, em dois
+serviços, concordam dentro de 0,05s (C1 6,56 · C3 6,53 · C5 6,52 · CTRL-05 6,51). A
+dispersão da exposição vem do `t_detection` — latência de entrega do CloudTrail, fora do
+controle do sistema. A decomposição fecha exatamente:
 `t_detection + t_remediation = t_exposure`.
 
-**"Quente" não é um regime só.** Na série anterior (leitura imediata), o Execute
-rodou ~1,1s mais rápido em alguns containers da Lambda: 98 das 283 invocações, em
-2 dos 5 containers, e as 17 amostras rápidas de `t_remediation` num só deles. O
-agregado daquela série (5,56s) sugeria uma melhoria que era do container. Nesta
-série nenhum container foi rápido e o valor voltou a 6,26s — o patamar lento das
-séries anteriores (6,24s e 6,20s). Por isso as séries são comparadas por tipo de
-container.
+**Leitura imediata na verificação, medida.** A verificação lia depois de uma espera fixa
+de 15s, escolhida e não medida. Sem ela, a leitura acontece **0,36s** depois da escrita, e
+somando as três séries sem espera são **1.033 leituras de controle, todas conformes**
+(taxa de leitura desatualizada < ~0,3% com 95% de confiança). O `t_verified` ficou
+**0,30s** acima da exposição, contra 15,4s quando havia a espera.
 
-**Cold start** foi a única amostra fria em 30: C1 na primeira execução, com
-Analyze e Execute em containers novos. O `Init Duration` é só ~0,5s; o custo real
-é o download do cache de provider dentro do handler.
-
-**Leitura imediata na verificação, medida.** A rodada de verificação lia depois
-de uma espera fixa de 15s, escolhida e não medida. Sem ela, a leitura acontece
-**0,37s** depois da última escrita da remediação, e as **603 leituras de controle**
-das duas séries sem espera saíram `verified` (10 delas do EBS) — como as 280 com
-espera. Taxa de leitura desatualizada < ~0,5% com 95% de confiança
-(`scripts/verification_consistency.py`). Se ocorrer, o erro é seguro: escalação
-indevida, nunca `S_nominal` falso. O `t_verified` caiu de 29,26s para ~13,6s e
-fica só ~0,27s acima da exposição.
-
-**Comparado às séries anteriores**, no container lento: `t_remediation` 6,03s
-(eco) → 6,20s (espera de 15s) → 6,24s (leitura imediata) → 6,26s (três estados).
-Os +0,18s do laço explícito são o estado `ScheduleVerification` (0,156s medidos
-no histórico); nem a remoção da espera nem o grafo de três estados mudaram a
-remediação. Um incidente com N controles remediados passou de 1 + N para **no
-máximo 2** execuções; as execuções por rodada da suíte foram de 48,5 (eco) a 36,0,
-e sobem a 43,0 na série atual só porque C8 e CTRL-05 entraram na suíte.
+**Cold start** é raro e nem sempre custa o mesmo: a amostra fria desta série custou
++1,93s, porque só o Analyze subiu do zero; quando o Execute também sobe, o custo é ~8,2s,
+quase todo o download do cache do provider dentro do handler.
 
 A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~128MB), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 

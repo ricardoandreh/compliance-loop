@@ -1,0 +1,195 @@
+{
+  "executions_per_round": 62,
+  "executions_by_round": [
+    62,
+    62,
+    62,
+    62,
+    62,
+    62,
+    62,
+    62,
+    62,
+    62
+  ],
+  "round_duration_s": {
+    "median": 946.1,
+    "min": 937.0,
+    "max": 955.3
+  },
+  "execute_invocations": {
+    "total": 470,
+    "fast": 0,
+    "fast_threshold_s": 4.8,
+    "containers": {
+      "a328a4": {
+        "invocations": 179,
+        "fast": 0
+      },
+      "39004a": {
+        "invocations": 128,
+        "fast": 0
+      },
+      "a5dcc0": {
+        "invocations": 101,
+        "fast": 0
+      },
+      "57b28f": {
+        "invocations": 62,
+        "fast": 0
+      }
+    }
+  },
+  "remediation_samples": {
+    "run-01.json/C1": {
+      "container": "a328a4",
+      "execute_s": 5.381,
+      "fast": false
+    },
+    "run-01.json/C5": {
+      "container": "39004a",
+      "execute_s": 5.446,
+      "fast": false
+    },
+    "run-01.json/C3": {
+      "container": "39004a",
+      "execute_s": 5.417,
+      "fast": false
+    },
+    "run-02.json/C1": {
+      "container": "a328a4",
+      "execute_s": 5.674,
+      "fast": false
+    },
+    "run-02.json/C5": {
+      "container": "a328a4",
+      "execute_s": 5.477,
+      "fast": false
+    },
+    "run-02.json/C3": {
+      "container": "39004a",
+      "execute_s": 5.539,
+      "fast": false
+    },
+    "run-03.json/C1": {
+      "container": "39004a",
+      "execute_s": 5.544,
+      "fast": false
+    },
+    "run-03.json/C5": {
+      "container": "39004a",
+      "execute_s": 5.462,
+      "fast": false
+    },
+    "run-03.json/C3": {
+      "container": "39004a",
+      "execute_s": 5.404,
+      "fast": false
+    },
+    "run-04.json/C1": {
+      "container": "a328a4",
+      "execute_s": 5.498,
+      "fast": false
+    },
+    "run-04.json/C5": {
+      "container": "39004a",
+      "execute_s": 5.56,
+      "fast": false
+    },
+    "run-04.json/C3": {
+      "container": "39004a",
+      "execute_s": 5.477,
+      "fast": false
+    },
+    "run-05.json/C1": {
+      "container": "39004a",
+      "execute_s": 5.6,
+      "fast": false
+    },
+    "run-05.json/C5": {
+      "container": "a328a4",
+      "execute_s": 5.628,
+      "fast": false
+    },
+    "run-05.json/C3": {
+      "container": "a328a4",
+      "execute_s": 5.433,
+      "fast": false
+    },
+    "run-06.json/C1": {
+      "container": "a328a4",
+      "execute_s": 5.441,
+      "fast": false
+    },
+    "run-06.json/C5": {
+      "container": "39004a",
+      "execute_s": 5.519,
+      "fast": false
+    },
+    "run-06.json/C3": {
+      "container": "39004a",
+      "execute_s": 5.369,
+      "fast": false
+    },
+    "run-07.json/C1": {
+      "container": "39004a",
+      "execute_s": 5.417,
+      "fast": false
+    },
+    "run-07.json/C5": {
+      "container": "a328a4",
+      "execute_s": 5.372,
+      "fast": false
+    },
+    "run-07.json/C3": {
+      "container": "a328a4",
+      "execute_s": 5.417,
+      "fast": false
+    },
+    "run-08.json/C1": {
+      "container": "a328a4",
+      "execute_s": 5.434,
+      "fast": false
+    },
+    "run-08.json/C5": {
+      "container": "a328a4",
+      "execute_s": 5.523,
+      "fast": false
+    },
+    "run-08.json/C3": {
+      "container": "a5dcc0",
+      "execute_s": 5.452,
+      "fast": false
+    },
+    "run-09.json/C1": {
+      "container": "57b28f",
+      "execute_s": 5.428,
+      "fast": false
+    },
+    "run-09.json/C5": {
+      "container": "a5dcc0",
+      "execute_s": 5.564,
+      "fast": false
+    },
+    "run-09.json/C3": {
+      "container": "a5dcc0",
+      "execute_s": 5.509,
+      "fast": false
+    },
+    "run-10.json/C1": {
+      "container": "a5dcc0",
+      "execute_s": 5.475,
+      "fast": false
+    },
+    "run-10.json/C5": {
+      "container": "a5dcc0",
+      "execute_s": 5.386,
+      "fast": false
+    },
+    "run-10.json/C3": {
+      "container": "a5dcc0",
+      "execute_s": 5.513,
+      "fast": false
+    }
+  }
+}
