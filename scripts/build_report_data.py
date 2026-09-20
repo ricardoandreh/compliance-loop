@@ -26,12 +26,14 @@ PRIMARY = {
     "C6": "t_classification",
     "C4": "t_escalation",
     "C8": "t_escalation",
+    "C9": "t_escalation",
     "C7": "t_sync_insert",
     "CTRL-01": "t_total",
     "CTRL-02": "t_total",
     "CTRL-03": "t_total",
     "CTRL-04": "t_total",
     "CTRL-05": "t_total",
+    "CTRL-06": "t_escalation",
 }
 
 LABELS = {
@@ -40,6 +42,7 @@ LABELS = {
     "C3": "Exceção expira → remediação",
     "C4": "Falha do sistema → escalação",
     "C8": "Remediação falha → escalação",
+    "C9": "Violação reincidente → disjuntor",
     "C5": "Violação originada por IaC",
     "C6": "Recurso já conforme",
     "C7": "Novo controle → EventBridge",
@@ -48,6 +51,7 @@ LABELS = {
     "CTRL-03": "ctrl-s3-versioning",
     "CTRL-04": "ctrl-s3-encryption",
     "CTRL-05": "ctrl-ebs-encryption-default",
+    "CTRL-06": "ctrl-ebs-volume-encrypted (detectivo)",
     "AUDIT": "Ausência de falhas inesperadas",
 }
 

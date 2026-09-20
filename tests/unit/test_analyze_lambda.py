@@ -497,6 +497,36 @@ class TestLambdaHandler:
                 else:
                     assert r['error']
 
+    def test_result_path_can_index_a_list(self):
+        """describe_* APIs answer with a list even for one resource, so a
+        fetch_config like "Volumes.0" has to index it."""
+        control = typed_control()
+        control['fetch_config'] = {'M': {
+            'service': {'S': 'ec2'}, 'method': {'S': 'describe_volumes'},
+            'params': {'M': {'VolumeIds': {'L': [{'S': '{resource_id}'}]}}},
+            'result_path': {'S': 'Volumes.0'}}}
+        client = MagicMock()
+        client.describe_volumes.return_value = {'Volumes': [{'Encrypted': True}]}
+        with patch.object(handler, 'get_boto_client', MagicMock(return_value=client)):
+            cfg = handler.fetch_resource_config(
+                handler._deserialize(control['fetch_config']) if hasattr(handler, '_deserialize')
+                else {'service': 'ec2', 'method': 'describe_volumes',
+                      'params': {'VolumeIds': ['{resource_id}']}, 'result_path': 'Volumes.0'},
+                'vol-123')
+        assert cfg == {'Encrypted': True}
+        client.describe_volumes.assert_called_once_with(VolumeIds=['vol-123'])
+
+    def test_remediation_mode_is_carried_to_the_orchestrator(self):
+        """PlanAction routes detective controls by this field; absent means the
+        control remediates, which is what every control did before."""
+        result, _, _ = self.run_handler(base_event(), compliant=True)
+        assert result['results'][0]['remediation'] == 'automatic'
+
+        control = typed_control()
+        control['remediation'] = {'S': 'manual'}
+        result, _, _ = self.run_handler(base_event([control]), compliant=False)
+        assert result['results'][0]['remediation'] == 'manual'
+
     def test_one_result_per_control(self):
         controls = [
             typed_control('ctrl-s3-public-block', 's3_public_access'),

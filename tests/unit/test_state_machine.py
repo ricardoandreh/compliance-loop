@@ -81,12 +81,14 @@ def test_classification_has_exactly_the_three_formal_states(sm):
 
 
 def test_verification_round_never_reaches_execute(sm):
-    """Every way out of RegisterViolation goes through PlanAction, whose first
-    rule sends a verification round to Escalate, a terminal state. So a
-    verification round cannot remediate again, and the loop cannot oscillate."""
+    """Every way out of RegisterViolation reaches PlanAction (through the
+    breaker's count), and PlanAction's first rule sends a verification round to
+    Escalate, a terminal state. So a verification round cannot remediate again,
+    and the loop cannot oscillate."""
     inner = map_states(sm)
     out_of_violation = {d for s, d in edges(inner) if s == "RegisterViolation"}
-    assert out_of_violation == {"PlanAction"}
+    assert out_of_violation == {"CountRecentRemediations"}
+    assert {d for s, d in edges(inner) if s == "CountRecentRemediations"} == {"PlanAction"}
     into_execute = {s for s, d in edges(inner) if d == "InvokeExecute"}
     assert into_execute == {"PlanAction"}
     plan = inner["PlanAction"]
@@ -147,6 +149,49 @@ def test_escalation_names_its_reason(sm):
     body = map_states(sm)["Escalate"]["Arguments"]["MessageBody"]
     for reason in ("remediation_failed", "non_convergence", "system_failure"):
         assert reason in body
+
+
+def test_every_write_declares_a_retry(sm):
+    """DynamoDB and SQS integrations have no implicit retry: a throttled write
+    fails the state on the first try unless the Retry is declared (design.md, L1).
+    Escalations retry on anything — MessageDeduplicationId makes that idempotent —
+    while the audit writes retry only on transient errors, so a
+    ConditionalCheckFailed is not retried into a false alarm."""
+    for scope in (sm["States"], map_states(sm)):
+        for name, st in scope.items():
+            resource = st.get("Resource", "")
+            if "dynamodb" not in resource and "sqs" not in resource:
+                continue
+            errors = [e for r in st.get("Retry", []) for e in r["ErrorEquals"]]
+            assert errors, f"{name} writes without Retry"
+            if "sqs" in resource:
+                assert errors == ["States.ALL"], f"{name}: {errors}"
+            else:
+                assert all("Throughput" in e or "RequestLimit" in e or "InternalServer" in e
+                           for e in errors), f"{name}: {errors}"
+
+
+def test_a_recurrent_violation_escalates_instead_of_remediating(sm):
+    """The two rounds bound one incident; the breaker bounds a sequence of them.
+    Counting comes before the decision, and the decision comes before Execute."""
+    inner = map_states(sm)
+    assert inner["RegisterViolation"]["Next"] == "CountRecentRemediations"
+    count = inner["CountRecentRemediations"]
+    assert count["Resource"].endswith("aws-sdk:dynamodb:query")
+    assert count["Arguments"]["Select"] == "COUNT"
+    assert count["Next"] == "PlanAction"
+    # A failed count must not block the remediation that used to happen.
+    assert count["Catch"][0]["Next"] == "PlanAction"
+    assert "'recent_remediations': 0" in count["Catch"][0]["Output"]
+    rules = inner["PlanAction"]["Choices"]
+    assert "recent_remediations" in rules[1]["Condition"] and rules[1]["Next"] == "Escalate"
+    assert "InvokeExecute" not in reachable(inner, "Escalate")
+
+
+def test_a_detective_control_never_reaches_execute(sm):
+    rules = map_states(sm)["PlanAction"]["Choices"]
+    manual = [c for c in rules if "remediation = 'manual'" in c["Condition"]]
+    assert [c["Next"] for c in manual] == ["Escalate"]
 
 
 def test_only_a_detection_round_schedules_verification(sm):

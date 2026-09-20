@@ -10,6 +10,18 @@ variable "controls_table_name" { type = string }
 variable "controls_table_arn" { type = string }
 variable "remediation_role_arn" { type = string }
 
+variable "recurrence_window_minutes" {
+  description = "Window the circuit breaker looks back over, counting successful remediations of the same (resource, control)."
+  type        = number
+  default     = 10
+}
+
+variable "recurrence_threshold" {
+  description = "Successful remediations inside the window past which a violation escalates as an ownership conflict instead of being remediated again."
+  type        = number
+  default     = 3
+}
+
 # --- EventBridge Rule ---
 # Event pattern is dynamically managed by the controls-sync Lambda
 # via DynamoDB Stream on INSERT/MODIFY in the controls table.
@@ -50,6 +62,9 @@ resource "aws_cloudwatch_event_target" "step_functions" {
       event_time  = "$.detail.eventTime"
       event_name  = "$.detail.eventName"
       request_params = "$.detail.requestParameters"
+      # CreateVolume names the resource only in the response: requestParameters
+      # carries size and type, responseElements the volumeId.
+      response_params = "$.detail.responseElements"
     }
 
     input_template = <<-EOT
@@ -58,7 +73,8 @@ resource "aws_cloudwatch_event_target" "step_functions" {
       "region": <region>,
       "event_time": <event_time>,
       "event_name": <event_name>,
-      "request_parameters": <request_params>
+      "request_parameters": <request_params>,
+      "response_elements": <response_params>
     }
     EOT
   }
@@ -93,6 +109,8 @@ resource "aws_sfn_state_machine" "compliance_loop" {
     violations_log_table = var.violations_log_table_name
     escalation_queue_url = var.escalation_queue_url
     controls_table       = var.controls_table_name
+    recurrence_window_minutes = var.recurrence_window_minutes
+    recurrence_threshold      = var.recurrence_threshold
   })
 
   logging_configuration {
@@ -149,6 +167,9 @@ resource "aws_iam_role_policy" "sfn_dynamodb" {
   policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem"], Resource = [var.violations_log_table_arn] },
+                 # The circuit breaker counts recent remediations of the same
+                 # (resource, control) through the GSI.
+                 { Effect = "Allow", Action = ["dynamodb:Query"], Resource = ["${var.violations_log_table_arn}/index/*"] },
                  { Effect = "Allow", Action = ["dynamodb:Scan", "dynamodb:GetItem"], Resource = [var.controls_table_arn] }]
   })
 }

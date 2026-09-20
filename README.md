@@ -50,7 +50,7 @@ remedeia, então o loop não tem como oscilar.
 |---|---|---|
 | **S_nominal** | Recurso conforme | Nenhuma — registra e encerra |
 | **S_exception** | Não conforme, mas com exceção aprovada | Nenhuma — monitora até expirar |
-| **S_violation** | Não conforme, sem exceção | Remediação automática; na rodada de verificação, escalação por não convergência |
+| **S_violation** | Não conforme, sem exceção | Remediação automática; escalação na rodada de verificação (não convergência), na reincidência (disjuntor) ou se o controle for detectivo |
 
 São os únicos estados. A rodada (detecção ou verificação) não cria estados novos —
 só muda a ação diante de uma `S_violation`. Um controle que não pôde ser avaliado
@@ -66,6 +66,7 @@ só muda a ação diante de uma `S_violation`. Um controle que não pôde ser av
 | `ctrl-s3-versioning` | S3 | Versioning habilitado | `aws_s3_bucket_versioning` |
 | `ctrl-s3-encryption` | S3 | Server-side encryption configurada | `aws_s3_bucket_server_side_encryption_configuration` |
 | `ctrl-ebs-encryption-default` | EC2 | EBS encryption by default habilitado | `aws_ebs_encryption_by_default` |
+| `ctrl-ebs-volume-encrypted` | EC2 | Volume EBS criptografado | **detectivo**: escala, não remedia (L14) |
 
 ## Arquitetura
 
@@ -103,7 +104,8 @@ Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão I
 │   ├── ctrl-s3-ssl-only/
 │   ├── ctrl-s3-versioning/
 │   ├── ctrl-s3-encryption/
-│   └── ctrl-ebs-encryption-default/
+│   ├── ctrl-ebs-encryption-default/
+│   └── ctrl-ebs-volume-encrypted/   # detectivo: sem remediation.tf
 ├── infra/                          # Infraestrutura (OpenTofu, modularizada)
 │   ├── main.tf
 │   ├── variables.tf
@@ -275,7 +277,8 @@ amostra fria das 10 execuções é do C1.
 | C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,47s ± 0,03 | nenhuma |
 | C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: 15,62s ± 0,03 | — |
 | C8 | Remediação falha (Execute sem permissão) | S_violation preservado, escala com o erro | `t_escalation` 6,03s ± 0,13 | nenhuma |
-| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4 e do C8 | — | — |
+| C9 | Violação reincidente (disjuntor) | Escala sem remediar de novo | a medir na próxima série | — |
+| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4, C8, C9 e CTRL-06 | — | — |
 
 No C8, uma bucket policy nega `s3:PutBucketPublicAccessBlock` só à role do
 Execute: o Analyze classifica `S_violation`, a remediação falha com
@@ -293,6 +296,7 @@ anteriores: é o `putItem` do antigo `RegisterError`, que deixou de existir.
 | CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | 25,91s ± 0,09 |
 | CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | 26,27s ± 0,04 |
 | CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | 28,54s ± 0,23 |
+| CTRL-06 | ctrl-ebs-volume-encrypted (detectivo) | Volume sem criptografia escala sem remediação | a medir na próxima série |
 
 O `t_total` das CTRL-* mede o **teste**: criação de bucket, esperas de CloudTrail
 e a espera pelas rodadas de verificação, já que o harness só encerra quando

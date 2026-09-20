@@ -85,9 +85,11 @@ def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dic
             return _config_cache[cache_key]
         raise
 
+    # A segment that is a number indexes a list: describe_* APIs answer with a
+    # list even when asked about one resource (e.g. "Volumes.0").
     for key in fetch_config.get('result_path', '').split('.'):
         if key:
-            result = result[key]
+            result = result[int(key)] if key.isdigit() else result[key]
 
     _config_cache[cache_key] = result
     return result
@@ -293,6 +295,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'exception_id': exception.get('exception_id') if exception else None,
                 'approved_by': exception.get('approved_by') if exception else None,
                 'remediation_s3_key': control.get('remediation_s3_key'),
+                # 'manual' marks a detective control: the loop classifies and
+                # escalates, but never remediates (the fix is disruptive).
+                'remediation': control.get('remediation', 'automatic'),
             })
             print(f"  {control_id}: {state}")
 

@@ -28,16 +28,23 @@ deploy_control() {
     return 1
   fi
 
-  for f in policy.rego remediation.tf control.json; do
+  for f in policy.rego control.json; do
     if [[ ! -f "$dir/$f" ]]; then
       echo "ERROR: Missing $dir/$f" >&2
       return 1
     fi
   done
+  # A detective control has no remediation.tf: it classifies and escalates,
+  # because its fix is disruptive and belongs to a human (control.json carries
+  # "remediation": "manual").
+  if ! grep -q '"manual"' "$dir/control.json" && [[ ! -f "$dir/remediation.tf" ]]; then
+    echo "ERROR: Missing $dir/remediation.tf (add \"remediation\": {\"S\": \"manual\"} to make it detective)" >&2
+    return 1
+  fi
 
   echo "[$control_id] Uploading artefatos to S3..."
   aws s3 cp "$dir/policy.rego" "s3://${BUCKET}/controls/${control_id}/policy.rego" --region "$REGION" --quiet
-  aws s3 cp "$dir/remediation.tf" "s3://${BUCKET}/controls/${control_id}/remediation.tf" --region "$REGION" --quiet
+  [[ -f "$dir/remediation.tf" ]] && aws s3 cp "$dir/remediation.tf" "s3://${BUCKET}/controls/${control_id}/remediation.tf" --region "$REGION" --quiet
 
   echo "[$control_id] Inserting into DynamoDB..."
   aws dynamodb put-item \

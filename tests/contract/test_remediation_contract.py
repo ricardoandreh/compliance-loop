@@ -189,6 +189,21 @@ def verdicts():
     return {keys[var]: value for var, value in bindings.items()}
 
 
+def test_detective_controls_declare_manual_remediation():
+    """A control without remediation.tf is only legitimate when it says so: the
+    state machine routes it to escalation by that field, and a control that just
+    forgot its remediation would otherwise be silently detective."""
+    for control in sorted(os.listdir(CONTROLS)):
+        if not os.path.isdir(os.path.join(CONTROLS, control)):
+            continue
+        if os.path.isfile(os.path.join(CONTROLS, control, "remediation.tf")):
+            continue
+        meta = json.loads(read(control, "control.json"))
+        assert meta.get("remediation", {}).get("S") == "manual", (
+            f"{control} has no remediation.tf and does not declare "
+            f'"remediation": {{"S": "manual"}}')
+
+
 def test_every_control_has_a_contract():
     """A new control must bring its contract; otherwise its convergence is
     unverified and the loop could oscillate on it unnoticed."""

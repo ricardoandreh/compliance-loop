@@ -793,6 +793,58 @@ def test_c8():
         delete_bucket(name)
 
 
+def test_c9():
+    """C9: Violação reincidente → disjuntor escala em vez de remediar de novo"""
+    # The two rounds bound one incident. This is the other axis: an external
+    # process that keeps re-applying the violating configuration. Each incident
+    # converges, so nothing ever escalates — the loop and the other process just
+    # take turns, and the conflict never reaches a human. The breaker counts the
+    # recent successful remediations of this exact (resource, control) and
+    # escalates instead of remediating past the threshold.
+    name = f"compliance-inttest-c9-{int(time.time())}"
+    arn = f"arn:aws:s3:::{name}"
+    metrics = {}
+    create_bucket(name)
+    try:
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_quiesce()
+
+        escalated = None
+        for attempt in range(1, 6):
+            t_event = aws_now()
+            set_public_access(name, block=False)
+            log(f"Violation {attempt} on {name}")
+            time.sleep(WAIT_CLOUDTRAIL)
+            execs = wait_for_executions(name, t_event, ["SUCCEEDED", "FAILED"])
+            assert execs, f"attempt {attempt}: no finished execution"
+            chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock", longest=True)
+            if "recurrent_violation" in escalation_reasons(chosen["arn"]):
+                escalated = (attempt, chosen)
+                break
+            assert all(get_public_access(name).values()), \
+                f"attempt {attempt}: not remediated and not escalated"
+
+        assert escalated, "the breaker never tripped in 5 repeated violations"
+        attempt, chosen = escalated
+        metrics["t_escalation"] = get_execution_timing(chosen["arn"])["duration_s"]
+        metrics["violations_until_break"] = attempt
+
+        # Escalated, not remediated: the resource is left as it is, and the row
+        # carries no remediation_status at all (C8's carries "failed").
+        assert not any(get_public_access(name).values()), "breaker escalated but something remediated"
+        rows = [v for v in query_violations(arn)
+                if v["state"] == "S_violation" and "remediation_status" not in v]
+        assert rows, "no S_violation row without remediation for the escalated violation"
+        assert sfn.describe_execution(executionArn=chosen["arn"])["error"] == "ComplianceEscalation"
+
+        log(f"breaker tripped on violation {attempt}  t_escalation={metrics['t_escalation']}s", "TIME")
+        log("C9 PASSED", "OK")
+        close_escalation_issue(name, "ctrl-s3-public-block")
+        return True, metrics
+    finally:
+        delete_bucket(name)
+
+
 def test_ctrl_s3_public_block():
     """CTRL-01: ctrl-s3-public-block remediates to all true"""
     name = f"compliance-ctrl01-{int(time.time())}"
@@ -952,6 +1004,77 @@ def test_ctrl_ebs_encryption_default():
             ec2.enable_ebs_encryption_by_default()
 
 
+def test_ctrl_ebs_volume_encrypted():
+    """CTRL-06: volume sem criptografia → S_violation → escalação, sem remediação"""
+    # A detective control: an existing volume cannot be encrypted in place (it is
+    # snapshot -> copy -> new volume, with downtime and a new id), so the loop
+    # classifies and escalates. control.json declares "remediation": "manual" and
+    # PlanAction routes on it.
+    #
+    # Creating an unencrypted volume is only possible with encryption by default
+    # off — which CTRL-05 remediates within seconds. The test therefore registers
+    # an exception for ctrl-ebs-encryption-default over the account-level
+    # pseudo-ARN: the loop classifies S_exception and leaves the setting alone.
+    # That exercises the exception mechanism on an account-level resource too.
+    ec2 = boto3.client("ec2", region_name=REGION)
+    account = boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
+    pseudo_arn = f"arn:aws:{REGION}:{account}"
+    metrics = {}
+    was_enabled = ec2.get_ebs_encryption_by_default()["EbsEncryptionByDefault"]
+    eid = put_exception("ctrl-ebs-encryption-default", pseudo_arn, int(time.time()) + 900)
+    volume_id = None
+    try:
+        time.sleep(2)
+        ec2.disable_ebs_encryption_by_default()
+        log("EBS encryption by default disabled under an approved exception")
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_quiesce()
+        assert ec2.get_ebs_encryption_by_default()["EbsEncryptionByDefault"] is False, \
+            "the exception did not hold: the loop re-enabled encryption by default"
+
+        zone = ec2.describe_availability_zones()["AvailabilityZones"][0]["ZoneName"]
+        t_event = aws_now()
+        volume_id = ec2.create_volume(
+            AvailabilityZone=zone, Size=1, VolumeType="gp3", Encrypted=False,
+            TagSpecifications=[{"ResourceType": "volume",
+                                "Tags": [{"Key": "Name", "Value": "compliance-inttest-ctrl06"}]}],
+        )["VolumeId"]
+        log(f"Unencrypted volume {volume_id} created")
+        time.sleep(WAIT_CLOUDTRAIL)
+
+        execs = wait_for_executions(volume_id, t_event, ["FAILED"])
+        assert execs, "no finished execution for the volume"
+        chosen = pick_execution(execs, event_name="CreateVolume")
+        reasons = escalation_reasons(chosen["arn"])
+        assert reasons == ["manual_remediation_required"], f"escalation reasons: {reasons}"
+        metrics["t_escalation"] = get_execution_timing(chosen["arn"])["duration_s"]
+
+        volume_arn = f"arn:aws:ec2:{REGION}:{account}:volume/{volume_id}"
+        rows = [v for v in query_violations(volume_arn)
+                if v["state"] == "S_violation" and "remediation_status" not in v]
+        assert rows, f"no S_violation row under {volume_arn}"
+        assert ec2.describe_volumes(VolumeIds=[volume_id])["Volumes"][0]["Encrypted"] is False, \
+            "the volume was changed; a detective control must not remediate"
+
+        log(f"escalated without remediation  t_escalation={metrics['t_escalation']}s", "TIME")
+        log("CTRL-06 PASSED", "OK")
+        close_escalation_issue(f"volume/{volume_id}", "ctrl-ebs-volume-encrypted")
+        return True, metrics
+    finally:
+        wait_quiesce()
+        if volume_id:
+            try:
+                ec2.get_waiter("volume_available").wait(VolumeIds=[volume_id])
+                ec2.delete_volume(VolumeId=volume_id)
+            except Exception as e:
+                log(f"could not delete {volume_id}: {e}", "WARN")
+        delete_exception(eid)
+        wait_for_revocation_cascade()
+        if was_enabled and not ec2.get_ebs_encryption_by_default()["EbsEncryptionByDefault"]:
+            log("EBS encryption by default left disabled; restoring it", "WARN")
+            ec2.enable_ebs_encryption_by_default()
+
+
 TESTS = [
     ("C1", "Violação simples → remediação automática", test_c1),
     ("C2", "Exceção ativa → S_exception", test_c2),
@@ -961,11 +1084,13 @@ TESTS = [
     ("C6", "Recurso já conforme → S_nominal", test_c6),
     ("C7", "Controls-sync → EventBridge dinâmico", test_c7),
     ("C8", "Remediação falha → escalação", test_c8),
+    ("C9", "Violação reincidente → disjuntor", test_c9),
     ("CTRL-01", "ctrl-s3-public-block", test_ctrl_s3_public_block),
     ("CTRL-02", "ctrl-s3-ssl-only", test_ctrl_s3_ssl_only),
     ("CTRL-03", "ctrl-s3-versioning", test_ctrl_s3_versioning),
     ("CTRL-04", "ctrl-s3-encryption", test_ctrl_s3_encryption),
     ("CTRL-05", "ctrl-ebs-encryption-default", test_ctrl_ebs_encryption_default),
+    ("CTRL-06", "ctrl-ebs-volume-encrypted (detectivo)", test_ctrl_ebs_volume_encrypted),
 ]
 
 
@@ -1047,8 +1172,9 @@ def main():
     failed_execs = []
     resp = sfn.list_executions(stateMachineArn=SFN_ARN, statusFilter="FAILED", maxResults=100)
     failed_execs = [e for e in resp["executions"] if e["startDate"].timestamp() > suite_start]
-    # C4 (system failure) and C8 (failed remediation) end FAILED by design.
-    expected_failed = sum(1 for n in ("C4", "C8") if n in results)
+    # These end FAILED by design: C4 (system failure), C8 (failed remediation),
+    # C9 (the breaker refusing to remediate again) and CTRL-06 (detective control).
+    expected_failed = sum(1 for n in ("C4", "C8", "C9", "CTRL-06") if n in results)
     unexpected = len(failed_execs) - expected_failed
     if unexpected > 0:
         log(f"AUDIT: {unexpected} unexpected FAILED execution(s) during the run "

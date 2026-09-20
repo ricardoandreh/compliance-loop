@@ -76,7 +76,7 @@ resource "aws_iam_role_policy" "resource_read" {
       {
         Sid       = "EC2DescribeABAC"
         Effect    = "Allow"
-        Action    = ["ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:GetEbsEncryptionByDefault"]
+        Action    = ["ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:GetEbsEncryptionByDefault", "ec2:DescribeVolumes"]
         Resource  = "*"
         Condition = { StringEquals = { "aws:ResourceTag/compliance-managed" = "true" } }
       },

@@ -7,8 +7,8 @@
     "ResolveResource": {
       "Type": "Pass",
       "Output": {
-        "resource_id": "{% $states.input.request_parameters.bucketName ? $states.input.request_parameters.bucketName : ($states.input.resource_id ? $states.input.resource_id : 'account-level') %}",
-        "resource_arn": "{% $states.input.request_parameters.bucketName ? 'arn:aws:s3:::' & $states.input.request_parameters.bucketName : ($states.input.resource_arn ? $states.input.resource_arn : 'arn:aws:' & $states.input.region & ':' & $states.input.account_id) %}",
+        "resource_id": "{% $states.input.request_parameters.bucketName ? $states.input.request_parameters.bucketName : ($states.input.response_elements.volumeId ? $states.input.response_elements.volumeId : ($states.input.resource_id ? $states.input.resource_id : 'account-level')) %}",
+        "resource_arn": "{% $states.input.request_parameters.bucketName ? 'arn:aws:s3:::' & $states.input.request_parameters.bucketName : ($states.input.response_elements.volumeId ? 'arn:aws:ec2:' & $states.input.region & ':' & $states.input.account_id & ':volume/' & $states.input.response_elements.volumeId : ($states.input.resource_arn ? $states.input.resource_arn : 'arn:aws:' & $states.input.region & ':' & $states.input.account_id)) %}",
         "account_id": "{% $states.input.account_id %}",
         "region": "{% $states.input.region %}",
         "event_time": "{% $states.input.event_time %}",
@@ -107,7 +107,18 @@
         "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.control_id %}",
         "MessageDeduplicationId": "{% 'control-not-found-' & $states.input.control_id & '-' & $states.input.resource_id %}"
       },
-      "Next": "ExecutionFailed"
+      "Next": "ExecutionFailed",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Comment": "An alert that fails to enqueue is worth retrying whatever the cause; MessageDeduplicationId makes a retry idempotent, so this cannot double-escalate.",
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ]
     },
     "QueryControls": {
       "Type": "Task",
@@ -273,7 +284,20 @@
               "outcome": "{% $states.input.mode = 'verify' ? 'verified' : 'nominal' %}",
               "control_id": "{% $states.input.analyze_result.control_id %}"
             },
-            "End": true
+            "End": true,
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "DynamoDB.ProvisionedThroughputExceededException",
+                  "DynamoDB.RequestLimitExceededException",
+                  "DynamoDB.InternalServerErrorException"
+                ],
+                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ]
           },
           "RegisterException": {
             "Type": "Task",
@@ -316,7 +340,20 @@
             "Output": {
               "outcome": "exception"
             },
-            "End": true
+            "End": true,
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "DynamoDB.ProvisionedThroughputExceededException",
+                  "DynamoDB.RequestLimitExceededException",
+                  "DynamoDB.InternalServerErrorException"
+                ],
+                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ]
           },
           "RegisterViolation": {
             "Type": "Task",
@@ -327,14 +364,89 @@
               "Item": "{% $merge([{'violation_id': {'S': $states.input.analyze_result.violation_id}, 'resource_arn': {'S': $states.input.resource_arn}, 'control_id': {'S': $states.input.analyze_result.control_id}, 'state': {'S': 'S_violation'}, 'timestamp': {'S': $states.input.analyze_result.timestamp}, 'policy_version': {'S': $states.input.analyze_result.policy_version}, 'account_id': {'S': $states.input.account_id}, 'region': {'S': $states.input.region}}, $states.input.mode = 'verify' ? {'round': {'S': 'verification'}, 'origin_execution': {'S': $states.input.origin_execution}, 'verifies_violation_id': {'S': ($lookup($states.input.origin_violations, $states.input.analyze_result.control_id) ? $lookup($states.input.origin_violations, $states.input.analyze_result.control_id) : 'unknown')}, 'remediation_status': {'S': 'not_converged'}} : {}]) %}"
             },
             "Output": "{% $states.input %}",
+            "Next": "CountRecentRemediations",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "DynamoDB.ProvisionedThroughputExceededException",
+                  "DynamoDB.RequestLimitExceededException",
+                  "DynamoDB.InternalServerErrorException"
+                ],
+                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ]
+          },
+          "CountRecentRemediations": {
+            "Type": "Task",
+            "Comment": "The two rounds bound one incident; they say nothing about a sequence of them. An external process that keeps re-applying the violating configuration would be silently reverted forever, each incident 'converging'. This counts how many times this exact (resource, control) was remediated successfully in the last ${recurrence_window_minutes} minutes, and PlanAction escalates instead of remediating past the threshold — the Knowledge feeding back into Plan.",
+            "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
+            "Arguments": {
+              "TableName": "${violations_log_table}",
+              "IndexName": "resource_arn-timestamp-index",
+              "KeyConditionExpression": "resource_arn = :arn AND #ts > :since",
+              "FilterExpression": "control_id = :cid AND remediation_status = :ok",
+              "ExpressionAttributeNames": {
+                "#ts": "timestamp"
+              },
+              "ExpressionAttributeValues": {
+                ":arn": {
+                  "S": "{% $states.input.resource_arn %}"
+                },
+                ":since": {
+                  "S": "{% $fromMillis($toMillis($states.context.State.EnteredTime) - ${recurrence_window_minutes} * 60000) %}"
+                },
+                ":cid": {
+                  "S": "{% $states.input.analyze_result.control_id %}"
+                },
+                ":ok": {
+                  "S": "success"
+                }
+              },
+              "Select": "COUNT"
+            },
+            "Output": "{% $merge([$states.input, {'recent_remediations': $states.result.Count}]) %}",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "DynamoDb.ProvisionedThroughputExceededException",
+                  "DynamoDb.RequestLimitExceededException",
+                  "DynamoDb.InternalServerErrorException"
+                ],
+                "Comment": "aws-sdk integration: DynamoDb.* (lowercase b).",
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Comment": "Fail open: without the count the breaker cannot decide, and refusing to remediate on a failed query would turn a transient DynamoDB error into an unremediated violation.",
+                "Output": "{% $merge([$states.input, {'recent_remediations': 0}]) %}",
+                "Next": "PlanAction"
+              }
+            ],
             "Next": "PlanAction"
           },
           "PlanAction": {
             "Type": "Choice",
-            "Comment": "Plan: what to do about S_violation. The verification rule comes first on purpose — in a verification round a violation escalates and never reaches InvokeExecute, which is what bounds an incident to two executions and makes oscillation impossible.",
+            "Comment": "Plan: what to do about S_violation. The verification rule comes first on purpose — in a verification round a violation escalates and never reaches InvokeExecute, which is what bounds an incident to two executions. The second rule is the circuit breaker: past ${recurrence_threshold} successful remediations of the same (resource, control) inside the window, remediating again would only keep a reversion war going, so it escalates as an ownership conflict.",
             "Choices": [
               {
                 "Condition": "{% $states.input.mode = 'verify' %}",
+                "Next": "Escalate"
+              },
+              {
+                "Condition": "{% $states.input.recent_remediations >= ${recurrence_threshold} %}",
+                "Next": "Escalate"
+              },
+              {
+                "Condition": "{% $states.input.analyze_result.remediation = 'manual' %}",
                 "Next": "Escalate"
               }
             ],
@@ -443,7 +555,20 @@
               "control_id": "{% $states.input.analyze_result.control_id %}",
               "violation_id": "{% $states.input.analyze_result.violation_id %}"
             },
-            "End": true
+            "End": true,
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "DynamoDB.ProvisionedThroughputExceededException",
+                  "DynamoDB.RequestLimitExceededException",
+                  "DynamoDB.InternalServerErrorException"
+                ],
+                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ]
           },
           "UpdateLogFailed": {
             "Type": "Task",
@@ -477,22 +602,46 @@
               "analyze_result": "{% $states.input.analyze_result %}",
               "execute_result": "{% $states.input.execute_result %}"
             },
-            "Next": "Escalate"
+            "Next": "Escalate",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "DynamoDB.ProvisionedThroughputExceededException",
+                  "DynamoDB.RequestLimitExceededException",
+                  "DynamoDB.InternalServerErrorException"
+                ],
+                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ]
           },
           "Escalate": {
             "Type": "Task",
-            "Comment": "One escalation, three reasons: remediation_failed (Execute failed), non_convergence (S_violation in a verification round) and system_failure (the control could not be evaluated — outside the state model, so there is no violations_log row and the escalation Lambda leaves the issue unlinked). Deduplication is by violation_id (unique per evaluation), NOT by resource+control: the FIFO 5-minute window would otherwise drop a second violation of the same pair, and that violation_id would never receive its github_issue_url, breaking the H2 audit chain. Duplicate ISSUES are prevented one layer up, by find_open_issue() in the escalation Lambda, which is where semantic deduplication belongs.",
+            "Comment": "One escalation, five reasons: remediation_failed (Execute failed), non_convergence (S_violation in a verification round), recurrent_violation (the same resource and control remediated ${recurrence_threshold} times inside the window — something keeps reverting it), manual_remediation_required (a detective control, whose fix is disruptive and belongs to a human) and system_failure (the control could not be evaluated — outside the state model, so there is no violations_log row and the escalation Lambda leaves the issue unlinked). Deduplication is by violation_id (unique per evaluation), NOT by resource+control: the FIFO 5-minute window would otherwise drop a second violation of the same pair, and that violation_id would never receive its github_issue_url, breaking the H2 audit chain. Duplicate ISSUES are prevented one layer up, in the escalation Lambda.",
             "Resource": "arn:aws:states:::sqs:sendMessage",
             "Arguments": {
               "QueueUrl": "${escalation_queue_url}",
-              "MessageBody": "{% ( $reason := $states.input.execute_result ? 'remediation_failed' : ($states.input.analyze_result.state = 'S_violation' ? 'non_convergence' : 'system_failure'); $error := $reason = 'remediation_failed' ? $string($states.input.execute_result.error) : ($reason = 'non_convergence' ? 'Remediation did not converge: the verification round still finds ' & $states.input.analyze_result.control_id & ' violated after a remediation reported success (origin execution ' & $states.input.origin_execution & '). The loop does not remediate twice; human review required.' : 'System failure: the control could not be evaluated, so no state was assigned. ' & ($states.input.analyze_result.error ? $states.input.analyze_result.error : 'unknown')); $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'reason': $reason, 'error': $error, 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) ) %}",
+              "MessageBody": "{% ( $reason := $states.input.execute_result ? 'remediation_failed' : ($states.input.analyze_result.state = 'S_violation' ? ($states.input.mode = 'verify' ? 'non_convergence' : ($states.input.analyze_result.remediation = 'manual' ? 'manual_remediation_required' : 'recurrent_violation')) : 'system_failure'); $error := $reason = 'remediation_failed' ? $string($states.input.execute_result.error) : ($reason = 'non_convergence' ? 'Remediation did not converge: the verification round still finds ' & $states.input.analyze_result.control_id & ' violated after a remediation reported success (origin execution ' & $states.input.origin_execution & '). The loop does not remediate twice; human review required.' : ($reason = 'recurrent_violation' ? 'Recurrent violation: ' & $states.input.analyze_result.control_id & ' on this resource was already remediated ' & $string($states.input.recent_remediations) & ' time(s) in the last ${recurrence_window_minutes} minutes. Something keeps reverting it, so remediation was not attempted; resolve the ownership conflict or register an exception.' : ($reason = 'manual_remediation_required' ? 'Detective control: ' & $states.input.analyze_result.control_id & ' has no automatic remediation because fixing it is disruptive. The resource stays as it is until a human acts.' : 'System failure: the control could not be evaluated, so no state was assigned. ' & ($states.input.analyze_result.error ? $states.input.analyze_result.error : 'unknown')))); $string({'violation_id': $states.input.analyze_result.violation_id, 'resource_arn': $states.input.resource_arn, 'control_id': $states.input.analyze_result.control_id, 'reason': $reason, 'error': $error, 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) ) %}",
               "MessageGroupId": "{% $states.input.resource_id & '#' & $states.input.analyze_result.control_id %}",
               "MessageDeduplicationId": "{% $states.input.analyze_result.violation_id %}"
             },
             "Output": {
               "outcome": "escalated"
             },
-            "End": true
+            "End": true,
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Comment": "An alert that fails to enqueue is worth retrying whatever the cause; MessageDeduplicationId makes a retry idempotent, so this cannot double-escalate.",
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ]
           }
         }
       },
@@ -579,7 +728,18 @@
         "MessageGroupId": "{% $states.input.resource_id & '#verification' %}",
         "MessageDeduplicationId": "{% 'unverifiable-remediation-' & $states.context.Execution.Name %}"
       },
-      "Next": "ExecutionFailed"
+      "Next": "ExecutionFailed",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Comment": "An alert that fails to enqueue is worth retrying whatever the cause; MessageDeduplicationId makes a retry idempotent, so this cannot double-escalate.",
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ]
     },
     "EvaluateOutcome": {
       "Type": "Choice",
@@ -597,7 +757,18 @@
         "MessageGroupId": "{% $states.input.resource_id & '#analyze' %}",
         "MessageDeduplicationId": "{% 'analyze-failed-' & $states.input.resource_id & '-' & $now() %}"
       },
-      "Next": "ExecutionFailed"
+      "Next": "ExecutionFailed",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Comment": "An alert that fails to enqueue is worth retrying whatever the cause; MessageDeduplicationId makes a retry idempotent, so this cannot double-escalate.",
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ]
     },
     "ControlLookupFailedEscalation": {
       "Type": "Task",
@@ -609,7 +780,18 @@
         "MessageGroupId": "{% $states.input.resource_id & '#control-lookup' %}",
         "MessageDeduplicationId": "{% 'control-lookup-failed-' & $states.input.resource_id & '-' & $now() %}"
       },
-      "Next": "ExecutionFailed"
+      "Next": "ExecutionFailed",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Comment": "An alert that fails to enqueue is worth retrying whatever the cause; MessageDeduplicationId makes a retry idempotent, so this cannot double-escalate.",
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ]
     },
     "ExecutionSucceeded": {
       "Type": "Succeed"

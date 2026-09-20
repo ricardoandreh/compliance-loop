@@ -77,7 +77,10 @@ resource "aws_iam_role_policy" "dynamodb" {
   role = aws_iam_role.escalation_lambda.id
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = var.violations_log_table_arn }]
+    Statement = [{ Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = var.violations_log_table_arn },
+                 # Deduplication reads the issue already tracking this
+                 # resource+control from the audit trail (design.md, L5).
+                 { Effect = "Allow", Action = ["dynamodb:Query"], Resource = "${var.violations_log_table_arn}/index/*" }]
   })
 }
 

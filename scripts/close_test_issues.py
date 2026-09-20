@@ -36,7 +36,10 @@ import boto3
 TEST_RESOURCE_PATTERNS = [
     re.compile(r"^bucket-inexistente-c4-\d+$"),      # C4, by design
     re.compile(r"^bucket-inexistente-test$"),        # early manual probes
-    re.compile(r"^compliance-inttest-c\d+-\d+$"),    # C1..C7
+    re.compile(r"^compliance-inttest-c\d+-\d+$"),    # C1..C9
+    # CTRL-06 creates a 1 GiB volume and deletes it; the escalation names the
+    # resource as volume/<id>. This account runs no volumes of its own.
+    re.compile(r"^volume/vol-[0-9a-f]+$"),
     re.compile(r"^compliance-ctrl\d+-\d+$"),         # CTRL-01..05
     re.compile(r"^compliance-test-.*$"),             # older harness
     re.compile(r"^test-compliance-bucket-\d+$"),     # manual

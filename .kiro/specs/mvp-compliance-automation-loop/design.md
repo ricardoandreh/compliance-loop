@@ -32,7 +32,7 @@ O sistema classifica recursos em três estados formais:
 
 Não há quarto estado. Um controle que não pôde ser avaliado — leitura da configuração falhou, OPA falhou, a consulta de exceções falhou, o orçamento de tempo acabou — tem estado **desconhecido**: é uma falha do sistema, não uma propriedade do recurso, e fica fora do modelo formal. O Analyze devolve esse controle sem `state`, e o orquestrador o escala como `system_failure`, sem registrá-lo no `violations_log` como se fosse um estado. Tampouco é uma `S_violation`: com a consulta de exceções falhando, o recurso pode estar autorizado, e com a leitura falhando pode estar conforme — remediar seria agir sem observação.
 
-A rodada (detecção ou verificação) também não é estado: não muda a classificação do recurso, só a ação que o loop toma diante dela (ver *Orchestrator*).
+A rodada (detecção ou verificação) também não é estado: não muda a classificação do recurso, só a ação que o loop toma diante dela (ver *Orchestrator*). O mesmo vale para o disjuntor de reincidência e para os controles detectivos: uma violação reincidente e uma violação sem remediação automática continuam sendo `S_violation` — o que muda é o que o Plan decide fazer.
 
 
 ## Architecture
@@ -270,10 +270,17 @@ ResolveResource          # extrai resource_id/resource_arn dos request_parameter
             │                          # verifies_violation_id: é a confirmação da convergência
             ├─ S_exception → RegisterException (putItem) → outcome=exception
             ├─ S_violation → RegisterViolation (putItem; em verify + remediation_status=not_converged)
+            │     → CountRecentRemediations  # query no GSI: remediações com sucesso deste
+            │     │                          # (recurso, controle) na janela do disjuntor
             │     → PlanAction   # Choice: o que fazer com a violação
             │          ├─ mode = verify        → Escalate (non_convergence) → outcome=escalated
             │          │                          # primeira regra de propósito: numa rodada de
             │          │                          # verificação uma violação nunca alcança InvokeExecute
+            │          ├─ reincidências ≥ N    → Escalate (recurrent_violation)
+            │          │                          # disjuntor: alguém desfaz a remediação; remediar
+            │          │                          # de novo só manteria a gangorra
+            │          ├─ controle detectivo   → Escalate (manual_remediation_required)
+            │          │                          # remediation = manual: a correção é disruptiva
             │          └─ senão → InvokeExecute
             │                → CheckRemediationStatus
             │                     ├─ success → UpdateLogSuccess (updateItem) → outcome=remediated
@@ -322,6 +329,27 @@ O primeiro padrão faria o sistema parar de detectar toda violação feita pelo 
 | intervalo escrita → leitura | 15,41 s (15,26–15,66) | **0,37 s** (0,24–0,70) | **0,37 s** (0,22–0,62) |
 
 Nenhuma leitura desatualizada nas 603 leituras imediatas das duas séries sem espera, feitas ~0,4 s depois da escrita: pela regra de três, a taxa de leitura desatualizada é inferior a ~0,5% por leitura, com 95% de confiança. A afirmação tem dois limites. Vale para os controles que foram de fato remediados e verificados — os três S3 (public-block, ssl-only, versioning) e, com 10 leituras, o de EBS; o `ctrl-s3-encryption` nunca precisou de remediação. E, se uma leitura desatualizada ocorrer, o erro cai do lado seguro — uma escalação de não convergência indevida, nunca um `S_nominal` falso. Para um controle futuro com propagação mais lenta, a mitigação é reavaliar com novas tentativas limitadas antes de escalar, não voltar a uma espera fixa para todos (ver L13).
+
+#### Disjuntor de reincidência
+
+As duas rodadas limitam **um incidente**; não limitam uma sequência deles. Um processo externo que reaplique a configuração violadora — um pipeline de outro time com tfstate próprio, um script agendado — produz uma gangorra: detecção, remediação, verificação `S_nominal`, reversão, tudo de novo. Cada incidente converge, o MTTR fica ótimo, nada escala, e o conflito de dono nunca chega a uma pessoa.
+
+Antes de remediar, o `CountRecentRemediations` consulta o GSI `resource_arn-timestamp-index` e conta as remediações **bem-sucedidas deste mesmo par (recurso, controle)** na janela configurada. Passando do limiar, o `PlanAction` escala com `reason = recurrent_violation` em vez de remediar: o recurso fica como está e a decisão volta para quem pode resolver o conflito — corrigir a origem ou registrar uma exceção.
+
+É o ponto em que o **Knowledge realimenta o Plan**: o histórico deixa de ser só registro de auditoria e passa a mudar a decisão. Até aqui, o `violations_log` era escrito e nunca lido para decidir.
+
+Dois cuidados no desenho:
+
+- **Falha aberta**: se a consulta falhar, a contagem vai a zero e o fluxo remedeia como antes. Um erro transitório do DynamoDB não deve transformar uma violação remediável numa violação parada.
+- **Limiar e janela são parâmetros** (`recurrence_threshold`, `recurrence_window_minutes`, por padrão 3 e 10 minutos). A corrida `CreateBucket` + violação (L6) já produz duas remediações legítimas do mesmo par em segundos, então o limiar precisa ficar acima disso. A calibração é operacional, não medida (L16).
+
+#### Controles detectivos
+
+Nem toda violação tem remediação automática aceitável. Um volume EBS sem criptografia não pode ser corrigido no lugar: a correção é snapshot → cópia criptografada → volume novo → troca na instância, com parada e ID novo. Aplicar isso sozinho seria pior que a violação.
+
+Um controle marca isso no próprio cadastro, com `"remediation": {"S": "manual"}` e sem `remediation.tf`. O Analyze repassa o campo, e o `PlanAction` roteia para `Escalate` com `reason = manual_remediation_required`. A classificação não muda: o recurso está em `S_violation` como qualquer outro, e a linha de auditoria é a mesma — o que muda é a ação planejada, que é avisar uma pessoa.
+
+O `scripts/deploy_control.sh` recusa um controle sem `remediation.tf` que não se declare manual, e um teste de contrato exige a mesma coisa: um controle que simplesmente esqueceu a remediação não vira detectivo por acidente.
 
 **O que continua possível**: duas mudanças *externas* simultâneas sobre o mesmo controle (a corrida `CreateBucket` + violação do C1/C5) ainda produzem duas rodadas de detecção e duas de verificação — limitado, mas não deduplicado (ver L6).
 
@@ -1374,7 +1402,7 @@ O valor anterior (Lambda 15s) não cobria sequer o pior caso nominal de 4 contro
 - Todo `Choice` tem `Default` e todo estado é alcançável — verificado estaticamente
 - Global timeout (600s): encerra a execução como `FAILED`
 
-**Nota sobre retry nas escritas**: o Step Functions aplica retry *default* apenas às integrações otimizadas de **Lambda**. Integrações DynamoDB e SQS **não** têm retry implícito — o retry precisa ser declarado estado a estado. Os estados `RegisterNominal`, `RegisterException`, `UpdateLogSuccess`, `UpdateLogFailed` e `Escalate` **não** declaram `Retry` nem `Catch`, nem o `RegisterViolation`; ver *Limitações Conhecidas*.
+**Nota sobre retry nas escritas**: o Step Functions aplica retry *default* apenas às integrações otimizadas de **Lambda**. Integrações DynamoDB e SQS **não** têm retry implícito — o retry precisa ser declarado estado a estado. Hoje **toda** escrita declara `Retry`: as gravações de auditoria apenas sobre erros transitórios (`ProvisionedThroughputExceeded`, `RequestLimitExceeded`, `InternalServerError`), para que um `ConditionalCheckFailed` ou um erro de validação não seja repetido, e as escalações sobre `States.ALL`, já que uma mensagem que não entra na fila merece nova tentativa qualquer que seja a causa — o `MessageDeduplicationId` torna a repetição idempotente, então não há risco de escalar duas vezes. O que permanece em aberto é o `Catch`: nenhum desses estados o declara, e o `ProcessResults` também não (ver L1).
 
 **Error Recovery**: `Retry` e `Catch` declarados por estado nos pontos listados acima. Erros não capturados resultam em execução `FAILED`, visível no console e nas métricas do Step Functions.
 
@@ -2336,6 +2364,7 @@ Agregado de **10 execuções da suíte com o grafo de três estados, leitura ime
 | C6 | Recurso já conforme | S_nominal | `t_classification` | **0,47 s** ± 0,03 (n = 10) | nenhuma | H1 |
 | C7 | Novo controle → EventBridge | — | `t_sync_insert` | não classificado: 15,62 s ± 0,03 (n = 10) | | Extensibilidade |
 | C8 | Remediação falha (Execute sem permissão) → escalação | S_violation, escalado | `t_escalation` | **6,03 s** ± 0,13 (n = 10) | nenhuma | H2 |
+| C9 | Violação reincidente → disjuntor | S_violation, escalado sem remediar | `t_escalation` | a medir na próxima série | — | H2 |
 
 "Nenhuma" significa que a classificação foi feita e não encontrou amostra fria; "sem classe" marca métricas que terminam antes de a execução começar; "não classificado" marca métricas que medem o teste inteiro, sem uma invocação única a examinar.
 
@@ -2358,6 +2387,7 @@ Agregado de **10 execuções da suíte com o grafo de três estados, leitura ime
 | CTRL-03 | ctrl-s3-versioning | S3 | Versioning = Enabled | 25,91 s ± 0,09 | 25,90 s ± 0,05 | 38,05 s ± 2,06 | 26,32 s ± 0,99 |
 | CTRL-04 | ctrl-s3-encryption | S3 | SSEAlgorithm = AES256 | 26,27 s ± 0,04 | 32,48 s ± 19,36 · mediana 26,24 | 38,98 s ± 1,43 | 27,02 s ± 1,29 |
 | CTRL-05 | ctrl-ebs-encryption-default | EC2 | EbsEncryptionByDefault = true | 28,54 s ± 0,23 | — | — | — |
+| CTRL-06 | ctrl-ebs-volume-encrypted (detectivo) | EC2 | Volume não criptografado escala sem remediação | a medir na próxima série | — | — | — |
 
 Todos com n = 10. O `t_total` mede o **teste**, não o loop: inclui criação de bucket, esperas de CloudTrail e a espera pelas rodadas de verificação, já que o harness só encerra quando nenhuma execução está em andamento. Por isso a espera de 15 s aparecia inteira aqui (+12 s sobre o eco) e a sua remoção devolve o `t_total` ao nível do eco. Não é comparável ao `t_remediation` e, por medir o teste inteiro, não é classificado em quente/frio. O desvio alto de CTRL-01 e CTRL-04 na série de leitura imediata vem de **uma única rodada** (07), com 91,7 s e 87,6 s e o tempo extra fora do loop — nas esperas do harness e na entrega do DynamoDB Streams, que na mesma rodada levou 172 s para sincronizar uma remoção no C7; não se repetiu na série atual.
 
@@ -2432,6 +2462,8 @@ O cold start também não se espalha pela amostra: aparece como observação iso
 - Escalação com `github_issue_url` persistido na linha da violação (C8, 10 de 10)
 - `state=S_violation` preservado após falha de remediação, com `remediation_status=failed` e o erro (C8): `t_escalation` **6,03 s** ± 0,13 · IC 95% [5,94 · 6,13] — ~0,2 s abaixo de uma remediação bem-sucedida (não atribuído por medição)
 - Falha do sistema escalada sem registro de estado, com `reason=system_failure` (C4): **0,48 s** ± 0,05
+- Violação reincidente escalada **sem remediar**, com `reason=recurrent_violation` e a linha `S_violation` sem `remediation_status` (C9)
+- Controle detectivo escalado sem tocar no recurso, com `reason=manual_remediation_required` (CTRL-06)
 - Com o laço em duas rodadas, a confirmação `S_nominal` é gravada **ligada à violação que verifica** (`verifies_violation_id`, `origin_execution`), em vez de uma linha solta associada só por recurso e horário. Nenhuma rodada de verificação escalou nas 30 execuções do laço explícito: 883 leituras de controle, todas `verified`
 
 **H3 — Tempo de exposição** (`t_exposure`; C1 · C5)
@@ -2458,17 +2490,17 @@ O cold start também não se espalha pela amostra: aparece como observação iso
 
 Esta seção registra lacunas **identificadas e não fechadas**, com a justificativa da decisão. Distinguem-se de bugs: são pontos onde o comportamento é conhecido, delimitado e aceito no escopo avaliado.
 
-### L1. Ausência de `Retry`/`Catch` nas escritas do Step Functions
+### L1. Ausência de `Catch` nas escritas do Step Functions *(Retry resolvido)*
 
-**O que**: dez estados de escrita não declaram `Retry` nem `Catch`. No Map: `RegisterNominal`, `RegisterException`, `RegisterViolation`, `UpdateLogSuccess`, `UpdateLogFailed` e `Escalate`. No nível superior, os próprios estados de escalação: `RequestedControlNotFound`, `AnalyzeFailedEscalation`, `ControlLookupFailedEscalation` e `UnverifiableRemediationEscalation` — uma falha transitória neles faz a escalação se perder. O `ProcessResults` (Map) também não declara `Catch`. A lacuna é uniforme de propósito: um `Catch` isolado no `RegisterViolation`, que existiu por um tempo com um `Fail` próprio (`ViolationNotRecorded`), protegia um único alerta enquanto o próprio `Escalate` continuava sem proteção, e nunca chegou a executar.
+> **Estado atual**: o `Retry` foi declarado em todas as escritas — DynamoDB apenas sobre erros transitórios, SQS sobre `States.ALL`, porque o `MessageDeduplicationId` torna a repetição idempotente. Um teste estrutural exige isso de toda integração de DynamoDB e SQS do grafo. O que segue em aberto é o `Catch`.
 
-**Consequência**: uma falha transitória de DynamoDB em `RegisterViolation` faz a iteração falhar; sem `Catch` no Map, a execução termina `FAILED` sem remediação e sem escalação. Com `MaxConcurrency=1`, os controles seguintes daquela avaliação não chegam a ser processados — num evento `CreateBucket` são 4 controles.
+**O que**: nenhuma escrita declara `Catch`, e o `ProcessResults` (Map) também não. Se uma gravação falhar depois das retentativas, a iteração falha; sem `Catch` no Map, a execução termina `FAILED` sem remediação e sem escalação. Com `MaxConcurrency=1`, os controles seguintes daquela avaliação não chegam a ser processados — num evento `CreateBucket` são 4 controles.
 
-**Por que não foi fechado**: o modo de falha exige throttling de DynamoDB numa tabela `PAY_PER_REQUEST` com 5 controles e volume de teste. Não é alcançável nos cenários de avaliação, portanto a correção não seria **demonstrável** — apenas afirmada. Fechá-la sem poder exercitá-la adicionaria superfície não verificada ao artefato.
+**Por que não foi fechado**: o modo de falha exige throttling persistente do DynamoDB numa tabela `PAY_PER_REQUEST` com 6 controles e volume de teste, ou seja, além do que as três retentativas absorvem. Não é alcançável nos cenários de avaliação, portanto a correção não seria **demonstrável** — apenas afirmada. Fechá-la sem poder exercitá-la adicionaria superfície não verificada ao artefato.
 
-**Como fechar**: o princípio é que nenhum estado dentro do Map pode lançar exceção — toda saída termina num `outcome`. Isso exige `Retry` (throttling/erros internos) e `Catch` por estado, com destino coerente: `RegisterViolation` → `InvokeExecute` (a remediação não pode ser bloqueada pela auditoria), `RegisterNominal`/`RegisterException` → estado de escalação de auditoria degradada, `UpdateLogFailed` → `Escalate`. Um `Catch` no próprio `ProcessResults` cobre o resto. Observação: `ToleratedFailureCount` **não** resolve — só existe em Distributed Map, e `ProcessResults` é `INLINE`.
+**Como fechar**: o princípio é que nenhum estado dentro do Map pode lançar exceção — toda saída termina num `outcome`. Isso exige `Catch` por estado, com destino coerente: `RegisterViolation` → `CountRecentRemediations` (a remediação não pode ser bloqueada pela auditoria), `RegisterNominal`/`RegisterException` → escalação de auditoria degradada, `UpdateLogFailed` → `Escalate`. Um `Catch` no próprio `ProcessResults` cobre o resto. Observação: `ToleratedFailureCount` **não** resolve — só existe em Distributed Map, e `ProcessResults` é `INLINE`.
 
-**Efeito colateral a tratar junto**: se `RegisterViolation` falhar e o fluxo seguir para `InvokeExecute`, os `UpdateLog*` viram *upsert* e criam linha fantasma — o mesmo defeito que o `ConditionExpression attribute_exists(violation_id)` corrigiu na Lambda de escalação. A correção é simétrica: aplicar a mesma condição aos dois `UpdateLog*`.
+**Efeito colateral a tratar junto**: se `RegisterViolation` falhar e o fluxo seguir para a remediação, os `UpdateLog*` viram *upsert* e criam linha fantasma — o mesmo defeito que o `ConditionExpression attribute_exists(violation_id)` corrigiu na Lambda de escalação. A correção é simétrica: aplicar a mesma condição aos dois `UpdateLog*`.
 
 ### L2. `Scan` sem paginação na resolução de controles
 
@@ -2484,9 +2516,11 @@ Há ainda divergência entre os dois caminhos de entrada: via CloudTrail o `reso
 
 O TTL sobre `valid_until` permanece habilitado para limpeza eventual. Como a deleção é física, o registro de *quem aprovou* uma exceção desaparece até 48h após a expiração. O rastro de auditoria não se perde — `RegisterException` copia `exception_id` e `approved_by` para o `violations_log`, que não tem TTL —, mas a tabela `exceptions` não deve ser tratada como fonte histórica de aprovações.
 
-### L5. Latência de indexação na deduplicação de issues
+### L5. Latência de indexação na deduplicação de issues *(resolvido)*
 
-`find_open_issue()` usa a Search API do GitHub, cujo índice tem atraso de segundos a minutos. Uma issue recém-criada pode não ser encontrada, gerando duplicata. O `MessageGroupId` serializa o processamento por par recurso+controle, o que reduz a janela, mas não a elimina. Alternativa mais robusta: consultar o GSI `resource_arn-timestamp-index` do `violations_log` por registro recente do mesmo controle que já tenha `github_issue_url` — exato e sem atraso, ao custo de adicionar `dynamodb:Query` à role da Lambda de escalação.
+> **Estado atual**: resolvido. Antes de abrir uma issue, a Lambda de escalação consulta o GSI `resource_arn-timestamp-index` do `violations_log` pelas linhas recentes do mesmo recurso e controle que já carreguem `github_issue_id`, e lê o estado da issue direto (`GET /repos/{owner}/{repo}/issues/{n}`), sem passar pelo índice de busca. A Search API continua como *fallback* para escalações que não têm linha própria — uma falha de sistema tem `violation_id` sintético. Coberto por `tests/unit/test_escalation_lambda.py`.
+
+`find_open_issue()` usava a Search API do GitHub, cujo índice tem atraso de segundos a minutos. Uma issue recém-criada podia não ser encontrada, gerando duplicata. O `MessageGroupId` serializa o processamento por par recurso+controle, o que reduzia a janela, mas não a eliminava.
 
 ### L6. Escopo da validação empírica
 
@@ -2494,9 +2528,11 @@ Conta e região únicas, 5 controles, violações sintéticas induzidas pelo run
 
 Concorrência sobre o mesmo recurso **foi** exercitada — de forma incidental, não planejada. Em toda execução do C1 e do C5, `CreateBucket` e a violação induzida pelo teste chegam juntos, e duas execuções remedeiam `ctrl-s3-public-block` no mesmo bucket em paralelo. O resultado converge, porque a remediação é declarativa e idempotente, mas tem duas consequências observáveis: o Execute roda duas vezes para o mesmo ajuste, e o `violations_log` registra **dois** `S_violation` (e duas confirmações `S_nominal`) para o que operacionalmente é uma única violação. Com o laço fechado em duas rodadas, as confirmações por eco deixam de existir, mas a corrida entre as duas mudanças *externas* permanece: são duas rodadas de detecção, cada uma com sua rodada de verificação. O log é correto como registro de *avaliações*; contar violações por número de linhas superestima incidentes. Concorrência adversarial — remediações não idempotentes, ou duas remediações que escrevem estados diferentes — não foi exercitada; o merge de policy do ssl-only é o candidato mais sensível a isso. A generalização do fetcher genérico está demonstrada para 2 serviços (S3, EC2), mas com força de evidência desigual: as séries repetidas (10 execuções cada) cobrem **apenas S3**. O controle de EC2 (`ctrl-ebs-encryption-default`) tem teste na `integration_test.py` (CTRL-05), incluído depois das séries e exercitado uma vez, a frio. Portanto, a afirmação sustentada por medição repetida é sobre S3; EC2 sustenta a afirmação de *extensibilidade do mecanismo* — o mesmo laço, com verificação e auditoria, sobre outro serviço e um recurso de conta —, não a de desempenho.
 
-### L7. Comparação com soluções gerenciadas
+### L7. Comparação com soluções gerenciadas *(fora do escopo, por decisão)*
 
-O trabalho não apresenta comparação empírica com AWS Config Rules + SSM Automation, Cloud Custodian ou Prowler. A justificativa da abordagem é arquitetural — política portável em Rego, remediação declarativa com diff auditável, mecanismo de exceção com re-avaliação temporal determinística e loop MAPE-K explícito —, não experimental. Uma comparação de MTTR e de completude de auditoria contra AWS Config seria a extensão natural.
+O trabalho **não se propõe** a comparar ferramentas. O objeto é uma arquitetura de referência para o laço de conformidade — política portável em Rego, remediação declarativa com diff auditável, exceções com re-avaliação temporal e um laço MAPE-K explícito, com verificação e escalação —, e a avaliação mede o comportamento dessa arquitetura, não a sua posição num comparativo de mercado.
+
+Fica registrado aqui como delimitação, e não como lacuna: não há medição contra AWS Config Rules + SSM Automation, Cloud Custodian ou Prowler, e nenhuma afirmação do texto depende de tal comparação. Um estudo comparativo de MTTR e de completude de auditoria contra essas ferramentas é trabalho independente, com desenho experimental próprio.
 
 ### L8. Incerteza residual no alinhamento de relógio
 
@@ -2536,15 +2572,17 @@ Hoje a premissa vale por inspeção: o `remediation.tf` do ssl-only gera exatame
 
 **Como fechar**, em ordem de custo:
 1. **Teste de contrato por controle** — *implementado* em `tests/contract/test_remediation_contract.py`. Para cada controle, deriva o estado remediado do próprio `remediation.tf` (sem fixture transcrita à mão), converte-o para o formato que a API devolve ao `fetch_config` e avalia a política com a **mesma versão do OPA do layer** (1.4.2, lida do `build_analyze.sh`). Cada controle carrega também uma variante quebrada que precisa ser negada, para que o teste não passe por vacuidade, e a suíte falha se um controle novo chegar sem contrato. Validado por mutação: trocar o `status` do versioning para `"Suspended"` derruba exatamente o teste daquele controle. Execução: `scripts/test_policies.sh`. A convergência deixa de ser propriedade inspecionada e passa a ser testada — para os estados que a remediação produz; não cobre um processo externo que desfaça a remediação.
-2. **Disjuntor por (recurso, controle)** — antes do `InvokeExecute`, consultar o GSI `resource_arn-timestamp-index` por remediações recentes do mesmo par; acima de um limiar numa janela, escalar em vez de remediar. Exige atenção à concorrência de L6, que hoje já produz duas remediações legítimas por par.
+2. **Disjuntor por (recurso, controle)** — *implementado*: o `CountRecentRemediations` consulta o GSI `resource_arn-timestamp-index` antes do `PlanAction` e, acima do limiar na janela, a violação escala como `recurrent_violation` em vez de ser remediada (ver *Disjuntor de reincidência*). É o que fecha a oscilação **entre** incidentes, que as duas rodadas não alcançam; a calibração do limiar fica em L16, e a concorrência legítima de L6 é o que impede um limiar menor.
 
-### L12. Heterogeneidade do ambiente de execução do Lambda
+### L12. Heterogeneidade entre ambientes de execução da Lambda
 
-**O que**: no regime quente, a duração do Execute depende do container em que a invocação cai. Na série `results/no-wait/`, 98 das 283 invocações ficaram abaixo de 4,8 s, em 2 dos 5 containers (94 de 146 num, 4 de 8 noutro), e os outros três nunca ficaram abaixo disso; nas 280 invocações da série de 15 s e nas 330 da série `results/three-state/`, nenhuma. Uma versão anterior deste registro dizia "90 de 251, todas no mesmo container" — a contagem tinha sido feita com 9 das 10 rodadas; a décima trouxe o segundo container com invocações rápidas. As 17 amostras rápidas de `t_remediation` vêm todas do mesmo container. A diferença, ~1,1 s, fica antes da primeira escrita do `tofu` e não se correlaciona com o tempo ocioso do container. A causa provável é o hardware do host, que a AWS não expõe e não garante homogêneo.
+**O que**: uma Lambda não roda "só no runtime": cada invocação é servida por um **ambiente de execução** — uma microVM que a AWS cria, reaproveita e descarta. O código, a layer e a memória são idênticos em todos; o hospedeiro não é, e a AWS não expõe qual é.
 
-**Consequência**: médias agregadas de `t_remediation` e `t_exposure` misturam dois regimes, e uma série pode parecer mais rápida só porque mais amostras caíram no container rápido — foi o caso da série de leitura imediata, cujo agregado sugeria 0,64 s de melhoria que não existe no mesmo tipo de container. A série seguinte, sem container rápido, voltou a 6,26 s, confirmando que o patamar era do ambiente e não do sistema. Comparações entre séries precisam ser feitas por tipo de container, e o número de containers de cada tipo não é controlável pelo experimento.
+**A evidência é indireta, mas direta o bastante**: cada ambiente escreve num *log stream* próprio do CloudWatch, então o stream identifica o ambiente. Na série `results/no-wait/`, 98 das 283 invocações do Execute ficaram abaixo de 4,8 s, e elas se concentram em 2 dos 5 streams (94 de 146 num, 4 de 8 noutro); os outros três nunca ficaram abaixo disso. Nas 280 invocações da série de 15 s, nas 280 do eco e nas 330 da série de três estados, **nenhuma**. A diferença, ~1,1 s, aparece antes da primeira escrita do `tofu` (no CloudTrail, o `PutBucketPublicAccessBlock` sai 4,19 s após o início numa amostra rápida e 5,14 s numa lenta) e não se correlaciona com o tempo ocioso do ambiente. Como o artefato é o mesmo em todas as séries, a explicação compatível é o hospedeiro em que o ambiente foi criado.
 
-**Como mitigar**: reportar por tipo de container, como na *Síntese por Hipótese*; para isolar o sistema do hardware, fixar a arquitetura e forçar containers novos a cada amostra (o que troca heterogeneidade por cold start), ou aumentar o número de séries para que a proporção de containers vire parte da distribuição medida em vez de um acaso da série.
+**Consequência**: médias agregadas de `t_remediation` e `t_exposure` misturam dois patamares, e uma série pode parecer mais rápida só porque mais amostras caíram no ambiente rápido — foi o caso da série de leitura imediata, cujo agregado sugeria 0,64 s de melhoria que não existe quando se compara o mesmo tipo de ambiente. Comparações entre séries são feitas por tipo de ambiente, e a proporção de cada tipo não é controlável pelo experimento.
+
+**Como mitigar**: reportar por tipo de ambiente, como na *Síntese por Hipótese*; para isolar o sistema do hospedeiro, forçar ambientes novos a cada amostra (o que troca heterogeneidade por cold start), ou acumular séries suficientes para que a proporção vire parte da distribuição medida em vez de um acaso da série.
 
 ### L13. Consistência de leitura demonstrada só para S3 e EBS
 
@@ -2554,15 +2592,15 @@ Hoje a premissa vale por inspeção: o `remediation.tf` do ssl-only gera exatame
 
 **Como fechar**: quando a rodada de verificação encontrar o controle ainda violado, reavaliar com novas tentativas limitadas e espera crescente (ex.: 2, 4, 8 s) antes de registrar a não convergência. Isso preserva a leitura imediata no caminho feliz, trata a consistência eventual de forma estrutural em vez de um número fixo, e continua sem remediar na rodada de verificação. O teto das tentativas deve vir de medição por serviço, com `scripts/verification_consistency.py`.
 
-### L14. Cobertura preventiva do controle de EBS
+### L14. Cobertura preventiva do controle de EBS *(complementado pelo CTRL-06)*
 
-**O que**: `ctrl-ebs-encryption-default` avalia e remedia a configuração `EbsEncryptionByDefault` da região. Ela só vale para volumes criados depois de ligada. Um volume criado enquanto a configuração estava desligada continua sem criptografia, e o controle segue conforme. O mesmo vale para a chave: `ModifyEbsDefaultKmsKeyId` troca a chave padrão (ex.: `aws/ebs` → CMK) apenas para volumes novos.
+> **Estado atual**: a lacuna de detecção foi fechada pelo controle detectivo `ctrl-ebs-volume-encrypted` (CTRL-06), que classifica volumes sem criptografia como `S_violation` e escala com `reason = manual_remediation_required`. A lacuna de **remediação** permanece por decisão: o loop não recria volumes.
 
-**Consequência**: o controle impede que a lacuna cresça, mas não detecta a lacuna existente. "Criptografia de EBS conforme" no `violations_log` significa "volumes novos sairão criptografados", não "todos os volumes estão criptografados". Durante o teste, a configuração fica desligada na região por ~15–30 s; numa conta com cargas ativas, volumes criados nessa janela sairiam sem criptografia — a conta de avaliação não tem volumes nem instâncias.
+**O que**: `ctrl-ebs-encryption-default` avalia e remedia a configuração `EbsEncryptionByDefault` da região, que só vale para volumes criados depois de ligada. Um volume criado enquanto ela estava desligada continua sem criptografia. O mesmo vale para a chave: `ModifyEbsDefaultKmsKeyId` troca a chave padrão (ex.: `aws/ebs` → CMK) apenas para volumes novos.
 
-**Por que não foi fechado**: a AWS não criptografa um volume existente nem troca a sua chave no lugar. A correção é snapshot → cópia do snapshot com criptografia/chave nova → volume novo → troca na instância, com parada, ID de volume novo e referências a atualizar. Não é uma remediação que o loop deva aplicar sozinho.
+**Consequência**: "criptografia de EBS conforme" no `violations_log` significa, para o CTRL-05, "volumes novos sairão criptografados". A conformidade dos volumes existentes é afirmada pelo CTRL-06, controle por volume. A correção de um volume existente continua manual: a AWS não o criptografa nem troca a sua chave no lugar — é snapshot → cópia criptografada → volume novo → troca na instância, com parada, ID novo e referências a atualizar. Não é remediação que o loop deva aplicar sozinho.
 
-**Como fechar**: um controle detectivo por volume (ex.: `ctrl-ebs-volume-encrypted`, `DescribeVolumes` com `Encrypted` e `KmsKeyId`) que classifique `S_violation` e **escale sem remediar**. No grafo atual isso pede uma regra no `PlanAction` — por exemplo, controle sem `remediation_s3_key` → `Escalate` com `reason = manual_remediation_required`. O teste teria custo, ainda que pequeno: um volume e um snapshot de 1 GiB por poucos minutos, e US$ 1/mês se usar CMK.
+**Como o CTRL-06 é exercitado**: criar um volume sem criptografia exige a criptografia padrão desligada, e o CTRL-05 a religa em segundos. O cenário registra uma **exceção aprovada** para o `ctrl-ebs-encryption-default` sobre o pseudo-ARN da conta enquanto dura o teste — o loop classifica `S_exception` e não remedeia —, cria o volume de 1 GiB, confirma a escalação sem remediação e desfaz tudo. De brinde, é o único ponto da suíte que exercita o mecanismo de exceção sobre um recurso de conta (L3).
 
 ### L15. Sem reconciliação periódica: o laço só fecha para o que o CloudTrail entrega *(trabalho futuro)*
 
@@ -2577,3 +2615,13 @@ Hoje a premissa vale por inspeção: o `remediation.tf` do ssl-only gera exatame
 3. Cada recurso segue o caminho existente: Analyze → classificação → `PlanAction`. Uma violação encontrada pela varredura é tratada como qualquer outra, com rodada de verificação e escalação.
 
 Nada do modelo muda: a reconciliação é só outra origem de evento, como já é o Scheduler das exceções. O que muda é custo e ruído — cada varredura avalia todos os recursos, então a frequência é a troca entre janela máxima de exposição para desvios não observados e número de execuções. Também fica a decidir se violações achadas pela varredura remedeiam automaticamente ou só escalam, já que o evento original, e portanto o autor da mudança, é desconhecido.
+
+### L16. Limiar do disjuntor de reincidência não é calibrado
+
+**O que**: o disjuntor escala quando o mesmo par (recurso, controle) acumula `recurrence_threshold` remediações bem-sucedidas em `recurrence_window_minutes` — hoje 3 em 10 minutos. Os dois valores são escolhidos, não medidos.
+
+**Como foram escolhidos**: o limiar precisa ficar acima das remediações legítimas em sequência — a corrida `CreateBucket` + violação já produz duas do mesmo par em segundos (L6) — e a janela precisa ser curta o bastante para que a repetição da própria suíte, que reexecuta os mesmos cenários a cada ~10 minutos sobre recursos de conta como o do CTRL-05, não seja confundida com um conflito de dono.
+
+**Consequência**: numa conta real, um conflito mais lento que a janela (um pipeline que reaplica a configuração uma vez por hora, por exemplo) não dispara o disjuntor, e a gangorra continua invisível. Já um pico legítimo de mudanças no mesmo recurso pode escalar sem que haja conflito.
+
+**Como fechar**: derivar os valores de dados operacionais — distribuição do intervalo entre remediações do mesmo par — em vez de fixá-los, e permitir configuração por controle, já que a frequência esperada de mudança varia (bucket de aplicação contra configuração de conta).
