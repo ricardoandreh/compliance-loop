@@ -845,6 +845,108 @@ def test_c9():
         delete_bucket(name)
 
 
+def test_c10():
+    """C10: sessão de remediação escopada — um remediation.tf adulterado é barrado"""
+    # The Execute holds no write permission of its own: it assumes the
+    # remediation role with a session policy naming the resource that was
+    # classified and the actions the control declared. Two things follow, and
+    # this scenario exercises both by invoking the Lambda directly.
+    #
+    # 1. The remediation template is an artefact in S3. One that hardcodes
+    #    another bucket — a tampered control, or a copy/paste mistake — is
+    #    denied by IAM, because the session only reaches the classified resource.
+    # 2. A control that under-declares its actions cannot borrow the role's
+    #    other permissions: the session is the intersection.
+    classified = f"compliance-inttest-c10a-{int(time.time())}"
+    elsewhere = f"compliance-inttest-c10b-{int(time.time())}"
+    rogue_key = f"controls/ctrl-test-rogue-{int(time.time())}/remediation.tf"
+    metrics = {}
+    lam = boto3.client("lambda", region_name=REGION)
+    s3c = boto3.client("s3", region_name=REGION)
+    bucket = os.environ.get("CONTROLS_BUCKET", "compliance-mvp-terraform-state")
+    create_bucket(classified)
+    create_bucket(elsewhere)
+    try:
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_quiesce()
+        # `elsewhere` stays compliant: the tampered template is what tries to
+        # change it, and the loop would remediate it back if the test violated
+        # it itself, hiding whether IAM refused.
+        set_public_access(classified, block=False)
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_quiesce()
+
+        rogue = f"""terraform {{
+  required_providers {{
+    aws = {{
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }}
+  }}
+}}
+
+provider "aws" {{
+  region = var.region
+}}
+
+variable "bucket_name" {{ type = string }}
+variable "region" {{ type = string }}
+
+resource "aws_s3_bucket_public_access_block" "rogue" {{
+  bucket                  = "{elsewhere}"
+  block_public_acls       = false
+  ignore_public_acls      = false
+  block_public_policy     = false
+  restrict_public_buckets = false
+}}
+"""
+        s3c.put_object(Bucket=bucket, Key=rogue_key, Body=rogue.encode())
+
+        def remediate(s3_key, actions):
+            payload = {
+                "resource_arn": f"arn:aws:s3:::{classified}",
+                "resource_id": classified,
+                "control_id": "ctrl-s3-public-block",
+                "region": REGION,
+                "violation_id": str(uuid.uuid4()),
+                "remediation_s3_key": s3_key,
+                "remediation_actions": actions,
+                "remediation_scope": "resource",
+            }
+            resp = lam.invoke(FunctionName=f"{PREFIX}-execute-{ENV}", Payload=json.dumps(payload))
+            return json.loads(resp["Payload"].read())
+
+        full = ["s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock"]
+
+        tampered = remediate(rogue_key, full)
+        assert tampered["remediation_status"] == "failed", \
+            f"a template pointing at another bucket was applied: {str(tampered)[:300]}"
+        assert "AccessDenied" in tampered.get("error", ""), tampered.get("error", "")[:200]
+        assert all(get_public_access(elsewhere).values()), "denied, but the other bucket changed"
+        log("remediation template pointing at another bucket was denied by IAM")
+
+        under_declared = remediate("controls/ctrl-s3-public-block/remediation.tf",
+                                   ["s3:GetBucketPublicAccessBlock"])
+        assert under_declared["remediation_status"] == "failed", \
+            f"the session reached an action the control never declared: {str(under_declared)[:300]}"
+        assert "AccessDenied" in under_declared.get("error", ""), under_declared.get("error", "")[:200]
+        log("action the control did not declare was denied by IAM")
+
+        ok = remediate("controls/ctrl-s3-public-block/remediation.tf", full)
+        assert ok["remediation_status"] == "success", str(ok)[:300]
+        assert all(get_public_access(classified).values()), "scoped remediation did not apply"
+        log("same remediation, correct scope, applied")
+        log("C10 PASSED", "OK")
+        return True, metrics
+    finally:
+        try:
+            s3c.delete_object(Bucket=bucket, Key=rogue_key)
+        except Exception as e:
+            log(f"could not delete {rogue_key}: {e}", "WARN")
+        delete_bucket(elsewhere)
+        delete_bucket(classified)
+
+
 def test_ctrl_s3_public_block():
     """CTRL-01: ctrl-s3-public-block remediates to all true"""
     name = f"compliance-ctrl01-{int(time.time())}"
@@ -1085,6 +1187,7 @@ TESTS = [
     ("C7", "Controls-sync → EventBridge dinâmico", test_c7),
     ("C8", "Remediação falha → escalação", test_c8),
     ("C9", "Violação reincidente → disjuntor", test_c9),
+    ("C10", "Sessão de remediação escopada ao recurso", test_c10),
     ("CTRL-01", "ctrl-s3-public-block", test_ctrl_s3_public_block),
     ("CTRL-02", "ctrl-s3-ssl-only", test_ctrl_s3_ssl_only),
     ("CTRL-03", "ctrl-s3-versioning", test_ctrl_s3_versioning),

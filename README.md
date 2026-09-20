@@ -68,6 +68,20 @@ só muda a ação diante de uma `S_violation`. Um controle que não pôde ser av
 | `ctrl-ebs-encryption-default` | EC2 | EBS encryption by default habilitado | `aws_ebs_encryption_by_default` |
 | `ctrl-ebs-volume-encrypted` | EC2 | Volume EBS criptografado | **detectivo**: escala, não remedia (L14) |
 
+## Autoridade da remediação
+
+A Lambda Execute não tem permissão de escrita. Para cada violação ela assume a
+role `compliance-loop-remediation-dev` com uma **session policy** que nomeia o
+recurso que o Analyze classificou e as ações que aquele controle declarou, e usa
+`violation_id` como nome da sessão — então cada escrita aparece no CloudTrail
+ligada à violação que a motivou.
+
+Como o IAM intersecta session policy e role, a sessão nunca é mais ampla que a
+role, e a role de remediação é limitada às 8 APIs de configuração, à própria
+conta, com `Deny` sobre o bucket do CloudTrail e o do tfstate — o laço não
+reescreve a própria evidência. O cenário C10 demonstra: um `remediation.tf`
+adulterado apontando para outro bucket é barrado com `AccessDenied`.
+
 ## Arquitetura
 
 | Componente | Tecnologia | Função |
@@ -278,6 +292,7 @@ amostra fria das 10 execuções é do C1.
 | C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | não classificado: 15,62s ± 0,03 | — |
 | C8 | Remediação falha (Execute sem permissão) | S_violation preservado, escala com o erro | `t_escalation` 6,03s ± 0,13 | nenhuma |
 | C9 | Violação reincidente (disjuntor) | Escala sem remediar de novo | a medir na próxima série | — |
+| C10 | Sessão de remediação escopada | Template adulterado é barrado por IAM | — | — |
 | AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4, C8, C9 e CTRL-06 | — | — |
 
 No C8, uma bucket policy nega `s3:PutBucketPublicAccessBlock` só à role do

@@ -1813,12 +1813,48 @@ As permissões de leitura do Analyze Lambda seguem um modelo híbrido:
 - RDS: `rds:DescribeDBInstances` com `Condition: aws:ResourceTag/compliance-managed = true`
 - CloudTrail: `cloudtrail:GetTrailStatus` com `Condition: aws:ResourceTag/compliance-managed = true`
 
-**IAM estático** para APIs que não aceitam escopo por recurso nem por tag:
+**Session policy** para a **escrita** (remediação): a role de remediação é o teto, e cada remediação recebe uma sessão restrita ao recurso classificado e às ações do controle — ver *Autoridade por incidente*.
+
+**IAM estático** para APIs de leitura que não aceitam escopo por recurso nem por tag:
 - S3: `s3:GetBucket*` (as APIs de bucket não suportam tag conditions)
 - EC2: `ec2:Describe*` e `ec2:GetEbsEncryptionByDefault`
 - IAM: `iam:GetAccountPasswordPolicy` (account-level, sem recurso taggeável)
 
 **Correção — `ec2:Describe*` nunca esteve coberto pelo ABAC.** As APIs `Describe*` do EC2 não suportam permissões por recurso nem as chaves de condição de tag: uma statement com `aws:ResourceTag` simplesmente nunca casa, e o efeito é negar, em silêncio, a leitura. O `ctrl-ebs-volume-encrypted` (CTRL-06) falhou exatamente assim na primeira execução — `UnauthorizedOperation` no `DescribeVolumes`, que o loop reportou como falha de sistema, sem estado, como deve. O `GetEbsEncryptionByDefault` só funcionava porque estava numa statement separada, sem condição. As ações passaram todas para essa statement; a pergunta "este volume interessa?" é da política Rego, não do IAM, e o preço é uma leitura sem escopo — apenas de leitura, e de metadados de configuração.
+
+### Autoridade por incidente: session policy na remediação
+
+Até esta versão, a Lambda Execute carregava autoridade permanente: `s3:PutBucketPolicy`, `s3:PutBucketPublicAccessBlock`, `s3:PutBucketVersioning` e `s3:PutEncryptionConfiguration` sobre `arn:aws:s3:::*`. Ou seja, podia reescrever a policy de **qualquer** bucket da conta — inclusive o do CloudTrail, que guarda a evidência do próprio laço. A permissão não olhava o alvo: era a mesma para o bucket sob avaliação e para todos os outros.
+
+Agora a autoridade é derivada da avaliação e dura uma remediação:
+
+1. A Lambda Execute **não tem permissão de escrita**. A sua role só baixa os artefatos (`s3:GetObject` no template e no cache do provider) e faz `sts:AssumeRole` numa role dedicada, `compliance-loop-remediation-<env>`.
+2. Antes de rodar o `tofu`, a Execute assume essa role passando uma **session policy** com duas coisas: as ações que *aquele controle* declarou (`remediation_actions`, validadas contra uma allowlist no código) e o **recurso que o Analyze classificou** — nunca o que o controle disser. O `RoleSessionName` é o `violation_id`.
+3. O `tofu` roda com essas credenciais temporárias, e a leitura prévia da bucket policy do ssl-only também.
+
+A garantia vem da forma como o IAM combina as duas políticas: **a session policy só intersecta a da role, nunca amplia**. O pior caso de um controle adulterado na tabela é pedir menos do que a role já tem.
+
+**A role de remediação é o teto**, e ela também encolheu: as oito APIs de configuração, restritas à própria conta (`aws:ResourceAccount`), com um `Deny` explícito sobre o bucket do CloudTrail e o do tfstate. O laço não consegue reescrever a própria evidência nem o estado de onde foi implantado.
+
+**Efeito na auditoria (H2)**: como o `RoleSessionName` carrega o `violation_id`, cada chamada de API da remediação aparece no CloudTrail como `assumed-role/compliance-loop-remediation-dev/<violation_id>`. O `violations_log` diz o que o sistema entende que fez; o CloudTrail passa a confirmar, com a mesma identidade, o que ele de fato fez — e a correspondência entre os dois é verificável por qualquer auditor.
+
+**Efeito no filtro do eco**: a identidade das escritas de remediação passou a ser a da role nova, então o `REMEDIATION_ROLE_ARN` do `controls_sync` aponta para ela. O padrão continua sendo gerado e testado da mesma forma (`tests/contract/test_event_pattern.py`).
+
+**O que o cenário C10 demonstra**, invocando a Execute diretamente:
+
+| Tentativa | Resultado |
+|---|---|
+| `remediation.tf` adulterado, com outro bucket fixo no código | `AccessDenied`; o outro bucket permanece intacto |
+| Controle que declara menos ações do que a remediação usa | `AccessDenied`; a sessão é a interseção, não a role inteira |
+| Mesma remediação, recurso e ações corretos | Aplica normalmente |
+
+A primeira linha é a ameaça que a session policy fecha e que nenhuma outra camada pegava: o template é um artefato no S3, e quem o adulterasse mandaria a remediação em qualquer bucket da conta.
+
+**Limites, para constar**:
+
+- **O teto ainda é a role** (L17). Se ela for ampla, a sessão pode ser ampla; por isso o `Deny` e o `aws:ResourceAccount` continuam sendo necessários.
+- **O STS entra no caminho crítico** da remediação: é mais uma chamada que pode falhar ou sofrer throttling, e a falha se manifesta como remediação falha, com escalação (o caminho do C8).
+- **A session policy cabe em 2.048 caracteres**, o que é folgado para um recurso e duas ações, mas limita um controle futuro que precise nomear muitos ARNs.
 
 **Decisão: Permissões declarativas no Terraform, não derivadas de dados runtime**
 
@@ -2367,6 +2403,7 @@ Agregado de **10 execuções da suíte com o grafo de três estados, leitura ime
 | C7 | Novo controle → EventBridge | — | `t_sync_insert` | não classificado: 15,62 s ± 0,03 (n = 10) | | Extensibilidade |
 | C8 | Remediação falha (Execute sem permissão) → escalação | S_violation, escalado | `t_escalation` | **6,03 s** ± 0,13 (n = 10) | nenhuma | H2 |
 | C9 | Violação reincidente → disjuntor | S_violation, escalado sem remediar | `t_escalation` | a medir na próxima série | — | H2 |
+| C10 | Sessão de remediação escopada ao recurso | — (invoca a Execute diretamente) | — | template adulterado barrado por IAM | — | H2 |
 
 "Nenhuma" significa que a classificação foi feita e não encontrou amostra fria; "sem classe" marca métricas que terminam antes de a execução começar; "não classificado" marca métricas que medem o teste inteiro, sem uma invocação única a examinar.
 
@@ -2627,3 +2664,11 @@ Nada do modelo muda: a reconciliação é só outra origem de evento, como já �
 **Consequência**: numa conta real, um conflito mais lento que a janela (um pipeline que reaplica a configuração uma vez por hora, por exemplo) não dispara o disjuntor, e a gangorra continua invisível. Já um pico legítimo de mudanças no mesmo recurso pode escalar sem que haja conflito.
 
 **Como fechar**: derivar os valores de dados operacionais — distribuição do intervalo entre remediações do mesmo par — em vez de fixá-los, e permitir configuração por controle, já que a frequência esperada de mudança varia (bucket de aplicação contra configuração de conta).
+
+### L17. A session policy limita a sessão, não a role
+
+**O que**: a autoridade efetiva de uma remediação é a interseção entre a session policy (recurso classificado + ações do controle) e a policy da role `compliance-loop-remediation-<env>`. A sessão não pode ultrapassar a role, mas também não corrige uma role mal escrita: se um dia a role ganhar `s3:*`, uma session policy ausente ou malformada volta a dar acesso amplo.
+
+**Consequência**: o mecanismo reduz o raio de alcance por invocação, e não o raio de alcance máximo do sistema. Quem edita o Terraform continua podendo alargar tudo.
+
+**Como mitigar**: uma *permissions boundary* na role de remediação, limitando o máximo às oito APIs de configuração mesmo que a policy seja reescrita; e negar `iam:*` explicitamente na role. Não implementado — a boundary precisaria ser gerida junto com a role, e o ganho só aparece contra um erro futuro de quem tem acesso ao Terraform, que é o mesmo ator que aplicaria a boundary.

@@ -30,6 +30,8 @@ os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
 os.environ.setdefault('AWS_ACCESS_KEY_ID', 'testing')
 os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 os.environ.setdefault('REMEDIATION_BUCKET', 'test-remediation-bucket')
+os.environ.setdefault('REMEDIATION_ROLE_ARN',
+                      'arn:aws:iam::123456789012:role/compliance-loop-remediation-dev')
 
 # Load execute handler explicitly by file path to avoid module caching
 # (analyze/ also has handler.py, and pytest may import it first)
@@ -84,6 +86,20 @@ def aws_region_strategy(draw):
     ]))
 
 
+CREDENTIALS = {'Credentials': {'AccessKeyId': 'AKIA-SCOPED',
+                               'SecretAccessKey': 'secret', 'SessionToken': 'token'}}
+
+
+@pytest.fixture(autouse=True)
+def scoped_session():
+    """Each remediation runs under credentials scoped to its own violation."""
+    session = MagicMock()
+    session.client.side_effect = lambda *a, **k: handler.s3
+    with patch.object(handler.sts, 'assume_role', return_value=CREDENTIALS), \
+         patch.object(handler.boto3, 'Session', return_value=session):
+        yield
+
+
 @st.composite
 def execute_event_strategy(draw):
     """Generate a valid Execute Lambda input event (Step Functions payload)."""
@@ -96,6 +112,8 @@ def execute_event_strategy(draw):
         'violation_id': draw(st.uuids()).hex,
         'control_id': control_id,
         'remediation_s3_key': f'controls/{control_id}/remediation.tf',
+        'remediation_actions': ['s3:PutBucketPublicAccessBlock', 's3:GetBucketPublicAccessBlock'],
+        'remediation_scope': 'resource',
     }
 
 

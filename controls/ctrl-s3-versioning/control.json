@@ -1,17 +1,65 @@
 {
-  "control_id": {"S": "ctrl-s3-versioning"},
-  "description": {"S": "S3 bucket must have versioning enabled"},
-  "cloudtrail_events": {"SS": ["CreateBucket", "PutBucketVersioning"]},
-  "rego_policy_package": {"S": "s3_versioning"},
-  "rego_s3_key": {"S": "controls/ctrl-s3-versioning/policy.rego"},
-  "remediation_s3_key": {"S": "controls/ctrl-s3-versioning/remediation.tf"},
-  "resource_type": {"S": "aws_s3_bucket"},
-  "severity": {"S": "MEDIUM"},
-  "policy_version": {"S": "v1.0"},
-  "fetch_config": {"M": {
-    "service": {"S": "s3"},
-    "method": {"S": "get_bucket_versioning"},
-    "params": {"M": {"Bucket": {"S": "{resource_id}"}}},
-    "result_path": {"S": ""}
-  }}
+  "control_id": {
+    "S": "ctrl-s3-versioning"
+  },
+  "description": {
+    "S": "S3 bucket must have versioning enabled"
+  },
+  "cloudtrail_events": {
+    "SS": [
+      "CreateBucket",
+      "PutBucketVersioning"
+    ]
+  },
+  "rego_policy_package": {
+    "S": "s3_versioning"
+  },
+  "rego_s3_key": {
+    "S": "controls/ctrl-s3-versioning/policy.rego"
+  },
+  "remediation_s3_key": {
+    "S": "controls/ctrl-s3-versioning/remediation.tf"
+  },
+  "resource_type": {
+    "S": "aws_s3_bucket"
+  },
+  "severity": {
+    "S": "MEDIUM"
+  },
+  "policy_version": {
+    "S": "v1.0"
+  },
+  "fetch_config": {
+    "M": {
+      "service": {
+        "S": "s3"
+      },
+      "method": {
+        "S": "get_bucket_versioning"
+      },
+      "params": {
+        "M": {
+          "Bucket": {
+            "S": "{resource_id}"
+          }
+        }
+      },
+      "result_path": {
+        "S": ""
+      }
+    }
+  },
+  "remediation_actions": {
+    "L": [
+      {
+        "S": "s3:PutBucketVersioning"
+      },
+      {
+        "S": "s3:GetBucketVersioning"
+      }
+    ]
+  },
+  "remediation_scope": {
+    "S": "resource"
+  }
 }

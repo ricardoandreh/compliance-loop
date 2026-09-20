@@ -73,6 +73,11 @@ module "execute" {
   environment        = var.environment
   tofu_layer_arn     = module.tofu_layer.layer_arn
   remediation_bucket = "compliance-mvp-terraform-state"
+  account_id         = data.aws_caller_identity.current.account_id
+  protected_bucket_arns = [
+    "arn:aws:s3:::${module.monitoring.cloudtrail_bucket_name}",
+    "arn:aws:s3:::compliance-mvp-terraform-state",
+  ]
 }
 
 module "escalation_lambda" {
@@ -98,7 +103,7 @@ module "orchestration" {
   escalation_queue_url      = module.escalation_queue.queue_url
   controls_table_name       = module.knowledge.controls_table_name
   controls_table_arn        = module.knowledge.controls_table_arn
-  remediation_role_arn      = module.execute.role_arn
+  remediation_role_arn      = module.execute.remediation_role_arn
 }
 
 module "exception_scheduler" {
@@ -122,7 +127,7 @@ module "controls_sync" {
   controls_stream_arn   = module.knowledge.controls_stream_arn
   eventbridge_rule_name = module.orchestration.eventbridge_rule_name
   eventbridge_rule_arn  = module.orchestration.eventbridge_rule_arn
-  remediation_role_arn  = module.execute.role_arn
+  remediation_role_arn  = module.execute.remediation_role_arn
 }
 
 # --- Outputs ---

@@ -1,25 +1,86 @@
 {
-  "control_id": {"S": "ctrl-s3-public-block"},
-  "description": {"S": "S3 bucket must have all public access block settings enabled"},
-  "cloudtrail_events": {"SS": ["PutBucketPublicAccessBlock", "DeleteBucketPublicAccessBlock", "CreateBucket"]},
-  "rego_policy_package": {"S": "s3_public_access"},
-  "rego_s3_key": {"S": "controls/ctrl-s3-public-block/policy.rego"},
-  "remediation_s3_key": {"S": "controls/ctrl-s3-public-block/remediation.tf"},
-  "resource_type": {"S": "aws_s3_bucket"},
-  "severity": {"S": "HIGH"},
-  "policy_version": {"S": "v1.0"},
-  "fetch_config": {"M": {
-    "service": {"S": "s3"},
-    "method": {"S": "get_public_access_block"},
-    "params": {"M": {"Bucket": {"S": "{resource_id}"}}},
-    "result_path": {"S": "PublicAccessBlockConfiguration"},
-    "error_defaults": {"M": {
-      "NoSuchPublicAccessBlockConfiguration": {"M": {
-        "BlockPublicAcls": {"BOOL": false},
-        "IgnorePublicAcls": {"BOOL": false},
-        "BlockPublicPolicy": {"BOOL": false},
-        "RestrictPublicBuckets": {"BOOL": false}
-      }}
-    }}
-  }}
+  "control_id": {
+    "S": "ctrl-s3-public-block"
+  },
+  "description": {
+    "S": "S3 bucket must have all public access block settings enabled"
+  },
+  "cloudtrail_events": {
+    "SS": [
+      "PutBucketPublicAccessBlock",
+      "DeleteBucketPublicAccessBlock",
+      "CreateBucket"
+    ]
+  },
+  "rego_policy_package": {
+    "S": "s3_public_access"
+  },
+  "rego_s3_key": {
+    "S": "controls/ctrl-s3-public-block/policy.rego"
+  },
+  "remediation_s3_key": {
+    "S": "controls/ctrl-s3-public-block/remediation.tf"
+  },
+  "resource_type": {
+    "S": "aws_s3_bucket"
+  },
+  "severity": {
+    "S": "HIGH"
+  },
+  "policy_version": {
+    "S": "v1.0"
+  },
+  "fetch_config": {
+    "M": {
+      "service": {
+        "S": "s3"
+      },
+      "method": {
+        "S": "get_public_access_block"
+      },
+      "params": {
+        "M": {
+          "Bucket": {
+            "S": "{resource_id}"
+          }
+        }
+      },
+      "result_path": {
+        "S": "PublicAccessBlockConfiguration"
+      },
+      "error_defaults": {
+        "M": {
+          "NoSuchPublicAccessBlockConfiguration": {
+            "M": {
+              "BlockPublicAcls": {
+                "BOOL": false
+              },
+              "IgnorePublicAcls": {
+                "BOOL": false
+              },
+              "BlockPublicPolicy": {
+                "BOOL": false
+              },
+              "RestrictPublicBuckets": {
+                "BOOL": false
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "remediation_actions": {
+    "L": [
+      {
+        "S": "s3:PutBucketPublicAccessBlock"
+      },
+      {
+        "S": "s3:GetBucketPublicAccessBlock"
+      }
+    ]
+  },
+  "remediation_scope": {
+    "S": "resource"
+  }
 }

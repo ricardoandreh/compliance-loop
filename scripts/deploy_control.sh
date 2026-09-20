@@ -37,6 +37,13 @@ deploy_control() {
   # A detective control has no remediation.tf: it classifies and escalates,
   # because its fix is disruptive and belongs to a human (control.json carries
   # "remediation": "manual").
+  if grep -q '"manual"' "$dir/control.json"; then
+    :
+  elif ! grep -q 'remediation_actions' "$dir/control.json"; then
+    echo "ERROR: $dir/control.json has no remediation_actions; the Execute scopes each" >&2
+    echo "       remediation session to them (see design.md, session policy)" >&2
+    return 1
+  fi
   if ! grep -q '"manual"' "$dir/control.json" && [[ ! -f "$dir/remediation.tf" ]]; then
     echo "ERROR: Missing $dir/remediation.tf (add \"remediation\": {\"S\": \"manual\"} to make it detective)" >&2
     return 1

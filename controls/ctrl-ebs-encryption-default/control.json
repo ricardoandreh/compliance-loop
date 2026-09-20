@@ -1,17 +1,61 @@
 {
-  "control_id": {"S": "ctrl-ebs-encryption-default"},
-  "description": {"S": "EBS encryption by default must be enabled"},
-  "cloudtrail_events": {"SS": ["DisableEbsEncryptionByDefault", "EnableEbsEncryptionByDefault"]},
-  "rego_policy_package": {"S": "ebs_encryption_default"},
-  "rego_s3_key": {"S": "controls/ctrl-ebs-encryption-default/policy.rego"},
-  "remediation_s3_key": {"S": "controls/ctrl-ebs-encryption-default/remediation.tf"},
-  "resource_type": {"S": "aws_ebs_encryption_by_default"},
-  "severity": {"S": "HIGH"},
-  "policy_version": {"S": "v1.0"},
-  "fetch_config": {"M": {
-    "service": {"S": "ec2"},
-    "method": {"S": "get_ebs_encryption_by_default"},
-    "params": {"M": {}},
-    "result_path": {"S": ""}
-  }}
+  "control_id": {
+    "S": "ctrl-ebs-encryption-default"
+  },
+  "description": {
+    "S": "EBS encryption by default must be enabled"
+  },
+  "cloudtrail_events": {
+    "SS": [
+      "DisableEbsEncryptionByDefault",
+      "EnableEbsEncryptionByDefault"
+    ]
+  },
+  "rego_policy_package": {
+    "S": "ebs_encryption_default"
+  },
+  "rego_s3_key": {
+    "S": "controls/ctrl-ebs-encryption-default/policy.rego"
+  },
+  "remediation_s3_key": {
+    "S": "controls/ctrl-ebs-encryption-default/remediation.tf"
+  },
+  "resource_type": {
+    "S": "aws_ebs_encryption_by_default"
+  },
+  "severity": {
+    "S": "HIGH"
+  },
+  "policy_version": {
+    "S": "v1.0"
+  },
+  "fetch_config": {
+    "M": {
+      "service": {
+        "S": "ec2"
+      },
+      "method": {
+        "S": "get_ebs_encryption_by_default"
+      },
+      "params": {
+        "M": {}
+      },
+      "result_path": {
+        "S": ""
+      }
+    }
+  },
+  "remediation_actions": {
+    "L": [
+      {
+        "S": "ec2:EnableEbsEncryptionByDefault"
+      },
+      {
+        "S": "ec2:GetEbsEncryptionByDefault"
+      }
+    ]
+  },
+  "remediation_scope": {
+    "S": "account"
+  }
 }

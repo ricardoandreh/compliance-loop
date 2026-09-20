@@ -189,6 +189,23 @@ def verdicts():
     return {keys[var]: value for var, value in bindings.items()}
 
 
+def test_remediating_controls_declare_their_actions_and_scope():
+    """The Execute turns these into the session policy of the remediation it is
+    about to run. A control without them cannot be scoped, and the remediation
+    would fail at the assume-role instead of at deploy time."""
+    allowed = {"s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock",
+               "s3:PutBucketPolicy", "s3:GetBucketPolicy",
+               "s3:PutBucketVersioning", "s3:GetBucketVersioning",
+               "s3:PutEncryptionConfiguration", "s3:GetEncryptionConfiguration",
+               "ec2:EnableEbsEncryptionByDefault", "ec2:GetEbsEncryptionByDefault"}
+    for control in control_ids():
+        meta = json.loads(read(control, "control.json"))
+        actions = [a["S"] for a in meta.get("remediation_actions", {}).get("L", [])]
+        assert actions, f"{control} declares no remediation_actions"
+        assert set(actions) <= allowed, f"{control}: {sorted(set(actions) - allowed)}"
+        assert meta.get("remediation_scope", {}).get("S") in ("resource", "account"), control
+
+
 def test_detective_controls_declare_manual_remediation():
     """A control without remediation.tf is only legitimate when it says so: the
     state machine routes it to escalation by that field, and a control that just

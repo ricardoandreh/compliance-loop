@@ -71,8 +71,15 @@ def fetch_resource_config(fetch_config: Dict[str, Any], resource_id: str) -> Dic
     if cache_key in _config_cache:
         return _config_cache[cache_key]
 
+    # A control is data in a DynamoDB table and chooses which boto3 call the
+    # Analyze makes. Reads only: a control must not be able to drive a mutating
+    # API through the role that evaluates compliance.
+    name = fetch_config['method']
+    if not name.startswith(('get_', 'describe_', 'list_')):
+        raise ValueError(f"fetch_config method must be a read call, got {name!r}")
+
     client = get_boto_client(fetch_config['service'])
-    method = getattr(client, fetch_config['method'])
+    method = getattr(client, name)
     params = _substitute_params(fetch_config.get('params', {}), resource_id)
 
     try:
@@ -298,6 +305,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 # 'manual' marks a detective control: the loop classifies and
                 # escalates, but never remediates (the fix is disruptive).
                 'remediation': control.get('remediation', 'automatic'),
+                # What the Execute may do, and over what, for this control. The
+                # Execute turns these into the session policy of the remediation
+                # it is about to run; the resource itself comes from this
+                # evaluation, never from the control definition.
+                'remediation_actions': control.get('remediation_actions', []),
+                'remediation_scope': control.get('remediation_scope', 'resource'),
             })
             print(f"  {control_id}: {state}")
 

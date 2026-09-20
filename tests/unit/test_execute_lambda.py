@@ -9,6 +9,8 @@ Covers:
   resource, skipping remediation while reporting success)
 - ssl-only edge case: existing bucket policy passed for merge
 - Bucket name resolution from ARN vs resource_id fallback
+- Per-violation session policy: the remediation runs with credentials scoped to
+  the resource that was classified, and to the actions its control declares
 """
 
 import importlib.util
@@ -25,6 +27,8 @@ os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
 os.environ.setdefault('AWS_ACCESS_KEY_ID', 'testing')
 os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'testing')
 os.environ.setdefault('REMEDIATION_BUCKET', 'test-remediation-bucket')
+os.environ.setdefault('REMEDIATION_ROLE_ARN',
+                      'arn:aws:iam::123456789012:role/compliance-loop-remediation-dev')
 
 # Load under a unique module name: both lambdas ship a module called
 # `handler`, and a plain `import handler` would collide across test files.
@@ -48,9 +52,30 @@ def base_event(control_id='ctrl-s3-public-block', **overrides):
         'region': 'us-east-1',
         'violation_id': 'vio-123',
         'remediation_s3_key': f'controls/{control_id}/remediation.tf',
+        'remediation_actions': ['s3:PutBucketPublicAccessBlock', 's3:GetBucketPublicAccessBlock'],
+        'remediation_scope': 'resource',
     }
     event.update(overrides)
     return event
+
+
+CREDENTIALS = {'Credentials': {'AccessKeyId': 'AKIA-SCOPED',
+                               'SecretAccessKey': 'secret', 'SessionToken': 'token'}}
+
+
+@pytest.fixture(autouse=True)
+def scoped_session():
+    """Every remediation assumes the remediation role first.
+
+    The scoped client is the same mock the tests already configure as
+    handler.s3, so the assertions about the bucket policy read still hold —
+    what changes is which credentials make the call.
+    """
+    session = MagicMock()
+    session.client.side_effect = lambda *a, **k: handler.s3
+    with patch.object(handler.sts, 'assume_role', return_value=CREDENTIALS) as assume, \
+         patch.object(handler.boto3, 'Session', return_value=session):
+        yield assume
 
 
 def completed(returncode, stdout='', stderr=''):
@@ -269,3 +294,63 @@ class TestSetupRemediationCleanWorkdir:
             work_dir = setup_remediation(control_id, 'key')
         assert os.path.islink(f'{work_dir}/.terraform')
         assert s3.download_file.call_count == 2
+
+
+class TestSessionPolicy:
+    """The session policy is the authority for one remediation: these actions,
+    this resource. IAM intersects it with the role, so it can only narrow."""
+
+    def test_scopes_to_the_classified_resource(self):
+        policy = handler.session_policy(
+            ['s3:PutBucketVersioning'], 'arn:aws:s3:::my-test-bucket', 'resource')
+        statement = policy['Statement'][0]
+        assert statement['Action'] == ['s3:PutBucketVersioning']
+        assert statement['Resource'] == ['arn:aws:s3:::my-test-bucket',
+                                         'arn:aws:s3:::my-test-bucket/*']
+
+    def test_account_level_control_has_no_arn_to_name(self):
+        policy = handler.session_policy(
+            ['ec2:EnableEbsEncryptionByDefault'], 'arn:aws:us-east-1:123456789012', 'account')
+        assert policy['Statement'][0]['Resource'] == ['*']
+
+    def test_action_outside_the_allowlist_is_refused(self):
+        """A control is data in a table; the allowlist is code."""
+        with pytest.raises(ValueError, match='allowlist'):
+            handler.session_policy(['s3:DeleteBucket'], 'arn:aws:s3:::b', 'resource')
+
+    def test_no_actions_is_refused(self):
+        with pytest.raises(ValueError, match='no remediation_actions'):
+            handler.session_policy([], 'arn:aws:s3:::b', 'resource')
+
+    def test_handler_assumes_the_role_with_the_violation_as_session_name(self, scoped_session):
+        with patch.object(handler, 'ensure_provider_cache'), \
+             patch.object(handler, 'setup_remediation', return_value='/tmp/x'), \
+             patch.object(handler.subprocess, 'run', return_value=completed(0, 'ok')), \
+             patch('builtins.open', new_callable=MagicMock):
+            result = lambda_handler(base_event(), None)
+        assert result['remediation_status'] == 'success'
+        call = scoped_session.call_args.kwargs
+        assert call['RoleSessionName'] == 'vio-123'
+        policy = json.loads(call['Policy'])
+        assert policy['Statement'][0]['Resource'] == ['arn:aws:s3:::my-test-bucket',
+                                                      'arn:aws:s3:::my-test-bucket/*']
+
+    def test_tofu_runs_with_the_scoped_credentials(self):
+        with patch.object(handler, 'ensure_provider_cache'), \
+             patch.object(handler, 'setup_remediation', return_value='/tmp/x'), \
+             patch.object(handler.subprocess, 'run', return_value=completed(0, 'ok')) as run, \
+             patch('builtins.open', new_callable=MagicMock):
+            lambda_handler(base_event(), None)
+        env = run.call_args.kwargs['env']
+        assert env['AWS_ACCESS_KEY_ID'] == 'AKIA-SCOPED'
+        assert env['AWS_SESSION_TOKEN'] == 'token'
+
+    def test_a_control_that_asks_for_too_much_never_runs_tofu(self):
+        event = base_event(remediation_actions=['s3:PutBucketAcl'])
+        with patch.object(handler, 'ensure_provider_cache'), \
+             patch.object(handler, 'setup_remediation', return_value='/tmp/x'), \
+             patch.object(handler.subprocess, 'run') as run:
+            result = lambda_handler(event, None)
+        assert result['remediation_status'] == 'failed'
+        assert 'allowlist' in result['error']
+        run.assert_not_called()

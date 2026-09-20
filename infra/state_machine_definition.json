@@ -463,7 +463,9 @@
                 "control_id": "{% $states.input.analyze_result.control_id %}",
                 "region": "{% $states.input.region %}",
                 "violation_id": "{% $states.input.analyze_result.violation_id %}",
-                "remediation_s3_key": "{% $states.input.analyze_result.remediation_s3_key %}"
+                "remediation_s3_key": "{% $states.input.analyze_result.remediation_s3_key %}",
+                "remediation_actions": "{% $states.input.analyze_result.remediation_actions %}",
+                "remediation_scope": "{% $states.input.analyze_result.remediation_scope %}"
               }
             },
             "TimeoutSeconds": 90,
