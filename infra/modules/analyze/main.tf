@@ -72,19 +72,18 @@ resource "aws_iam_role_policy" "resource_read" {
         Action   = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy", "s3:GetEncryptionConfiguration", "s3:GetBucketVersioning", "s3:GetBucketLogging"]
         Resource = "arn:aws:s3:::*"
       },
-      # EC2 — describe with ABAC tag condition
+      # EC2 — the Describe* APIs accept neither resource ARNs nor tag
+      # conditions: a statement scoped by aws:ResourceTag never matches and
+      # denies silently. ctrl-ebs-volume-encrypted failed exactly that way
+      # (UnauthorizedOperation on DescribeVolumes) until these actions moved
+      # out of the ABAC statement. They are read-only and answer for every
+      # resource of their type; scoping them is a matter for the policy that
+      # evaluates the answer, not for IAM.
       {
-        Sid       = "EC2DescribeABAC"
-        Effect    = "Allow"
-        Action    = ["ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:GetEbsEncryptionByDefault", "ec2:DescribeVolumes"]
-        Resource  = "*"
-        Condition = { StringEquals = { "aws:ResourceTag/compliance-managed" = "true" } }
-      },
-      # EC2 — describe calls that don't support ABAC (account-level)
-      {
-        Sid      = "EC2AccountLevel"
+        Sid      = "EC2DescribeNoResourceScope"
         Effect   = "Allow"
-        Action   = ["ec2:GetEbsEncryptionByDefault"]
+        Action   = ["ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:DescribeVolumes",
+                    "ec2:GetEbsEncryptionByDefault"]
         Resource = "*"
       },
       # RDS — describe with ABAC tag condition

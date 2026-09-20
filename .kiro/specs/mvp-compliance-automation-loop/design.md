@@ -1809,14 +1809,16 @@ O fetcher genérico via `fetch_config` é o meio-termo: parametriza a chamada bo
 
 As permissões de leitura do Analyze Lambda seguem um modelo híbrido:
 
-**ABAC (Attribute-Based Access Control)** para serviços que suportam tag conditions:
-- EC2: `ec2:Describe*` com `Condition: aws:ResourceTag/compliance-managed = true`
+**ABAC (Attribute-Based Access Control)** para APIs que aceitam condição de tag:
 - RDS: `rds:DescribeDBInstances` com `Condition: aws:ResourceTag/compliance-managed = true`
 - CloudTrail: `cloudtrail:GetTrailStatus` com `Condition: aws:ResourceTag/compliance-managed = true`
 
-**IAM estático** para serviços que não suportam ABAC em APIs de leitura:
-- S3: `s3:GetBucket*` (bucket APIs não suportam tag conditions)
+**IAM estático** para APIs que não aceitam escopo por recurso nem por tag:
+- S3: `s3:GetBucket*` (as APIs de bucket não suportam tag conditions)
+- EC2: `ec2:Describe*` e `ec2:GetEbsEncryptionByDefault`
 - IAM: `iam:GetAccountPasswordPolicy` (account-level, sem recurso taggeável)
+
+**Correção — `ec2:Describe*` nunca esteve coberto pelo ABAC.** As APIs `Describe*` do EC2 não suportam permissões por recurso nem as chaves de condição de tag: uma statement com `aws:ResourceTag` simplesmente nunca casa, e o efeito é negar, em silêncio, a leitura. O `ctrl-ebs-volume-encrypted` (CTRL-06) falhou exatamente assim na primeira execução — `UnauthorizedOperation` no `DescribeVolumes`, que o loop reportou como falha de sistema, sem estado, como deve. O `GetEbsEncryptionByDefault` só funcionava porque estava numa statement separada, sem condição. As ações passaram todas para essa statement; a pergunta "este volume interessa?" é da política Rego, não do IAM, e o preço é uma leitura sem escopo — apenas de leitura, e de metadados de configuração.
 
 **Decisão: Permissões declarativas no Terraform, não derivadas de dados runtime**
 
