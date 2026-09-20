@@ -714,14 +714,19 @@ def test_c8():
     # S_violation, Analyze says so, and the remediation itself fails.
     #
     # The failure is induced, not mocked: a bucket policy denies exactly one
-    # action, s3:PutBucketPublicAccessBlock, to exactly one principal, the
-    # Execute role. Analyze (another role) still reads the bucket, and this
-    # runner (an IAM user) can still break it and delete it.
+    # action, s3:PutBucketPublicAccessBlock, to exactly one principal — the role
+    # the remediation runs as. Analyze (another role) still reads the bucket, and
+    # this runner (an IAM user) can still break it and delete it.
+    #
+    # That principal is NOT the Lambda's own role: since the remediation assumes
+    # a scoped session, the writes carry the remediation role. Denying the Lambda
+    # role denies nothing, and the scenario silently stopped inducing a failure
+    # when the session policy landed — the remediation simply succeeded.
     name = f"compliance-inttest-c8-{int(time.time())}"
     arn = f"arn:aws:s3:::{name}"
     metrics = {}
     role_arn = boto3.client("lambda", region_name=REGION).get_function_configuration(
-        FunctionName=f"{PREFIX}-execute-{ENV}")["Role"]
+        FunctionName=f"{PREFIX}-execute-{ENV}")["Environment"]["Variables"]["REMEDIATION_ROLE_ARN"]
     deny = {"Sid": "DenyRemediationForC8", "Effect": "Deny", "Principal": "*",
             "Action": "s3:PutBucketPublicAccessBlock", "Resource": arn,
             "Condition": {"ArnEquals": {"aws:PrincipalArn": role_arn}}}

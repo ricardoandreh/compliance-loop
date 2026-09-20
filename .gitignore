@@ -1,60 +1,54 @@
-# Python
-__pycache__/
-*.py[cod]
+
 *$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
+# AWS
+.aws-sam/
 build/
+.coverage
 develop-eggs/
 dist/
+# Docker
 downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
 *.egg
-
-# Testing
-.pytest_cache/
-.coverage
+*.egg-info/
+.eggs/
+eggs/
+.env
+env/
+ENV/
+# Environment
 htmlcov/
 .hypothesis/
-
+# IDE
+.idea/
+.installed.cfg
+lambdas/analyze/opa
+lambdas/execute/tofu
+# Lambda Zip
+lib/
+lib64/
+*.log
+# Logs
 # OpenTofu/Terraform
+parts/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+# Python
+.Python
+.runs/
+sdist/
+*.so
+*.swo
+*.swp
+*.tar
 .terraform/
+.terraform.lock.hcl
+# Testing
 *.tfstate
 *.tfstate.*
 *.tfvars
-.terraform.lock.hcl
-
-# IDE
+var/
+venv/
 .vscode/
-.idea/
-*.swp
-*.swo
-
-# AWS
-.aws-sam/
-
-# Docker
-*.tar
-
-# Logs
-*.log
-
-# Environment
-.env
-
-# Lambda Zip
+wheels/
 *.zip
-lambdas/analyze/opa
-lambdas/execute/tofu
