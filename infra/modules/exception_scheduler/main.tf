@@ -16,9 +16,20 @@ resource "aws_scheduler_schedule_group" "compliance" {
 # --- Scheduler IAM (Scheduler → Step Functions) ---
 resource "aws_iam_role" "compliance_scheduler" {
   name = "${var.project_name}-scheduler-${var.environment}"
+  # Only aws:SourceAccount here, deliberately. EventBridge Scheduler validates
+  # this trust policy when CreateSchedule runs, and that validation carries no
+  # aws:SourceArn in the request context: a SourceArn condition — even a wildcard
+  # over this schedule group — makes every CreateSchedule fail with "the
+  # execution role you provide must allow AWS EventBridge Scheduler to assume the
+  # role", and exceptions then expire without re-evaluation. Caught by C3.
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Principal = { Service = "scheduler.amazonaws.com" }, Action = "sts:AssumeRole" }]
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow",
+      Principal = { Service = "scheduler.amazonaws.com" },
+      Action    = "sts:AssumeRole",
+      Condition = { StringEquals = { "aws:SourceAccount" = var.account_id } }
+    }]
   })
   tags = { Name = "${var.project_name}-scheduler", Environment = var.environment }
 }
@@ -104,7 +115,10 @@ resource "aws_iam_role_policy" "lambda" {
       { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = var.exceptions_table_arn },
       { Effect = "Allow", Action = ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"],
         Resource = "arn:aws:scheduler:${var.region}:${var.account_id}:schedule/${aws_scheduler_schedule_group.compliance.name}/*" },
-      { Effect = "Allow", Action = "iam:PassRole", Resource = aws_iam_role.compliance_scheduler.arn },
+      # PassRole without a service condition lets the role be handed to any
+      # service that accepts it; this pins it to EventBridge Scheduler.
+      { Effect = "Allow", Action = "iam:PassRole", Resource = aws_iam_role.compliance_scheduler.arn,
+        Condition = { StringEquals = { "iam:PassedToService" = "scheduler.amazonaws.com" } } },
       { Effect = "Allow", Action = "states:StartExecution", Resource = var.state_machine_arn },
       { Effect = "Allow", Action = ["dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:DescribeStream", "dynamodb:ListStreams"],
         Resource = "${var.exceptions_table_arn}/stream/*" },

@@ -59,6 +59,7 @@ module "analyze" {
   exceptions_table_arn  = module.knowledge.exceptions_table_arn
   policy_bucket         = "compliance-mvp-terraform-state"
   opa_layer_arn         = module.opa_layer.layer_arn
+  account_id            = data.aws_caller_identity.current.account_id
 }
 
 module "tofu_layer" {
@@ -104,6 +105,8 @@ module "orchestration" {
   controls_table_name       = module.knowledge.controls_table_name
   controls_table_arn        = module.knowledge.controls_table_arn
   remediation_role_arn      = module.execute.remediation_role_arn
+  region                    = var.region
+  account_id                = data.aws_caller_identity.current.account_id
 }
 
 module "exception_scheduler" {

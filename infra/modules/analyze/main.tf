@@ -4,6 +4,7 @@ variable "exceptions_table_name" { type = string }
 variable "exceptions_table_arn" { type = string }
 variable "policy_bucket" { type = string }
 variable "opa_layer_arn" { type = string }
+variable "account_id" { type = string }
 
 data "archive_file" "handler" {
   type        = "zip"
@@ -71,6 +72,11 @@ resource "aws_iam_role_policy" "resource_read" {
         # AccessDenied until this was fixed).
         Action   = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy", "s3:GetEncryptionConfiguration", "s3:GetBucketVersioning", "s3:GetBucketLogging"]
         Resource = "arn:aws:s3:::*"
+        # A control is data in a table and names the resource to read; this keeps
+        # a tampered one from reaching a bucket in another account. Not applied to
+        # the EC2 Describe* calls: those carry no resource in the request context,
+        # so the condition would never match and would deny silently.
+        Condition = { StringEquals = { "aws:ResourceAccount" = var.account_id } }
       },
       # EC2 — the Describe* APIs accept neither resource ARNs nor tag
       # conditions: a statement scoped by aws:ResourceTag never matches and

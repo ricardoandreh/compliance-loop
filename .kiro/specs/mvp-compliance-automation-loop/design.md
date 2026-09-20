@@ -1868,6 +1868,15 @@ e `d0f8b861-9353-4b82-8198-345802f263bc` é a chave de uma linha real do `violat
 - **O STS entra no caminho crítico** da remediação: é mais uma chamada que pode falhar ou sofrer throttling, e a falha se manifesta como remediação falha, com escalação (o caminho do C8).
 - **A session policy cabe em 2.048 caracteres**, o que é folgado para um recurso e duas ações, mas limita um controle futuro que precise nomear muitos ARNs.
 
+**Endurecimento das identidades de serviço**: as roles assumidas por serviço declaram `aws:SourceAccount` e, onde o serviço fornece o contexto, `aws:SourceArn` — a mitigação de *confused deputy* recomendada pela AWS. O Step Functions aceita o ARN da própria máquina (escrito por extenso, já que referenciá-lo criaria ciclo no Terraform) e o EventBridge aceita o ARN da regra. O `iam:PassRole` do `exception_scheduler` ficou restrito a `scheduler.amazonaws.com` via `iam:PassedToService`, e as leituras do Analyze no S3 exigem `aws:ResourceAccount` igual à conta — impedindo que um controle adulterado aponte para um bucket de outra conta.
+
+**Duas condições que não podem ser usadas**, ambas descobertas por teste e não por inspeção:
+
+- **`aws:ResourceAccount` nos `ec2:Describe*`**: essas APIs não aceitam escopo por recurso e não trazem o recurso no contexto da requisição, então a condição nunca casa e o efeito é negar em silêncio — foi assim que o CTRL-06 falhou na primeira execução.
+- **`aws:SourceArn` na role do EventBridge Scheduler**: o serviço valida a trust policy no momento do `CreateSchedule`, e essa validação não carrega `aws:SourceArn`. Com a condição, todo `CreateSchedule` falha com *"the execution role you provide must allow AWS EventBridge Scheduler to assume the role"*, e as exceções passam a expirar sem reavaliação. O C3 pegou.
+
+A lição é a mesma nos dois casos: condição de IAM que não casa **nega**, e o sintoma aparece longe da causa. Por isso cada mudança de permissão passa pela suíte antes de ser dada como boa.
+
 **Decisão: Permissões declarativas no Terraform, não derivadas de dados runtime**
 
 Foi avaliada a possibilidade de derivar permissões IAM automaticamente a partir dos `fetch_config.service` na tabela `controls` (via Lambda `controls-sync` + `iam:PutRolePolicy`). Essa abordagem foi descartada porque transforma a tabela `controls` em um vetor de privilege escalation: quem tem `dynamodb:PutItem` na tabela efetivamente controlaria as permissões da Lambda Analyze. Para um sistema de compliance, o componente que garante segurança não pode ter sua superfície de ataque controlável por dados runtime.

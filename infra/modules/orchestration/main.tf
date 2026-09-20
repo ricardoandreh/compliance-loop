@@ -9,6 +9,8 @@ variable "escalation_queue_url" { type = string }
 variable "controls_table_name" { type = string }
 variable "controls_table_arn" { type = string }
 variable "remediation_role_arn" { type = string }
+variable "region" { type = string }
+variable "account_id" { type = string }
 
 variable "recurrence_window_minutes" {
   description = "Window the circuit breaker looks back over, counting successful remediations of the same (resource, control)."
@@ -82,9 +84,20 @@ resource "aws_cloudwatch_event_target" "step_functions" {
 
 resource "aws_iam_role" "eventbridge_sfn" {
   name = "${var.project_name}-eventbridge-sfn-${var.environment}"
+  # aws:SourceArn/SourceAccount: only this rule, in this account, may have
+  # EventBridge assume the role (the confused-deputy mitigation AWS documents
+  # for service principals).
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Principal = { Service = "events.amazonaws.com" }, Action = "sts:AssumeRole" }]
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow",
+      Principal = { Service = "events.amazonaws.com" },
+      Action    = "sts:AssumeRole",
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = var.account_id }
+        ArnLike      = { "aws:SourceArn" = aws_cloudwatch_event_rule.s3_public_access_block.arn }
+      }
+    }]
   })
   tags = { Name = "${var.project_name}-eventbridge-sfn", Environment = var.environment }
 }
@@ -131,9 +144,19 @@ resource "aws_cloudwatch_log_group" "step_functions" {
 # --- Step Functions IAM ---
 resource "aws_iam_role" "step_functions" {
   name = "${var.project_name}-step-functions-${var.environment}"
+  # The ARN is spelled out instead of referenced: the state machine uses this
+  # role, so referring to aws_sfn_state_machine here would be a cycle.
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Principal = { Service = "states.amazonaws.com" }, Action = "sts:AssumeRole" }]
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow",
+      Principal = { Service = "states.amazonaws.com" },
+      Action    = "sts:AssumeRole",
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = var.account_id }
+        ArnLike      = { "aws:SourceArn" = "arn:aws:states:${var.region}:${var.account_id}:stateMachine:${var.project_name}-compliance-loop-${var.environment}" }
+      }
+    }]
   })
   tags = { Name = "${var.project_name}-step-functions", Environment = var.environment }
 }
