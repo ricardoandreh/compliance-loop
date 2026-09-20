@@ -442,7 +442,7 @@
                 "Next": "Escalate"
               },
               {
-                "Condition": "{% $states.input.recent_remediations >= ${recurrence_threshold} %}",
+                "Condition": "{% ($states.input.recent_remediations ? $states.input.recent_remediations : 0) >= ${recurrence_threshold} %}",
                 "Next": "Escalate"
               },
               {
