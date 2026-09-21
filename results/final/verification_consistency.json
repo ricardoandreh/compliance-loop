@@ -1,0 +1,26 @@
+{
+  "results": "results/final",
+  "verification_rounds": 270,
+  "controls_checked": {
+    "ctrl-ebs-encryption-default": {
+      "verified": 20
+    },
+    "ctrl-s3-public-block": {
+      "verified": 120
+    },
+    "ctrl-s3-ssl-only": {
+      "verified": 150
+    },
+    "ctrl-s3-versioning": {
+      "verified": 140
+    }
+  },
+  "not_verified": [],
+  "read_after_write_gap_s": {
+    "n": 270,
+    "mean": 0.35,
+    "median": 0.35,
+    "min": 0.23,
+    "max": 0.66
+  }
+}

@@ -1,0 +1,1625 @@
+{
+  "summary": {
+    "samples": 80,
+    "cold": 3,
+    "warm": 77,
+    "cold_samples": [
+      "run-05.json C5 t_remediation=10.43s",
+      "run-06.json C6 t_classification=1.22s",
+      "run-08.json C1 t_remediation=11.69s"
+    ],
+    "problems": []
+  },
+  "samples": [
+    {
+      "run": "run-01.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.49,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:3f566352-c109-5083-0c9a-ae4d54b19643_e544675f-6860-3a71-dab8-03f10ab4470e",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "7fb75b7c-ede7-4c14-bc81-cdbb7256ec49",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "76bda8b2-e9eb-4dc7-b686-8d853dd5399d",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-01.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.3,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:20dc93cd-05ab-8540-e7eb-33343dcc6996_e7dce7bc-c213-9bea-7b33-6aecbce8952c",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "75af43c4-840b-4818-978c-1e1e67c38ead",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "92caf615-8109-424f-9ae3-422d94c623de",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-01.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.63,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:a26ab078-ce84-4e22-9fdd-0cd12525f4df",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "2af565af-db9b-42da-b8a8-1352d0e04639",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "e069a2ce-d1ec-47fe-8618-a63f3c286c1c",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-01.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.48,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:77f1ac45-0adb-3807-ec6e-094c64929eb9_04cdaffc-15ab-a9d9-256d-4e80b66495d2",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "3e2e2dfb-71cb-40c5-867b-afcfbf9c446c",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-01.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.53,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:363a4a29-b6af-0745-3560-02eda2315d22_1a019755-268e-1804-2345-da82f0106e89",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "e84f5eaa-3228-4a62-8475-9c2efbff82fc",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-01.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.49,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:5e506a45-5f84-416a-ac37-08debdf4180c",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "f955ab31-9d5a-4b63-b638-e0787553d92a",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-01.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 6.37,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:139d4f28-13bb-7abb-0769-9a23709ca64b_87c82309-acfe-6c93-2bb1-ec2a408fc7d2",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "9f6502f8-e18d-492d-889c-423572d36df0",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "b5c51a14-0ec0-44c5-aeaa-5d4ad462b417",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-01.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 6.41,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:d768e16c-b4a4-5d24-131b-3e2f456ea3b5_00708d7e-1368-6b4a-5789-e24099b49540",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "231fddbd-268c-4d70-b055-410837ba097a",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "fae298db-a660-43d3-9ed5-ea9a8e5ff566",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-02.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.59,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:1d67dcdd-33ae-5a22-4ee8-5aea8485ab96_a9205256-b19a-1cb8-a84b-e62b0226e866",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "e6746717-ebc5-4077-a057-376563da8a98",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "574d4f31-2246-4902-8079-70c3224d9546",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-02.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.5,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:291e5b58-59b5-2a4c-9c27-6b4e426039bf_7ea21494-2615-bf4d-8ffb-38f714d73133",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "27bceeb6-f540-47a6-946e-5871f7636d5b",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "0c13722c-643f-4fd8-b23f-95e07d5de980",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-02.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.72,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:046ab07c-9b26-4cf0-995c-e5951e38b01e",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "164ed0af-0556-4144-9af2-1743aa102f65",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "1a60784c-b144-4ebd-ae76-84c251614c57",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-02.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:7f84282c-9105-3558-ea5b-16aaa02b833a_14ad5588-7020-1284-32b3-967381e18715",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "4a44c366-af77-470c-b86b-18ab25950a5b",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-02.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.51,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:421f968a-faca-4e48-882e-d998bc0a2f34_a0274a56-f9e0-793e-bd6e-eacf374df395",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "0cc5fe51-e8c1-4077-b349-e6846dd3731b",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-02.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.45,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:18451bd2-e183-4dc3-b89b-2390961ec304",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "adb88eb8-737f-4ce7-9686-08f5490566b1",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-02.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 6.23,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:00721d21-b323-55e2-d3ab-245fdf55df99_cf6766c5-5da8-b94f-cef1-caecea536dc2",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "bdfb51a0-8c7a-4ec9-b491-5c74bc36860e",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "81197744-53fc-417e-9429-798bf10537c2",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-02.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 6.3,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:69200620-da7e-f24a-3072-99b8be90a086_6d32bfec-00ea-c5bc-9227-da7318411467",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "54075e10-5263-4362-9275-c81817acae95",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "97ac6d47-dd69-40b1-8b32-bf5295f69955",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-03.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.56,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:280d0a70-a535-e88a-0880-ebf39061dfc8_f1d2cbef-02a2-f1dc-43f1-02cb04b16d28",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "2071b8b9-d88a-49c1-9783-275e0bec0083",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "d81e448a-35c9-47a5-ae99-f79c4d425996",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-03.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.4,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:9921be6b-e9ce-c28f-16b0-2ac1556f6e24_54b475e7-8d45-dba7-d760-cdba52330961",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "f84f7e81-28b5-4c4c-8c41-e745efc7ce4f",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "140fa8a2-2cd4-4fcd-bb48-03d0c5d3c680",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-03.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.5,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:506ab080-72bb-453d-b09d-b000a7559083",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "3f95a510-751c-4558-a2f6-85951e2989c8",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "a16b91bb-c82c-46e0-97ce-8a6aaa05dbca",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-03.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:9277b58d-a4f4-ced8-9424-5fe3bcd2f192_5821bc70-65a1-5b06-45d0-6fa8093eb8d0",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "6aa3ae0c-f35c-4645-a94f-3ec52078399f",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-03.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:f16ee2cb-ecb4-8c7d-c6f6-3d358e5704d7_17692dd8-7812-26f7-8946-0d130ab90a0c",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "da4966f2-002b-4c23-98e2-773a6a79b178",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-03.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.42,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:7e121c0f-4f6e-40da-b800-920419b730d4",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "96c02378-706b-4fc3-857d-63308e14fd49",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-03.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 6.37,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:6776353b-c81e-9925-f9b7-74dceafc314d_4cbbdc75-70ae-541d-de66-5fc8a7defe0e",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "365e00f6-0526-4560-816b-d232bf8fe8ba",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "0eec9071-7e17-4d86-a62c-2ddbc8028189",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-03.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 6.35,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:c97509b2-79ac-2582-21c9-8341f540ebf3_da2a5f8b-f82b-5dbf-a458-1018211a54d4",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "be958019-0bf8-4888-8bb8-fd9d6ebf745b",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "d6ffb50b-bbb6-48f1-9a53-2afa31a55d36",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-04.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.23,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:129c61fa-0da9-b991-25b5-2dfc9872d815_17943b96-df02-7e4e-f62b-25c17d8b4ecc",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "a2ff9578-6d9e-471f-83df-2ababe0100b1",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "33043efd-205e-4568-b224-753a937ba973",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-04.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.6,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:6325b1e6-fee9-fe07-fe09-7f30018e719b_bbadadbe-39fe-e94e-faa8-b3b2704b17ff",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "0fac2712-5121-4357-bba8-caf67e819b5c",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "3e6bb3c5-042a-4c6e-90a9-bcdfe09a4dbb",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-04.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.68,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:636ab084-4536-4d00-80d6-88be414d6a1d",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "1fc8e1d0-ff26-4fbe-903d-d4598e38090a",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "b0d9ca18-5377-4e85-85f6-97185f319475",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-04.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:e5e043ae-d595-06e6-e806-0615b77b61b7_e0bd650f-a0b7-0bce-04d6-896cce1e8336",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "e4a48e42-2546-4e40-bec4-14dc4ab013c7",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-04.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.49,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:adb3bfaf-0a69-b928-2b80-55574d538f27_d9a4d68f-5067-0d54-687b-5026f35fd9a3",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "6941f5f6-c2b3-4c3b-9c3d-69bc5926a7d8",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-04.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.51,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:c34fd02a-aa13-4aaf-8da1-57d8b08863b5",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "75e72be5-bc4f-4c9b-8200-ebb325e4f1cf",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-04.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 6.2,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:6c21b224-6cd0-8319-d19c-966b714b17c8_cca1ea58-d2cd-313f-43d8-5004d4ebe0de",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "9378bedc-b178-4ce6-921b-89659612215d",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "01a9f9d4-ce5e-49c6-a654-1f0a7fe22510",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-04.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 6.37,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:7c59b047-445c-85a7-cb34-4e92fb6d03bf_c1c38ef3-4997-9b16-42e1-7fc04ee9abc1",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "be8478f7-5306-47ed-9bd8-9166ba5dae48",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "7f48b56f-a1c2-4e6c-b716-cebd00d0061d",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-05.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.48,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:0105dd3c-aaec-29e9-7a51-1b8239f5c31f_4536eb9e-c300-fbc7-c8f8-cf707580c946",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "11af4d1b-2cfe-49d3-ad29-6a531b0758ef",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "25338bc5-6f80-4a36-ac4d-7c1c21f8199c",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-05.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 10.43,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:26b76bda-0946-93b4-1a48-a09b202d7aa6_5041fb3d-722a-3ebf-60df-9b18d26ec7df",
+      "cold": true,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "3547ff48-b22f-4ed5-9c7a-29fa3eb4ce7b",
+            "init_s": 0.58462
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "0ead0469-4130-4ae5-b18b-e267a1cc0ac4",
+            "init_s": 0.70717
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-05.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.66,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:4c6ab088-290d-4990-9098-0e9cdcccf0a3",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "a4431eec-6cf8-43ea-aa82-dd50326bf0e5",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "08519bc2-317e-4b78-87dd-7d9b6d9b7186",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-05.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.58,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:24b12af8-03da-8344-7e20-0bb908993732_9a908ab9-0734-08f9-5871-47c34b472806",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "f8038f75-ac47-4a31-8f30-9a9e81685e24",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-05.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.41,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:783e0269-a5b0-b292-a76c-6b188b0da51a_4f551b2e-78ba-e124-1057-de72551c57cd",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "7d4ca78c-57da-4a7a-8f57-f2da6271f1f1",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-05.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.47,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:5148dd52-ee70-4af0-8994-781e186e0032",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "798460b9-57c3-411e-b364-4ab8a16b69ab",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-05.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 6.17,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:6305230d-7cbe-c3fe-acd5-9bd2463c3348_604c6fb4-0eda-e797-b5e5-b75fe27a49be",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "153f6029-ac2c-4c23-b8cb-e521afd472be",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "2475d2cf-141d-4800-adf8-db928ebab558",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-05.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 5.59,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:9b46a6b2-3845-bdb8-ecdf-606b054074fe_8348127e-586f-10ea-cadf-3bacf075c3da",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "88e06b2f-5c22-4d99-8feb-8b887a648b96",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "8e6b9820-d029-48ce-825c-48409f844713",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-06.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 5.17,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:e9cbe44c-dba3-897c-a227-5592da509150_23d51bd5-5495-d209-006f-4f8f00f84d87",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "e0618c01-226e-48f0-b419-284255bab5d9",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "4a1e1ad0-745f-4721-9c45-08e6058657bb",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-06.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.47,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:66de5671-17d2-e018-c6d5-c279e85e5e42_80343600-edbd-2086-d50d-b018c48ddaa8",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "ed6155d0-5dd4-43cc-8aae-caaab2cd28d6",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "932385fb-b2d6-4930-9b73-d6c2368d5c53",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-06.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.44,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:bb6ab08b-f55d-4340-b8f6-5b2d406bfb24",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "bbdc63b4-160a-493f-8e4c-6788e0f24888",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "15cd68d4-d1b1-443d-b138-e97af281fca5",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-06.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.44,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:7b4b3e8f-944f-928c-f059-e793139fabd5_7ffb585d-4139-2a06-8c55-cac42231f3a7",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "fd20c268-a8b6-498e-98a9-7cea056bb70a",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-06.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 1.22,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:edccb8d8-d765-f8bc-8ff0-a855a8d3579d_cac0ba32-66e8-f785-f3ef-5290f7669576",
+      "cold": true,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "053a6851-96e1-4119-91f9-7fb9fe07e6fc",
+            "init_s": 0.57129
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-06.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.4,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:65e63483-dd8b-43d4-9166-c318f2af9f8e",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "481c08ad-5afe-419b-a4f3-8160a756c546",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-06.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 5.04,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:b51fcc15-3dba-b5bb-c862-028b3abc8889_3bc0eb68-4303-5a3a-5778-f1c91c82bfb8",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "ad80da7a-8a9c-4ea5-a5bb-e186d6b851e4",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "c4d9327e-58b5-4209-9929-8201c4872ff7",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-06.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 5.63,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:33a34ca0-99bc-9598-a229-c9c4a1ccd2bd_6ef3f7d1-a026-1f99-d43f-6f74013581df",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "6e1684fa-7ced-4cb3-9372-e22f1ca68b96",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "fb986b73-3d76-4582-8afc-17238e55c354",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-07.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.66,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:d1681f05-c75e-9c98-171e-86d972b61943_9757df45-5e10-42b6-494c-d15633727e24",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "353389a5-5e75-40ae-8a54-c8f63447307a",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "1ece47ee-7e9f-416d-990d-26d4f7915b2c",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-07.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.51,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:4d097113-47ba-32b8-b485-ac9c343a16ac_95caeef9-94bb-aa4d-2c78-9d876be7b7e2",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "a977db70-44b1-43fa-908a-f769ec418e32",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "e4559da9-a866-437e-9b6d-b3f4fff5ddce",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-07.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 5.39,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:a96ab08f-b95f-4010-9927-a3490cdb5c9f",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "9656d7ae-7bda-435b-a876-98c70dbfa58f",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "4bb5f436-ca0e-4d30-b24f-003d7a997bb8",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-07.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.6,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:74380e0c-2ad3-d291-3515-a2448de4248d_500fddc1-fee1-3160-9898-1bbe2a6454f2",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "5e9952a5-90e9-4435-94f8-e9c4d8be0b75",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-07.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:65adfb9d-48d3-c347-9f39-0ad0611d2093_3ffba546-4117-7c75-9092-933c4975c50c",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "65b07d34-e81a-487c-a4e4-af1ea352b375",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-07.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:d386e160-cb99-4d1c-a8a9-2092ddc7ca7d",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "9b49cb04-a568-4fd3-b4f2-8079c3dd5f78",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-07.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 5.14,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:22507576-b5ea-1091-dabd-ec319fe11aca_f9683969-920e-1674-4410-c953dcc26c06",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "c461b0cd-9ee2-4909-8414-0bf7b8b5ef4f",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "d128d0cc-4ea0-4227-9d05-9774bc0e6694",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-07.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 5.0,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:33c0f8f0-0e1e-a470-0c0f-e3fa5d880976_62fba14a-324f-d8ea-6f04-992a17e8971c",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "dfe0483e-b98a-45d9-9d94-d9297c348320",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "a13b01c2-d187-4757-b2eb-2a56cd0419b1",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-08.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 11.69,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:091effe0-739a-7e8f-a18b-06e992d90a88_c5dd4ea4-2ec5-e700-8947-fab23856e42e",
+      "cold": true,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "2e792c3c-fa94-4e43-ada1-73aa8327ed6b",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "3d7bc467-2ac5-428c-8031-5e9f9eeede6e",
+            "init_s": 0.58039
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-08.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.69,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:6a8aaa2d-0df6-1279-faaf-361fbca28daf_e0d8bf07-a3fd-2291-9c62-924516648777",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "b396b8cb-107a-41cb-b7d8-b33be0c6958f",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "be06e9d1-e048-4d39-8d12-2d41c79507cb",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-08.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.55,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:156ab093-8945-4574-a2f3-11ebbb77d1d8",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "5b3a378a-97c5-488b-a9df-95b215b4e9dd",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "a5a2ab9c-ab67-484a-82d2-06eaf3bdf094",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-08.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.61,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:439a484f-1855-de1e-c128-1afd101e0a33_f113d4a5-e830-10b1-d6fb-886c28cd60b3",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "fec3def5-6708-4ba6-a38c-7d41df878f85",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-08.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.45,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:4ffd1308-0663-ac3d-a74a-f4364e4c4bd9_5c072824-e3a3-bf89-1435-bf3f34175313",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "79cacba8-26eb-49c0-9cb1-abe8c19c3072",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-08.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.45,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:0a303590-bf20-4ecc-81e0-8b2a052deac7",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "c242caa0-0c4f-43cf-8074-ff162684a173",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-08.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 6.4,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:e7ec3fef-4d56-e372-cec2-c718c417e3db_53f77357-2a5a-ce67-0395-62fe8c1e41f3",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "033f2e9a-b93b-4ed4-bbb0-14b865936c6e",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "36c7674c-e473-4f8f-a881-7ed6e071a291",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-08.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 6.39,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:1882fb9e-3bf3-bb9e-dcd3-d0f8aa3afecc_7b377ad3-1f89-0d7d-0a11-9d25253bceff",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "4c9a8ac1-9336-4e7d-8416-de1ac1bae941",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "ca0d1a39-ed64-4149-9e1c-3ad55ca0061e",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-09.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.57,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:4faa9a26-46ee-bd27-0a31-66a4929223a8_207e102c-9cbb-9a14-ebb6-6174336fab54",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "5f52c5e6-e748-446f-a060-2ff0c28bc2a2",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "24ba0736-ccf8-4fa6-a292-19097c67820c",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-09.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.38,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:1466144b-0ad6-e75d-ea6f-9d33e0915ea5_86ba620a-4bc6-d7bc-f2f9-87ef3e157dca",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "913e3909-26ef-4cf8-b93a-60275e6643b8",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "9b3ce910-0784-41f2-a975-580e13819153",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-09.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:086ab097-6ac0-4430-bc3e-9b2e76c40a5c",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "e38bad8f-28ba-4838-b130-0c033a4a62de",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "e124c99a-73f4-4ae4-8a15-df5d9ded165d",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-09.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.43,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:72e784c2-28ae-8c74-06ba-33b9f884b913_5a9b675d-e358-0017-a5d2-3569b29bbc9a",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "52c3e17d-3c98-4260-abf8-6493b5ecf535",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-09.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.54,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:3822203e-6e4b-ae91-8716-11eb48f8e41f_c925d919-353c-e632-0828-e4940549d719",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "ef2f19d2-e7da-47f0-9ce2-174e603f8f24",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-09.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.44,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:ee1b97cb-6523-4b64-9382-13c6a31b1cb8",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "0e64923b-b2ab-44bf-b05c-09130dea2aa0",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-09.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 6.24,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:43ecd79a-a2c1-cb7b-b011-6be420e77091_e6829834-9cfa-fec2-9155-4438e759178b",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "2ef88de5-50a1-4fe8-9a3f-f906852c946c",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "208cf2c5-07c1-42a1-b848-218726ce9213",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-09.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 6.41,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:d6050cd6-56c0-183f-f6aa-e1f13792a586_fc234763-ee31-a34c-0a6d-6d0d8543ccee",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "fd910d6e-f999-4602-908c-cebb0ff25422",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "b141f78e-4ce0-43bf-a74d-6e78c206bd96",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-10.json",
+      "scenario": "C1",
+      "metric": "t_remediation",
+      "value": 6.44,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:bbcbc986-1fbd-ce63-bbfc-95cdbb8052e8_194ea358-44de-dd57-7368-af70f13a38e8",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "6fa6082c-75d0-4e70-96f0-55a1e64b6514",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "67a18d94-8e92-4065-9db6-00b9bb9f15f7",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-10.json",
+      "scenario": "C5",
+      "metric": "t_remediation",
+      "value": 6.94,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:c0717198-1816-b17d-bfd6-2c1426bbf216_b506c739-8c94-65fe-724a-f847eac0bfea",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "97730e97-1cab-4931-9f86-2cc605f4ea2b",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "e1f85006-a317-4eb6-adcd-498c90f403dd",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-10.json",
+      "scenario": "C3",
+      "metric": "t_remediation",
+      "value": 6.52,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:596ab09b-3854-452f-afc3-6c916eb7dd39",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "ccb0a087-2c92-4f06-af8d-a9102678e87f",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "bf4833aa-213c-423f-b92e-acdb58831b75",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-10.json",
+      "scenario": "C2",
+      "metric": "t_classification",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:85e026c6-1222-6f14-a361-9f1aa4a3c0cc_7b52c251-65fc-b09b-322b-7333f0803f44",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "8553c25a-fcd8-426e-8cd0-039cc92a18d0",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-10.json",
+      "scenario": "C6",
+      "metric": "t_classification",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:dbc773a8-42cd-1e23-0972-a019dc3c86db_b373e7a7-5fbf-82d7-cc2e-283295949906",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "21f444d2-0241-4eae-9b30-b022d4dcc7d9",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-10.json",
+      "scenario": "C4",
+      "metric": "t_escalation",
+      "value": 0.46,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:44542b67-33ce-437d-ade1-06bbbbf0e654",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "8cb4587c-c68c-4613-b735-781b3513b99e",
+            "init_s": null
+          }
+        ],
+        "execute": []
+      }
+    },
+    {
+      "run": "run-10.json",
+      "scenario": "C8",
+      "metric": "t_escalation",
+      "value": 6.19,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:5b19ae9e-0c8d-65f2-cead-cd0778492373_3d74add0-2cef-69be-c8ae-fd77969d795f",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "f1c90ed6-ef5a-4792-b30f-975f5a7ccc8d",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "10b43dbf-408d-48a7-82d6-2f1985ad822a",
+            "init_s": null
+          }
+        ]
+      }
+    },
+    {
+      "run": "run-10.json",
+      "scenario": "CTRL-05",
+      "metric": "t_remediation",
+      "value": 6.25,
+      "execution_arn": "arn:aws:states:us-east-1:034362047722:execution:compliance-loop-compliance-loop-dev:f3060688-c911-d7c1-05fd-90671bfb74d1_6698b9c1-0722-33f7-d903-e12b730c6fd3",
+      "cold": false,
+      "lambdas": {
+        "analyze": [
+          {
+            "request_id": "e98a984a-ef3b-4541-9ac2-a953ecba7782",
+            "init_s": null
+          }
+        ],
+        "execute": [
+          {
+            "request_id": "ca8ee62d-5b6a-4119-aa2e-94128f666dc3",
+            "init_s": null
+          }
+        ]
+      }
+    }
+  ]
+}

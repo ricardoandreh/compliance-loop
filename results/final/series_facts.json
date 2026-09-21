@@ -1,0 +1,203 @@
+{
+  "executions_per_round": 62,
+  "executions_by_round": [
+    62,
+    62,
+    62,
+    62,
+    62,
+    62,
+    62,
+    62,
+    62,
+    62
+  ],
+  "round_duration_s": {
+    "median": 946.1,
+    "min": 933.4,
+    "max": 970.4
+  },
+  "execute_invocations": {
+    "total": 470,
+    "fast": 49,
+    "fast_threshold_s": 4.8,
+    "containers": {
+      "4868d8": {
+        "invocations": 106,
+        "fast": 0
+      },
+      "38fc4e": {
+        "invocations": 116,
+        "fast": 0
+      },
+      "312205": {
+        "invocations": 74,
+        "fast": 49
+      },
+      "f2f149": {
+        "invocations": 33,
+        "fast": 0
+      },
+      "9d4b8f": {
+        "invocations": 60,
+        "fast": 0
+      },
+      "566710": {
+        "invocations": 81,
+        "fast": 0
+      }
+    }
+  },
+  "remediation_samples": {
+    "run-01.json/C1": {
+      "container": "4868d8",
+      "execute_s": 5.47,
+      "fast": false
+    },
+    "run-01.json/C5": {
+      "container": "4868d8",
+      "execute_s": 5.394,
+      "fast": false
+    },
+    "run-01.json/C3": {
+      "container": "38fc4e",
+      "execute_s": 5.571,
+      "fast": false
+    },
+    "run-02.json/C1": {
+      "container": "38fc4e",
+      "execute_s": 5.621,
+      "fast": false
+    },
+    "run-02.json/C5": {
+      "container": "38fc4e",
+      "execute_s": 5.514,
+      "fast": false
+    },
+    "run-02.json/C3": {
+      "container": "4868d8",
+      "execute_s": 5.586,
+      "fast": false
+    },
+    "run-03.json/C1": {
+      "container": "38fc4e",
+      "execute_s": 5.449,
+      "fast": false
+    },
+    "run-03.json/C5": {
+      "container": "38fc4e",
+      "execute_s": 5.282,
+      "fast": false
+    },
+    "run-03.json/C3": {
+      "container": "4868d8",
+      "execute_s": 5.402,
+      "fast": false
+    },
+    "run-04.json/C1": {
+      "container": "4868d8",
+      "execute_s": 5.288,
+      "fast": false
+    },
+    "run-04.json/C5": {
+      "container": "38fc4e",
+      "execute_s": 5.474,
+      "fast": false
+    },
+    "run-04.json/C3": {
+      "container": "38fc4e",
+      "execute_s": 5.524,
+      "fast": false
+    },
+    "run-05.json/C1": {
+      "container": "38fc4e",
+      "execute_s": 5.499,
+      "fast": false
+    },
+    "run-05.json/C5": {
+      "container": "312205",
+      "execute_s": 8.647,
+      "fast": false
+    },
+    "run-05.json/C3": {
+      "container": "38fc4e",
+      "execute_s": 5.649,
+      "fast": false
+    },
+    "run-06.json/C1": {
+      "container": "312205",
+      "execute_s": 4.226,
+      "fast": true
+    },
+    "run-06.json/C5": {
+      "container": "f2f149",
+      "execute_s": 5.45,
+      "fast": false
+    },
+    "run-06.json/C3": {
+      "container": "f2f149",
+      "execute_s": 5.361,
+      "fast": false
+    },
+    "run-07.json/C1": {
+      "container": "f2f149",
+      "execute_s": 5.69,
+      "fast": false
+    },
+    "run-07.json/C5": {
+      "container": "f2f149",
+      "execute_s": 5.381,
+      "fast": false
+    },
+    "run-07.json/C3": {
+      "container": "312205",
+      "execute_s": 4.324,
+      "fast": true
+    },
+    "run-08.json/C1": {
+      "container": "9d4b8f",
+      "execute_s": 10.595,
+      "fast": false
+    },
+    "run-08.json/C5": {
+      "container": "566710",
+      "execute_s": 5.564,
+      "fast": false
+    },
+    "run-08.json/C3": {
+      "container": "566710",
+      "execute_s": 5.411,
+      "fast": false
+    },
+    "run-09.json/C1": {
+      "container": "566710",
+      "execute_s": 5.465,
+      "fast": false
+    },
+    "run-09.json/C5": {
+      "container": "9d4b8f",
+      "execute_s": 5.428,
+      "fast": false
+    },
+    "run-09.json/C3": {
+      "container": "9d4b8f",
+      "execute_s": 5.498,
+      "fast": false
+    },
+    "run-10.json/C1": {
+      "container": "9d4b8f",
+      "execute_s": 5.504,
+      "fast": false
+    },
+    "run-10.json/C5": {
+      "container": "566710",
+      "execute_s": 5.939,
+      "fast": false
+    },
+    "run-10.json/C3": {
+      "container": "566710",
+      "execute_s": 5.521,
+      "fast": false
+    }
+  }
+}
