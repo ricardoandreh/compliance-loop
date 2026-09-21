@@ -9,7 +9,8 @@ execution history for 90 days, CloudWatch Logs as long as its retention:
 - executions per suite round (Step Functions history);
 - how many Execute invocations each Lambda container served, and how many of
   them ran in the fast regime (REPORT lines);
-- which container served the remediation of each C1/C3/C5 sample.
+- which environment served each remediating sample, so a claim about one
+  scenario's cost can be checked in the regime it actually ran in.
 
 Run this once per series while the history is still there; it writes
 <results>/series_facts.json, and from then on the page can be rebuilt from the
@@ -83,7 +84,13 @@ def main():
     cold_path = os.path.join(args.results, "cold_starts.json")
     if os.path.exists(cold_path):
         for s in json.load(open(cold_path))["samples"]:
-            if s["scenario"] not in ("C1", "C3", "C5") or s["metric"] != "t_remediation":
+            # Every scenario whose metric times an Execute invocation: the S3
+            # paths, the EBS one (CTRL-05) and the denied remediation (C8).
+            # Leaving CTRL-05 out once made a published comparison between
+            # services unverifiable — its mean mixed both regimes.
+            if s["metric"] not in ("t_remediation", "t_escalation"):
+                continue
+            if s["scenario"] in ("C4", "C9", "CTRL-06"):
                 continue
             ids = [x["request_id"] for x in s["lambdas"]["execute"]]
             if not ids or ids[0] not in invocations:
