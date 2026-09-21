@@ -179,6 +179,11 @@ def aggregate(runs):
             per_scenario_means = []
             widest_within = 0.0
             for name, entry in scenarios.items():
+                # Only the scenarios this hypothesis pools: a scenario left out
+                # of the pool cannot make the pool heterogeneous, and naming it
+                # in the warning sent the reader after the wrong number.
+                if name not in pooled_scenarios:
+                    continue
                 for metric in metric_names:
                     vals = entry["metrics"].get(metric)
                     if vals:
