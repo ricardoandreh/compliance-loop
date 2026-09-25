@@ -27,6 +27,13 @@ data "aws_caller_identity" "current" {}
 
 # --- Modules ---
 
+module "alerting" {
+  source       = "./modules/alerting"
+  project_name = var.project_name
+  environment  = var.environment
+  alert_email  = var.alert_email
+}
+
 module "knowledge" {
   source       = "./modules/knowledge"
   project_name = var.project_name
@@ -34,9 +41,10 @@ module "knowledge" {
 }
 
 module "escalation_queue" {
-  source       = "./modules/escalation_queue"
-  project_name = var.project_name
-  environment  = var.environment
+  source          = "./modules/escalation_queue"
+  project_name    = var.project_name
+  environment     = var.environment
+  alarm_topic_arn = module.alerting.topic_arn
 }
 
 module "monitoring" {
@@ -119,6 +127,7 @@ module "exception_scheduler" {
   exceptions_table_arn  = module.knowledge.exceptions_table_arn
   exceptions_stream_arn = module.knowledge.exceptions_stream_arn
   state_machine_arn     = module.orchestration.state_machine_arn
+  stream_dlq_arn        = module.alerting.stream_dlq_arn
 }
 
 module "controls_sync" {
@@ -131,6 +140,28 @@ module "controls_sync" {
   eventbridge_rule_name = module.orchestration.eventbridge_rule_name
   eventbridge_rule_arn  = module.orchestration.eventbridge_rule_arn
   remediation_role_arn  = module.execute.remediation_role_arn
+  stream_dlq_arn        = module.alerting.stream_dlq_arn
+}
+
+module "operations" {
+  source                   = "./modules/operations"
+  project_name             = var.project_name
+  environment              = var.environment
+  region                   = var.region
+  alert_topic_arn          = module.alerting.topic_arn
+  rule_name                = module.orchestration.eventbridge_rule_name
+  state_machine_arn        = module.orchestration.state_machine_arn
+  schedule_group           = module.exception_scheduler.schedule_group_name
+  stream_dlq_name          = module.alerting.stream_dlq_name
+  escalation_dlq_name      = module.escalation_queue.dlq_name
+  exception_sync_log_group = module.exception_scheduler.log_group_name
+  function_names = {
+    analyze                  = module.analyze.function_name
+    execute                  = module.execute.function_name
+    escalation               = module.escalation_lambda.function_name
+    controls-sync            = module.controls_sync.function_name
+    exception-scheduler-sync = module.exception_scheduler.function_name
+  }
 }
 
 # --- Outputs ---
@@ -143,3 +174,5 @@ output "violations_log_table_name" { value = module.knowledge.violations_log_tab
 output "eventbridge_rule_name" { value = module.orchestration.eventbridge_rule_name }
 output "analyze_function_name" { value = module.analyze.function_name }
 output "execute_function_name" { value = module.execute.function_name }
+output "alerts_topic_arn" { value = module.alerting.topic_arn }
+output "dashboard_name" { value = module.operations.dashboard_name }

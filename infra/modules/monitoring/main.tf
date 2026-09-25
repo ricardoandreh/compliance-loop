@@ -44,6 +44,12 @@ resource "aws_cloudtrail" "s3_events" {
   include_global_service_events = false
   is_multi_region_trail         = false
   enable_logging                = true
+  # The thesis uses this trail as independent confirmation of what the loop did
+  # (every remediation write carries the violation_id as its session name).
+  # Log file validation makes that evidence tamper-evident: CloudTrail signs an
+  # hourly digest, and `aws cloudtrail validate-logs` proves no file was altered
+  # or removed.
+  enable_log_file_validation = true
 
   event_selector {
     read_write_type           = "WriteOnly"

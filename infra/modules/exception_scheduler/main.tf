@@ -6,6 +6,11 @@ variable "exceptions_table_name" { type = string }
 variable "exceptions_table_arn" { type = string }
 variable "exceptions_stream_arn" { type = string }
 variable "state_machine_arn" { type = string }
+variable "stream_dlq_arn" { type = string }
+variable "log_retention_days" {
+  type    = number
+  default = 30
+}
 
 # --- Scheduler Group ---
 resource "aws_scheduler_schedule_group" "compliance" {
@@ -35,8 +40,8 @@ resource "aws_iam_role" "compliance_scheduler" {
 }
 
 resource "aws_iam_role_policy" "scheduler_sfn" {
-  name   = "start-step-functions"
-  role   = aws_iam_role.compliance_scheduler.id
+  name = "start-step-functions"
+  role = aws_iam_role.compliance_scheduler.id
   policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = "states:StartExecution", Resource = var.state_machine_arn }]
@@ -72,6 +77,8 @@ resource "aws_lambda_function" "exception_scheduler_sync" {
   }
 
   tags = { Name = "${var.project_name}-exception-scheduler-sync", Environment = var.environment }
+
+  depends_on = [aws_cloudwatch_log_group.lambda]
 }
 
 # --- Event Source Mapping ---
@@ -86,6 +93,13 @@ resource "aws_lambda_event_source_mapping" "exceptions_stream" {
   # record is retried/checkpointed instead of being silently dropped with the
   # rest of the batch.
   function_response_types = ["ReportBatchItemFailures"]
+
+  # After the retries, the record used to be dropped: the exception would then
+  # expire with no schedule and no re-evaluation, and nothing would record that
+  # it happened (the C3 failure mode). Now it lands in the stream DLQ.
+  destination_config {
+    on_failure { destination_arn = var.stream_dlq_arn }
+  }
 
   filter_criteria {
     filter {
@@ -114,15 +128,30 @@ resource "aws_iam_role_policy" "lambda" {
     Statement = [
       { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = var.exceptions_table_arn },
       { Effect = "Allow", Action = ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"],
-        Resource = "arn:aws:scheduler:${var.region}:${var.account_id}:schedule/${aws_scheduler_schedule_group.compliance.name}/*" },
+      Resource = "arn:aws:scheduler:${var.region}:${var.account_id}:schedule/${aws_scheduler_schedule_group.compliance.name}/*" },
       # PassRole without a service condition lets the role be handed to any
       # service that accepts it; this pins it to EventBridge Scheduler.
       { Effect = "Allow", Action = "iam:PassRole", Resource = aws_iam_role.compliance_scheduler.arn,
-        Condition = { StringEquals = { "iam:PassedToService" = "scheduler.amazonaws.com" } } },
+      Condition = { StringEquals = { "iam:PassedToService" = "scheduler.amazonaws.com" } } },
       { Effect = "Allow", Action = "states:StartExecution", Resource = var.state_machine_arn },
+      { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = var.stream_dlq_arn },
       { Effect = "Allow", Action = ["dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:DescribeStream", "dynamodb:ListStreams"],
-        Resource = "${var.exceptions_table_arn}/stream/*" },
+      Resource = "${var.exceptions_table_arn}/stream/*" },
       { Effect = "Allow", Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], Resource = "arn:aws:logs:*:*:*" }
     ]
   })
 }
+
+# Declared so its retention is set: the group Lambda creates on its own keeps
+# logs forever. Named literally (not from the function) so the function can
+# depend on it and never create an unmanaged one first. Imported once from the
+# group Lambda had already created (infra/imports.tf).
+resource "aws_cloudwatch_log_group" "lambda" {
+  name              = "/aws/lambda/${var.project_name}-exception-scheduler-sync-${var.environment}"
+  retention_in_days = var.log_retention_days
+  tags              = { Name = "${var.project_name}-exception-scheduler-sync-logs", Environment = var.environment }
+}
+
+output "function_name" { value = aws_lambda_function.exception_scheduler_sync.function_name }
+output "log_group_name" { value = aws_cloudwatch_log_group.lambda.name }
+output "schedule_group_name" { value = aws_scheduler_schedule_group.compliance.name }

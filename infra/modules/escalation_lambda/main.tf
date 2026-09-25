@@ -1,4 +1,8 @@
 variable "project_name" { type = string }
+variable "log_retention_days" {
+  type    = number
+  default = 30
+}
 variable "environment" { type = string }
 variable "region" { type = string }
 variable "account_id" { type = string }
@@ -28,6 +32,8 @@ resource "aws_lambda_function" "escalation" {
   }
 
   tags = { Name = "${var.project_name}-escalation", Environment = var.environment }
+
+  depends_on = [aws_cloudwatch_log_group.lambda]
 }
 
 resource "aws_lambda_event_source_mapping" "escalation_sqs" {
@@ -76,11 +82,11 @@ resource "aws_iam_role_policy" "dynamodb" {
   name = "dynamodb-access"
   role = aws_iam_role.escalation_lambda.id
   policy = jsonencode({
-    Version   = "2012-10-17"
+    Version = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = var.violations_log_table_arn },
-                 # Deduplication reads the issue already tracking this
-                 # resource+control from the audit trail (design.md, L5).
-                 { Effect = "Allow", Action = ["dynamodb:Query"], Resource = "${var.violations_log_table_arn}/index/*" }]
+      # Deduplication reads the issue already tracking this
+      # resource+control from the audit trail (design.md, L5).
+    { Effect = "Allow", Action = ["dynamodb:Query"], Resource = "${var.violations_log_table_arn}/index/*" }]
   })
 }
 
@@ -95,3 +101,15 @@ resource "aws_iam_role_policy" "ssm" {
     ]
   })
 }
+
+# Declared so its retention is set: the group Lambda creates on its own keeps
+# logs forever. Named literally (not from the function) so the function can
+# depend on it and never create an unmanaged one first. Imported once from the
+# group Lambda had already created (infra/imports.tf).
+resource "aws_cloudwatch_log_group" "lambda" {
+  name              = "/aws/lambda/${var.project_name}-escalation-${var.environment}"
+  retention_in_days = var.log_retention_days
+  tags              = { Name = "${var.project_name}-escalation-logs", Environment = var.environment }
+}
+
+output "function_name" { value = aws_lambda_function.escalation.function_name }

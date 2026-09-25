@@ -60,6 +60,9 @@ resource "aws_dynamodb_table" "exceptions" {
     enabled        = true
   }
 
+  # Who approved which exception, and until when: audit data too.
+  point_in_time_recovery { enabled = true }
+
   tags = { Name = "${var.project_name}-exceptions-${var.environment}", Environment = var.environment, ManagedBy = "OpenTofu" }
 }
 
@@ -89,6 +92,10 @@ resource "aws_dynamodb_table" "violations_log" {
     range_key       = "timestamp"
     projection_type = "ALL"
   }
+
+  # The audit trail (H2) is the one table that cannot be rebuilt from anything
+  # else: continuous backups, restorable to any second of the last 35 days.
+  point_in_time_recovery { enabled = true }
 
   tags = { Name = "${var.project_name}-violations-log-${var.environment}", Environment = var.environment, ManagedBy = "OpenTofu" }
 }

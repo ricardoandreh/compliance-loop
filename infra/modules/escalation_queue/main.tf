@@ -1,5 +1,6 @@
 variable "project_name" { type = string }
 variable "environment" { type = string }
+variable "alarm_topic_arn" { type = string }
 
 resource "aws_sqs_queue" "escalation" {
   name                        = "${var.project_name}-escalation-${var.environment}.fifo"
@@ -39,6 +40,8 @@ resource "aws_cloudwatch_metric_alarm" "escalation_dlq" {
   statistic           = "Average"
   threshold           = 0
   alarm_description   = "Alert when messages appear in escalation DLQ"
+  alarm_actions       = [var.alarm_topic_arn]
+  ok_actions          = [var.alarm_topic_arn]
   treat_missing_data  = "notBreaching"
 
   dimensions = { QueueName = aws_sqs_queue.escalation_dlq.name }
@@ -48,3 +51,4 @@ resource "aws_cloudwatch_metric_alarm" "escalation_dlq" {
 
 output "queue_arn" { value = aws_sqs_queue.escalation.arn }
 output "queue_url" { value = aws_sqs_queue.escalation.url }
+output "dlq_name" { value = aws_sqs_queue.escalation_dlq.name }

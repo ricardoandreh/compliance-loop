@@ -2,6 +2,10 @@ variable "project_name" { type = string }
 variable "environment" { type = string }
 variable "tofu_layer_arn" { type = string }
 variable "remediation_bucket" { type = string }
+variable "log_retention_days" {
+  type    = number
+  default = 30
+}
 variable "account_id" { type = string }
 variable "protected_bucket_arns" {
   description = "Buckets the loop must never be able to rewrite — its own evidence (CloudTrail) and the state it is deployed from."
@@ -37,6 +41,8 @@ resource "aws_lambda_function" "execute" {
   }
 
   tags = { Name = "${var.project_name}-execute", Environment = var.environment }
+
+  depends_on = [aws_cloudwatch_log_group.lambda]
 }
 
 resource "aws_iam_role" "execute_lambda" {
@@ -65,12 +71,12 @@ resource "aws_iam_role_policy" "execute_own" {
   name = "artefacts-and-assume"
   role = aws_iam_role.execute_lambda.id
   policy = jsonencode({
-    Version   = "2012-10-17"
+    Version = "2012-10-17"
     Statement = [
       { Effect = "Allow", Action = ["s3:GetObject"], Resource = [
         "arn:aws:s3:::${var.remediation_bucket}/controls/*/remediation.tf",
         "arn:aws:s3:::${var.remediation_bucket}/provider-cache/*"
-      ]},
+      ] },
       { Effect = "Allow", Action = ["sts:AssumeRole"], Resource = aws_iam_role.remediation.arn }
     ]
   })
@@ -84,7 +90,7 @@ resource "aws_iam_role_policy" "execute_own" {
 resource "aws_iam_role" "remediation" {
   name = "${var.project_name}-remediation-${var.environment}"
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
+    Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow",
       Principal = { AWS = aws_iam_role.execute_lambda.arn },
@@ -92,14 +98,14 @@ resource "aws_iam_role" "remediation" {
     }]
   })
   max_session_duration = 3600
-  tags = { Name = "${var.project_name}-remediation", Environment = var.environment }
+  tags                 = { Name = "${var.project_name}-remediation", Environment = var.environment }
 }
 
 resource "aws_iam_role_policy" "remediation" {
   name = "resource-remediation"
   role = aws_iam_role.remediation.id
   policy = jsonencode({
-    Version   = "2012-10-17"
+    Version = "2012-10-17"
     Statement = [
       { Sid = "S3ConfigurationWrite", Effect = "Allow", Action = [
         "s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock",
@@ -107,11 +113,11 @@ resource "aws_iam_role_policy" "remediation" {
         "s3:PutBucketVersioning", "s3:GetBucketVersioning",
         "s3:PutEncryptionConfiguration", "s3:GetEncryptionConfiguration"
         ], Resource = "arn:aws:s3:::*",
-        Condition = { StringEquals = { "aws:ResourceAccount" = var.account_id } } },
+      Condition = { StringEquals = { "aws:ResourceAccount" = var.account_id } } },
       { Sid = "NeverRewriteOwnEvidence", Effect = "Deny", Action = "s3:*",
-        Resource = concat(var.protected_bucket_arns, [for arn in var.protected_bucket_arns : "${arn}/*"]) },
+      Resource = concat(var.protected_bucket_arns, [for arn in var.protected_bucket_arns : "${arn}/*"]) },
       { Sid = "EbsAccountSetting", Effect = "Allow",
-        Action = ["ec2:EnableEbsEncryptionByDefault", "ec2:GetEbsEncryptionByDefault"], Resource = "*" }
+      Action = ["ec2:EnableEbsEncryptionByDefault", "ec2:GetEbsEncryptionByDefault"], Resource = "*" }
     ]
   })
 }
@@ -123,3 +129,13 @@ output "role_arn" { value = aws_iam_role.execute_lambda.arn }
 # The identity that appears in CloudTrail for every remediation write — what the
 # EventBridge rule filters out to keep the loop from reacting to itself.
 output "remediation_role_arn" { value = aws_iam_role.remediation.arn }
+
+# Declared so its retention is set: the group Lambda creates on its own keeps
+# logs forever. Named literally (not from the function) so the function can
+# depend on it and never create an unmanaged one first. Imported once from the
+# group Lambda had already created (infra/imports.tf).
+resource "aws_cloudwatch_log_group" "lambda" {
+  name              = "/aws/lambda/${var.project_name}-execute-${var.environment}"
+  retention_in_days = var.log_retention_days
+  tags              = { Name = "${var.project_name}-execute-logs", Environment = var.environment }
+}

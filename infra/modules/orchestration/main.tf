@@ -59,10 +59,10 @@ resource "aws_cloudwatch_event_target" "step_functions" {
 
   input_transformer {
     input_paths = {
-      account_id  = "$.detail.userIdentity.accountId"
-      region      = "$.detail.awsRegion"
-      event_time  = "$.detail.eventTime"
-      event_name  = "$.detail.eventName"
+      account_id     = "$.detail.userIdentity.accountId"
+      region         = "$.detail.awsRegion"
+      event_time     = "$.detail.eventTime"
+      event_name     = "$.detail.eventName"
       request_params = "$.detail.requestParameters"
       # CreateVolume names the resource only in the response: requestParameters
       # carries size and type, responseElements the volumeId.
@@ -103,8 +103,8 @@ resource "aws_iam_role" "eventbridge_sfn" {
 }
 
 resource "aws_iam_role_policy" "eventbridge_sfn" {
-  name   = "start-step-functions"
-  role   = aws_iam_role.eventbridge_sfn.id
+  name = "start-step-functions"
+  role = aws_iam_role.eventbridge_sfn.id
   policy = jsonencode({
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = "states:StartExecution", Resource = aws_sfn_state_machine.compliance_loop.arn }]
@@ -117,11 +117,11 @@ resource "aws_sfn_state_machine" "compliance_loop" {
   role_arn = aws_iam_role.step_functions.arn
 
   definition = templatefile("${path.module}/../../state_machine_definition.json", {
-    analyze_lambda_arn   = var.analyze_lambda_arn
-    execute_lambda_arn   = var.execute_lambda_arn
-    violations_log_table = var.violations_log_table_name
-    escalation_queue_url = var.escalation_queue_url
-    controls_table       = var.controls_table_name
+    analyze_lambda_arn        = var.analyze_lambda_arn
+    execute_lambda_arn        = var.execute_lambda_arn
+    violations_log_table      = var.violations_log_table_name
+    escalation_queue_url      = var.escalation_queue_url
+    controls_table            = var.controls_table_name
     recurrence_window_minutes = var.recurrence_window_minutes
     recurrence_threshold      = var.recurrence_threshold
   })
@@ -188,12 +188,12 @@ resource "aws_iam_role_policy" "sfn_dynamodb" {
   name = "dynamodb-operations"
   role = aws_iam_role.step_functions.id
   policy = jsonencode({
-    Version   = "2012-10-17"
+    Version = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem"], Resource = [var.violations_log_table_arn] },
-                 # The circuit breaker counts recent remediations of the same
-                 # (resource, control) through the GSI.
-                 { Effect = "Allow", Action = ["dynamodb:Query"], Resource = ["${var.violations_log_table_arn}/index/*"] },
-                 { Effect = "Allow", Action = ["dynamodb:Scan", "dynamodb:GetItem"], Resource = [var.controls_table_arn] }]
+      # The circuit breaker counts recent remediations of the same
+      # (resource, control) through the GSI.
+      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = ["${var.violations_log_table_arn}/index/*"] },
+    { Effect = "Allow", Action = ["dynamodb:Scan", "dynamodb:GetItem"], Resource = [var.controls_table_arn] }]
   })
 }
 
