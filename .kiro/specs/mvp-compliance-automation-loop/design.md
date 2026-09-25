@@ -2601,6 +2601,8 @@ Os intervalos por amostra subestimam a incerteza em até 1,5×, o que é esperad
 - Falha do sistema escalada sem registro de estado (C4): **0,46 s** ± 0,03
 - **A cadeia fecha pelos dois lados**: cada escrita de remediação aparece no CloudTrail como `assumed-role/compliance-loop-remediation-dev/<violation_id>`, e esse identificador é a chave da linha correspondente no `violations_log` — ver *Autoridade por incidente*
 - Nenhuma rodada de verificação escalou nas 50 execuções do laço explícito: **1.463 leituras de controle imediatas, todas `verified`**
+- **Completude medida sobre a série inteira, não inferida dos cenários** (`scripts/audit_log_completeness.py`, `results/final/log_audit.json`): as **1.160 linhas** gravadas durante a série final estão todas completas — campos obrigatórios, timestamp no formato canônico, estado dentro do modelo, exceção com aprovador, falha com erro, verificação com vínculo —, com `violation_id` único e **nenhuma issue em linha que não foi escalada** (P23)
+- **A cadeia remediação → verificação é uma bijeção**: as 430 remediações bem-sucedidas da série têm, cada uma, exatamente uma linha de verificação que aponta para ela (`verifies_violation_id`), nenhuma verificação aponta para algo que não foi remediado, e as 430 confirmaram `S_nominal`
 
 **H3 — Tempo de exposição** (`t_exposure`; C1 · C5)
 
@@ -2618,6 +2620,20 @@ Os intervalos por amostra subestimam a incerteza em até 1,5×, o que é esperad
 - **Convergência verificada** (`t_verified`): **14,87 s** ± 1,75 no patamar lento, **0,31 s** acima da exposição — o custo da própria rodada de verificação. Com a espera fixa de 15 s eram 29,26 s, 15,4 s acima da exposição
 - Janela de risco pós-expiração de exceção (C3): **55,75 s** ± 15,58 — buffer de 30 s do Scheduler, mais o atraso de entrega dele, mais a execução
 - **Atraso de entrega do Scheduler** (sem classe): **19,3 s** em média nesta série (faixa 1,1–42,1 s); entre 17,9 s e 29,5 s nas anteriores. A média muda mais entre séries do que qualquer alteração do sistema — o mecanismo é **limitado**, não determinístico
+
+**Custo em dinheiro, medido** (`scripts/cost_model.py`, `results/final/cost_model.json`): todas as grandezas variáveis foram medidas na conta durante a série final — 7.170 transições em 350 execuções de detecção (20,5 por execução) e 2.750 em 270 de verificação (10,2), o tempo faturado de cada Lambda pelas linhas REPORT e o volume de log ingerido —, e convertidas com preços de lista de us-east-1, sem descontar camadas gratuitas:
+
+| Componente | Custo da série | Participação |
+|---|---|---|
+| Transições do Step Functions | US$ 0,248 | **71%** |
+| Processamento das Lambdas (5.332 GB-s só do Execute, 2 GB × ~5,5 s) | US$ 0,072 | 21% |
+| Ingestão de logs (57 MB do Step Functions em `level: ALL`) | US$ 0,030 | 8% |
+| Requisições às Lambdas | US$ 0,0002 | < 1% |
+| **Total da série** | **US$ 0,35** | |
+
+Dividido pelas 270 detecções que remediaram, dá **US$ 0,0013 por incidente remediado** — cerca de **US$ 1,30 a cada mil**. É um limite superior: o total inclui as avaliações de recursos conformes, as escalações e o *fan-out* do `CreateBucket` que a suíte provoca.
+
+A hipótese de que o log `ALL` do Step Functions dominaria o custo não se confirmou: são 8%. O item dominante são as transições do Standard — coerente com a análise *Por que Standard e não Express*, que estima o Express ~100× mais barato nessa parcela. O custo fixo mensal da camada de operação é de US$ 1,30 (13 alarmes a US$ 0,10) mais US$ 3,00 do painel acima dos três gratuitos da conta; o PITR custa US$ 0,20 por GB-mês, desprezível no volume das tabelas. **Em volume de avaliação, o custo fixo da operação supera o variável do laço** — em produção a relação se inverte a partir de alguns milhares de incidentes por mês.
 
 **Custo operacional do laço**
 - **Execuções por rodada da suíte**: 48,5 (eco) → 36,0 (espera de 15 s) → 35,9 (leitura imediata) → 43,0 (três estados) → **62,0** nas duas últimas. As altas são da suíte, não do sistema: entraram C8, CTRL-05, C9, C10 e CTRL-06, e só o C9 provoca quatro violações em sequência. O ganho estrutural permanece: um incidente com N controles remediados custava 1 + N execuções e custa **no máximo 2**, qualquer que seja N

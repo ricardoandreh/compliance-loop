@@ -33,7 +33,7 @@ Liga cada requisito (`requirements.md`) e cada propriedade de corretude (`design
 | R16 | Determinismo | **Atendido** | propriedade P3 | Um único `canonical_timestamp` por invocação |
 | R17 | Timeouts | **Revisado** | estrutural; alarme `executions-timed-out` | **17.1–17.3 revisados**: 15/45/60 s não cobriam o pior caso; valem 60/90/600 s (Analyze, Execute, execução), justificados pela cadeia de timeouts da *Property 28* (pior caso serial 550 s) |
 | R18 | S_violation após falha | **Atendido** | integração C8 (10/10) | `remediation_status = failed`, estado preservado |
-| R19 | Rastrear escalação | **Atendido** | integração C8; auditoria de completude | **19.5** verificado sobre todas as linhas da série final |
+| R19 | Rastrear escalação | **Atendido** | integração C8; auditoria de completude | **19.5** verificado sobre as 1.160 linhas da série final |
 
 **Resumo**: 10 atendidos, 7 revisados com justificativa, 2 parciais (ambos pela latência do CloudTrail), nenhum não atendido.
 
@@ -52,7 +52,7 @@ Liga cada requisito (`requirements.md`) e cada propriedade de corretude (`design
 | 9 | Completude do modelo de exceção | integração C2, C3 (gravação com todos os campos) | Parcial — sem verificação automatizada de todos os campos |
 | 10 | Filtro independente do TTL | unitário (`valid_until > :now`) | Atendido |
 | 11 | Unicidade da linha do log | unitário (9 avaliações, 9 identificadores) | Atendido |
-| 12 | Completude do modelo do log | auditoria de completude | Atendido |
+| 12 | Completude do modelo do log | auditoria de completude: 1.160 linhas da série final, todas completas | Atendido |
 | 13 | Referência à exceção no log | integração C2; auditoria | Atendido |
 | 14 | Registro do status da remediação | integração C1, C8; auditoria | Atendido |
 | 15 | Idempotência do Execute | propriedade `test_execute_properties` | Atendido |
@@ -63,7 +63,7 @@ Liga cada requisito (`requirements.md`) e cada propriedade de corretude (`design
 | 20 | Escalação na falha | integração C4, C8; estrutural (motivos da escalação) | Atendido |
 | 21 | Criação da issue | integração C8; unitário (deduplicação pelo log) | Atendido |
 | 22 | Persistência do número da issue | integração C8 | Atendido |
-| 23 | Sem issue para violação não escalada | auditoria de completude | Atendido |
+| 23 | Sem issue para violação não escalada | auditoria de completude: 30 linhas com issue, todas escaladas; nenhuma em linha conforme, excetuada ou remediada | Atendido |
 | 24 | Estado preservado após falha | integração C8 | Atendido |
 | 25 | Filtro de eventos do EventBridge | contrato `test_event_pattern` (quatro identidades) | Atendido |
 | 26 | Tratamento de evento incompleto no Monitor | contrato `test_resolve_resource` (caso de conta) | Revisado — ver R15.6 |

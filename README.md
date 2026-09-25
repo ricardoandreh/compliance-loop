@@ -230,7 +230,23 @@ artefatos de build ignorados pelo git — precisam existir localmente antes do
 
 ## Testes
 
+| Camada | O que cobre | Onde | Quantidade |
+|---|---|---|---|
+| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, sincronização de exceções | `tests/unit`, `tests/property` | 126 |
+| Contrato | remediação × política (OPA); padrão do EventBridge e estado `ResolveResource` avaliados pela própria AWS | `tests/contract` | 22 |
+| Políticas Rego | casos conformes, violados e entradas enganosas, por controle | `controls/*/policy_test.rego` | 44 |
+| Integração | 16 cenários contra a conta real | `scripts/integration_test.py` | 16 |
+
+A rastreabilidade de cada requisito e de cada propriedade de corretude até a
+evidência que a sustenta está em
+[`traceability.md`](.kiro/specs/mvp-compliance-automation-loop/traceability.md).
+O CI (`.github/workflows/tests.yml`) roda as três primeiras camadas e valida o
+OpenTofu a cada push, sem precisar de conta AWS.
+
 ```bash
+# Offline: unitários, propriedade e contrato
+lambdas/analyze/.venv/bin/python -m pytest tests -q
+
 # Testes de integração end-to-end (todos os cenários + controles)
 lambdas/analyze/.venv/bin/python scripts/integration_test.py
 
@@ -376,6 +392,32 @@ em cada série o que só existe na conta (classificação frio/quente, consistê
 de leitura, containers do Execute e execuções por rodada), e daí em diante a
 página é reconstruída só com o repositório. O CSS, os gráficos e as notas de
 metodologia ficam em `scripts/report/`.
+
+## Operação
+
+O laço tem alarmes para as falhas que **não** viram escalação — o laço parado,
+não o laço trabalhando: detecção perdida no EventBridge, expiração de exceção
+não reavaliada, falha por registro na sincronização de exceções, registro de
+stream abandonado, queda de Lambda, timeout e throttling do Step Functions.
+Todos publicam no tópico `compliance-loop-alerts-dev` (e-mail opcional pela
+variável `alert_email`) e aparecem no painel `compliance-loop-dev-loop`. O
+runbook, com o que cada alarme significa e a primeira ação, está no
+`design.md` (*Operação: alarmes e runbook*).
+
+Os consumidores dos streams do DynamoDB têm tentativas limitadas e uma fila de
+falhas; os logs das Lambdas têm retenção de 30 dias; o `violations_log` e a
+tabela de exceções têm recuperação pontual; e a trilha do CloudTrail tem
+validação de integridade, para que a evidência independente usada na H2 seja à
+prova de adulteração.
+
+## Custo
+
+Medido na série final (`scripts/cost_model.py`), com preços de lista de
+us-east-1: **~US$ 0,0013 por incidente remediado** (US$ 1,30 a cada mil). A
+maior parcela são as transições do Step Functions Standard (71%), seguidas pelo
+processamento das Lambdas (21%) e pela ingestão de logs (8%). A camada de
+operação custa ~US$ 1,30/mês em alarmes, mais US$ 3,00/mês do painel acima dos
+três gratuitos.
 
 ## Licença
 
