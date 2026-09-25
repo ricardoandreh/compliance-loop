@@ -417,7 +417,8 @@ perdeu a permissão) vai para a fila `intake-failures`, e
 iniciado — no máximo uma por evento. Os logs das Lambdas têm retenção de 30
 dias; o `violations_log` e a tabela de exceções têm recuperação pontual; e a
 trilha do CloudTrail tem validação de integridade, para que a evidência
-independente usada na H2 seja à prova de adulteração.
+independente usada na H2 seja à prova de adulteração — `validate-logs`: 11 de
+11 arquivos válidos desde que foi ligada, depois da série final.
 
 As duas falhas silenciosas mais graves foram provocadas na conta real
 (`scripts/ops_fault_injection.py`, resultado em

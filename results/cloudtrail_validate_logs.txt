@@ -1,0 +1,7 @@
+Validating log files for trail arn:aws:cloudtrail:us-east-1:034362047722:trail/compliance-loop-s3-events-dev between 2026-09-25T00:00:00Z and 2026-09-25T02:55:12Z
+
+Results requested for 2026-09-25T00:00:00Z to 2026-09-25T02:55:12Z
+Results found for 2026-09-25T00:25:42Z to 2026-09-25T02:25:42Z:
+
+2/2 digest files valid
+11/11 log files valid
