@@ -96,6 +96,7 @@ module "escalation_lambda" {
   region                    = var.region
   account_id                = data.aws_caller_identity.current.account_id
   escalation_queue_arn      = module.escalation_queue.queue_arn
+  alarm_queue_arn           = module.alerting.alarm_queue_arn
   violations_log_table_name = module.knowledge.violations_log_table_name
   violations_log_table_arn  = module.knowledge.violations_log_table_arn
 }
@@ -156,6 +157,7 @@ module "operations" {
   schedule_group           = module.exception_scheduler.schedule_group_name
   stream_dlq_name          = module.alerting.stream_dlq_name
   intake_dlq_name          = module.alerting.intake_dlq_name
+  alarm_queue_name         = module.alerting.alarm_queue_name
   escalation_dlq_name      = module.escalation_queue.dlq_name
   exception_sync_log_group = module.exception_scheduler.log_group_name
   function_names = {

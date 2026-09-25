@@ -7,6 +7,10 @@ variable "environment" { type = string }
 variable "region" { type = string }
 variable "account_id" { type = string }
 variable "escalation_queue_arn" { type = string }
+variable "alarm_queue_arn" {
+  description = "Queue where the alerts topic delivers alarm transitions; each one becomes or updates a GitHub issue."
+  type        = string
+}
 variable "violations_log_table_name" { type = string }
 variable "violations_log_table_arn" { type = string }
 
@@ -51,6 +55,18 @@ resource "aws_lambda_event_source_mapping" "escalation_sqs" {
   depends_on = [aws_iam_role_policy.sqs]
 }
 
+# Alarm transitions from the alerts topic, on their own queue. Same handler:
+# the body says which kind of message it is.
+resource "aws_lambda_event_source_mapping" "alarm_notifications" {
+  event_source_arn        = var.alarm_queue_arn
+  function_name           = aws_lambda_function.escalation.arn
+  batch_size              = 1
+  enabled                 = true
+  function_response_types = ["ReportBatchItemFailures"]
+
+  depends_on = [aws_iam_role_policy.sqs]
+}
+
 resource "aws_iam_role" "escalation_lambda" {
   name = "${var.project_name}-escalation-lambda-${var.environment}"
   assume_role_policy = jsonencode({
@@ -74,7 +90,7 @@ resource "aws_iam_role_policy" "sqs" {
   role = aws_iam_role.escalation_lambda.id
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"], Resource = var.escalation_queue_arn }]
+    Statement = [{ Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"], Resource = [var.escalation_queue_arn, var.alarm_queue_arn] }]
   })
 }
 

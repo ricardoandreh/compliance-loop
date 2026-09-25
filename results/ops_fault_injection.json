@@ -1,10 +1,10 @@
 {
   "scenarios": {
     "sync": {
-      "injected": "fault-injection-7d12950c",
+      "injected": "fault-injection-28a57f4e",
       "seconds_to_alarm": {
-        "compliance-loop-dev-exception-sync-failures": 84.2,
-        "compliance-loop-dev-stream-dlq": 188.7
+        "compliance-loop-dev-exception-sync-failures": 52.9,
+        "compliance-loop-dev-stream-dlq": 157.5
       },
       "stream_dlq_messages": 1,
       "dlq_record_context": {
@@ -12,24 +12,34 @@
         "approximateInvokeCount": 4
       },
       "seconds_to_ok_after_clearing": {
-        "compliance-loop-dev-exception-sync-failures": 64.3,
-        "compliance-loop-dev-stream-dlq": 357.6
+        "compliance-loop-dev-exception-sync-failures": 63.8,
+        "compliance-loop-dev-stream-dlq": 356.5
       },
       "notified": {
-        "compliance-loop-dev-exception-sync-failures": [
-          "02:29:18Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
-          "02:32:18Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
-        ],
-        "compliance-loop-dev-stream-dlq": [
-          "02:31:10Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
-          "02:37:10Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
-        ]
+        "compliance-loop-dev-exception-sync-failures": {
+          "actions": [
+            "03:45:18Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
+            "03:48:18Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
+          ],
+          "issue": 358,
+          "seconds_from_alarm_to_issue": -0.3,
+          "ok_commented": true
+        },
+        "compliance-loop-dev-stream-dlq": {
+          "actions": [
+            "03:47:10Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
+            "03:53:10Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
+          ],
+          "issue": 359,
+          "seconds_from_alarm_to_issue": 0.5,
+          "ok_commented": true
+        }
       },
       "passed": true
     },
     "intake": {
-      "bucket": "compliance-fault-intake-8656fc35",
-      "seconds_to_queue": 23.6,
+      "bucket": "compliance-fault-intake-fa3abea7",
+      "seconds_to_queue": 17.9,
       "executions_before_replay": 0,
       "queued": {
         "body_keys": [
@@ -43,7 +53,7 @@
         "event_name": "CreateBucket",
         "ERROR_CODE": "NO_PERMISSIONS"
       },
-      "seconds_to_alarm": 129.3,
+      "seconds_to_alarm": 176.1,
       "replayed": 1,
       "replay_status": "SUCCEEDED",
       "verification_status": "SUCCEEDED",
@@ -55,15 +65,20 @@
         "ctrl-s3-versioning detection S_violation success",
         "ctrl-s3-versioning verification S_nominal -"
       ],
-      "seconds_to_ok_after_replay": 407.6,
+      "seconds_to_ok_after_replay": 415.6,
       "notified": {
-        "compliance-loop-dev-intake-failed": [
-          "02:19:58Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
-          "02:26:58Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
-        ]
+        "compliance-loop-dev-intake-failed": {
+          "actions": [
+            "03:56:58Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
+            "04:03:58Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
+          ],
+          "issue": 360,
+          "seconds_from_alarm_to_issue": 0.3,
+          "ok_commented": true
+        }
       },
       "passed": true
     }
   },
-  "topic_subscriptions": 0
+  "topic_subscriptions": 1
 }

@@ -141,3 +141,76 @@ def test_an_issue_in_the_trail_skips_both_the_search_and_a_new_issue(handler):
     search.assert_not_called()
     create.assert_not_called()
     link.assert_called_once_with("v-2", 42, "https://github.com/o/r/issues/42")
+
+
+# --- Alarm transitions -------------------------------------------------------
+# The alerts topic delivers CloudWatch alarm transitions to their own queue,
+# which feeds this same function: an alarm reaches a person as an issue, like an
+# escalation does.
+
+ALARM = {
+    "AlarmName": "compliance-loop-dev-intake-failed",
+    "AlarmDescription": "A detection did not start an execution. Runbook: design.md, Operação.",
+    "AWSAccountId": "123456789012",
+    "NewStateValue": "ALARM",
+    "NewStateReason": "Threshold Crossed: 1 datapoint [1.0] was greater than the threshold (0.0).",
+    "StateChangeTime": "2026-09-25T02:19:58.000+0000",
+    "Region": "US East (N. Virginia)",
+    "AlarmArn": "arn:aws:cloudwatch:us-east-1:123456789012:alarm:compliance-loop-dev-intake-failed",
+    "OldStateValue": "OK",
+}
+
+
+def transition(state):
+    return {"messageId": "a1", "body": json.dumps({**ALARM, "NewStateValue": state})}
+
+
+def run_alarm(handler, record, open_issue):
+    with patch.object(handler, "get_github_params", return_value=PARAMS), \
+         patch.object(handler, "open_alarm_issue", return_value=open_issue) as lookup, \
+         patch.object(handler, "create_github_issue",
+                      return_value={"number": 77, "html_url": "u"}) as create, \
+         patch.object(handler, "comment_on_issue") as comment, \
+         patch.object(handler, "open_issue_from_log") as violation_dedup:
+        out = handler.lambda_handler({"Records": [record]}, None)
+    violation_dedup.assert_not_called()
+    return out, lookup, create, comment
+
+
+def test_an_alarm_opens_an_issue_under_its_own_label(handler):
+    out, lookup, create, comment = run_alarm(handler, transition("ALARM"), open_issue=None)
+    assert out == {"batchItemFailures": []}
+    lookup.assert_called_once_with("t", "o", "r", "[ALARM] compliance-loop-dev-intake-failed")
+    title, body = create.call_args.args[3], create.call_args.args[4]
+    assert title == "[ALARM] compliance-loop-dev-intake-failed"
+    assert create.call_args.kwargs["labels"] == ["operations-alarm", "auto-escalation"]
+    # The region code comes from the ARN, so the console link works.
+    assert "region=us-east-1#alarmsV2:alarm/compliance-loop-dev-intake-failed" in body
+    comment.assert_not_called()
+
+
+def test_a_refire_comments_on_the_open_issue_instead_of_opening_another(handler):
+    _, _, create, comment = run_alarm(handler, transition("ALARM"), open_issue=12)
+    create.assert_not_called()
+    assert comment.call_args.args[3] == 12
+    assert "Disparou de novo" in comment.call_args.args[4]
+
+
+def test_back_to_ok_comments_and_leaves_the_issue_open(handler):
+    """OK means the metric recovered, not that someone handled the cause."""
+    _, _, create, comment = run_alarm(handler, transition("OK"), open_issue=12)
+    create.assert_not_called()
+    assert "Voltou a OK" in comment.call_args.args[4]
+
+
+def test_ok_with_no_open_issue_changes_nothing(handler):
+    _, _, create, comment = run_alarm(handler, transition("OK"), open_issue=None)
+    create.assert_not_called()
+    comment.assert_not_called()
+
+
+def test_a_failed_github_call_keeps_the_notification_queued(handler):
+    with patch.object(handler, "get_github_params", return_value=PARAMS), \
+         patch.object(handler, "open_alarm_issue", side_effect=OSError("github down")):
+        out = handler.lambda_handler({"Records": [transition("ALARM")]}, None)
+    assert out == {"batchItemFailures": [{"itemIdentifier": "a1"}]}

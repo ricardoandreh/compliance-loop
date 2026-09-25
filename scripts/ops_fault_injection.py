@@ -4,8 +4,11 @@ Inject faults and prove the operations layer reports them.
 
 An alarm that has never fired is an assumption. Each scenario injects, on the
 real account, one failure the loop cannot report as an escalation, and measures
-how long each layer takes to report it — and that the alarm published to the
-alerts topic, not only changed state.
+how long each layer takes to report it — that the alarm published to the
+alerts topic, not only changed state, and that the publication reached a
+person: the GitHub issue the escalation Lambda opens for it, and the comment
+its return to OK adds. Those issues are this run's, so they are closed at the
+end; a run refuses to start while an operator's alarm issue is open.
 
 sync — an exception change the sync Lambda cannot turn into a schedule (the
     failure C3 exposed): a row with no control_id and a valid_until already
@@ -39,10 +42,19 @@ import sys
 import time
 import uuid
 
-import boto3
-from boto3.dynamodb.conditions import Key
+# A run waits on the account for up to half an hour; a DNS blip in that window
+# must not throw the measurement away (it did once). Standard retry mode
+# retries connection errors, with backoff, which the legacy default gives up on
+# after a few seconds.
+os.environ.setdefault("AWS_RETRY_MODE", "standard")
+os.environ.setdefault("AWS_MAX_ATTEMPTS", "10")
+
+import boto3  # noqa: E402
+from boto3.dynamodb.conditions import Key  # noqa: E402
+from botocore.exceptions import ConnectionError as AWSConnectionError  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(__file__))
+import close_test_issues as gh  # noqa: E402
 import replay_intake  # noqa: E402
 
 REGION = "us-east-1"
@@ -72,7 +84,14 @@ def wait_for(cw, alarms, target, timeout, since):
     reached = {}
     deadline = time.time() + timeout
     while time.time() < deadline and len(reached) < len(alarms):
-        for name, state in states(cw, alarms).items():
+        try:
+            current = states(cw, alarms)
+        except AWSConnectionError as e:
+            # Longer than the retries cover: keep waiting, the alarm will not.
+            print(f"  network error while polling, still waiting: {e}")
+            time.sleep(10)
+            continue
+        for name, state in current.items():
             if state == target and name not in reached:
                 reached[name] = round(time.time() - since, 1)
                 print(f"  {name}: {target} after {reached[name]} s")
@@ -80,16 +99,68 @@ def wait_for(cw, alarms, target, timeout, since):
     return {a: reached.get(a) for a in alarms}
 
 
+def github(p, path, attempts=4):
+    """GET from the GitHub API, riding out a transient network error."""
+    for attempt in range(attempts):
+        try:
+            return gh.api(p, path)
+        except OSError as e:
+            if attempt == attempts - 1:
+                raise
+            print(f"  GitHub unreachable ({e}); retrying")
+            time.sleep(5 * (attempt + 1))
+
+
+def open_alarm_issue(p, alarm):
+    base = f"/repos/{p['owner']}/{p['repo']}"
+    return next((i for i in github(p, f"{base}/issues?state=open&labels=operations-alarm&per_page=100")
+                 if i["title"] == f"[ALARM] {alarm}"), None)
+
+
+def no_alarm_issue_open(alarms):
+    p = gh.github_params(REGION)
+    taken = [a for a in alarms if open_alarm_issue(p, a)]
+    assert not taken, f"an operator's issue is open for {taken}; this run would comment on it and close it"
+
+
 def notified(cw, alarms, since):
-    """The actions each alarm executed since `since`: proof it published, not
-    only changed state."""
+    """What each alarm did since `since`, beyond changing state.
+
+    - actions: the executed actions from the alarm history — it published.
+    - issue: the GitHub issue it opened (topic -> queue -> escalation Lambda),
+      how long after the first action it existed, and whether the return to
+      OK was commented on. Closed afterwards: it belongs to this run.
+    """
+    p = gh.github_params(REGION)
+    base = f"/repos/{p['owner']}/{p['repo']}"
     start = datetime.datetime.fromtimestamp(since, datetime.timezone.utc)
     out = {}
     for a in alarms:
-        items = cw.describe_alarm_history(AlarmName=a, HistoryItemType="Action", StartDate=start)
-        out[a] = [f"{i['Timestamp'].astimezone(datetime.timezone.utc):%H:%M:%S}Z {i['HistorySummary']}"
-                  for i in sorted(items["AlarmHistoryItems"], key=lambda i: i["Timestamp"])]
+        items = sorted(cw.describe_alarm_history(AlarmName=a, HistoryItemType="Action",
+                                                 StartDate=start)["AlarmHistoryItems"],
+                       key=lambda i: i["Timestamp"])
+        entry = {"actions": [f"{i['Timestamp'].astimezone(datetime.timezone.utc):%H:%M:%S}Z "
+                             f"{i['HistorySummary']}" for i in items],
+                 "issue": None, "seconds_from_alarm_to_issue": None, "ok_commented": False}
+        issue = open_alarm_issue(p, a)
+        if issue:
+            deadline = time.time() + 120
+            while time.time() < deadline and not entry["ok_commented"]:
+                comments = github(p, f"{base}/issues/{issue['number']}/comments")
+                entry["ok_commented"] = any("Voltou a OK" in c["body"] for c in comments)
+                if not entry["ok_commented"]:
+                    time.sleep(5)
+            created = datetime.datetime.fromisoformat(issue["created_at"].replace("Z", "+00:00"))
+            entry["issue"] = issue["number"]
+            if items:
+                entry["seconds_from_alarm_to_issue"] = round((created - items[0]["Timestamp"]).total_seconds(), 1)
+            gh.close_issue(p, issue["number"])
+        out[a] = entry
     return out
+
+
+def reached_a_person(result):
+    return all(n["issue"] and n["ok_commented"] for n in result["notified"].values())
 
 
 def depth(sqs, queue):
@@ -105,6 +176,7 @@ def sync(s):
 
     before = states(cw, alarms)
     assert all(v != "ALARM" for v in before.values()), f"an alarm is already firing: {before}"
+    no_alarm_issue_open(alarms)
     # The queue is purged at the end; it must hold nothing but what this run puts there.
     assert depth(sqs, queue) == 0, "the stream DLQ holds real failures; handle them first"
 
@@ -136,15 +208,16 @@ def sync(s):
     t1 = time.time()
     to_ok = wait_for(cw, alarms, "OK", timeout=900, since=t1)
 
-    return {
+    result = {
         "injected": exception_id,
         "seconds_to_alarm": to_alarm,
         "stream_dlq_messages": in_dlq,
         "dlq_record_context": context,
         "seconds_to_ok_after_clearing": to_ok,
         "notified": notified(cw, alarms, t0),
-        "passed": all(to_alarm.values()) and all(to_ok.values()) and in_dlq > 0,
     }
+    result["passed"] = all(to_alarm.values()) and all(to_ok.values()) and in_dlq > 0 and reached_a_person(result)
+    return result
 
 
 def executions_about(sfn, machine, needle, since):
@@ -185,6 +258,7 @@ def intake(s):
         iam.delete_role_policy(RoleName=INTAKE_ROLE, PolicyName=DENY)
         print("removed a Deny left by an earlier run")
     assert states(cw, [alarm])[alarm] != "ALARM", "intake-failed is already firing; clear it first"
+    no_alarm_issue_open([alarm])
     assert depth(sqs, queue) == 0, "the intake queue holds real detections; replay them first"
 
     bucket = f"compliance-fault-intake-{uuid.uuid4().hex[:8]}"
@@ -264,7 +338,7 @@ def intake(s):
     result["passed"] = (result["executions_before_replay"] == 0 and bool(result["seconds_to_alarm"])
                         and result["replay_status"] == "SUCCEEDED"
                         and result["verification_status"] == "SUCCEEDED"
-                        and bool(result["seconds_to_ok_after_replay"]))
+                        and bool(result["seconds_to_ok_after_replay"]) and reached_a_person(result))
     return result
 
 

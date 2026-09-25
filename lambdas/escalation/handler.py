@@ -12,6 +12,12 @@ violations_table = dynamodb.Table(os.environ.get('VIOLATIONS_TABLE', 'violations
 # Each check is a GitHub API call; the rows themselves are read without a limit
 # (see open_issue_from_log).
 MAX_ISSUES_CHECKED = 5
+# Requirement 8.11: what the issue is about, and that no person opened it.
+VIOLATION_LABELS = ['compliance-violation', 'auto-escalation']
+# Alarm issues carry their own label: they are found by listing it (see
+# open_alarm_issue), and never taken for violations by the violation dedup or
+# by scripts/close_test_issues.py, which only looks at compliance-violation.
+ALARM_LABEL = 'operations-alarm'
 
 
 def link_issue(violation_id, issue_number, issue_url):
@@ -133,14 +139,8 @@ def find_open_issue(pat, owner, repo, title):
     return None
 
 
-def create_github_issue(pat, owner, repo, title, body):
-    payload = json.dumps({
-        'title': title,
-        'body': body,
-        # Both labels from Requirement 8.11: what the issue is about, and that
-        # no person opened it.
-        'labels': ['compliance-violation', 'auto-escalation'],
-    }).encode()
+def create_github_issue(pat, owner, repo, title, body, labels=VIOLATION_LABELS):
+    payload = json.dumps({'title': title, 'body': body, 'labels': labels}).encode()
     req = Request(
         f'https://api.github.com/repos/{owner}/{repo}/issues',
         data=payload,
@@ -155,6 +155,122 @@ def create_github_issue(pat, owner, repo, title, body):
         return json.loads(resp.read())
 
 
+def open_alarm_issue(pat, owner, repo, title):
+    """The open issue already tracking this alarm, or None.
+
+    Listed by label from the issues endpoint, which reads the issues
+    themselves, not the Search API with its indexing delay (L5). There is at
+    most one open issue per alarm, since a new transition comments on it.
+    """
+    req = Request(
+        f'https://api.github.com/repos/{owner}/{repo}/issues?state=open&labels={ALARM_LABEL}&per_page=100',
+        headers={'Authorization': f'Bearer {pat}', 'Accept': 'application/vnd.github+json'},
+    )
+    with urlopen(req, timeout=10) as resp:
+        for issue in json.loads(resp.read()):
+            if issue['title'] == title:
+                return issue['number']
+    return None
+
+
+def comment_on_issue(pat, owner, repo, number, text):
+    req = Request(
+        f'https://api.github.com/repos/{owner}/{repo}/issues/{number}/comments',
+        data=json.dumps({'body': text}).encode(),
+        headers={
+            'Authorization': f'Bearer {pat}',
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+        },
+        method='POST',
+    )
+    with urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def handle_alarm(alarm, params):
+    """A CloudWatch alarm transition, as the alerts topic delivers it.
+
+    ALARM opens an issue, or comments on the one already open for the alarm.
+    OK only comments: the metric recovered, which does not mean the cause was
+    handled — exception-sync-failures clears within a minute while the record
+    it failed waits in the stream DLQ. Closing is left to whoever followed the
+    runbook.
+    """
+    pat, owner, repo = params['pat'], params['owner'], params['repo']
+    name = alarm['AlarmName']
+    state = alarm['NewStateValue']
+    when = alarm['StateChangeTime']
+    reason = alarm.get('NewStateReason', '')
+    # The Region field is the long name ("US East (N. Virginia)"); the ARN has the code.
+    region = alarm['AlarmArn'].split(':')[3]
+    title = f"[ALARM] {name}"
+
+    existing = open_alarm_issue(pat, owner, repo, title)
+    if state == 'ALARM' and not existing:
+        body = (
+            f"- **Alarme**: {name}\n"
+            f"- **O que significa**: {alarm.get('AlarmDescription') or '-'}\n"
+            f"- **Motivo**: {reason}\n"
+            f"- **Desde**: {when}\n"
+            f"- **Conta / Região**: {alarm.get('AWSAccountId')} / {region}\n"
+            f"- **Console**: https://{region}.console.aws.amazon.com/cloudwatch/home"
+            f"?region={region}#alarmsV2:alarm/{name}\n"
+            f"- **Runbook**: design.md, *Operação: alarmes e runbook*"
+        )
+        issue = create_github_issue(pat, owner, repo, title, body, labels=[ALARM_LABEL, 'auto-escalation'])
+        print(f"Alarm {name}: opened issue #{issue['number']}")
+    elif existing:
+        if state == 'ALARM':
+            text = f"Disparou de novo em {when}: {reason}"
+        else:
+            text = (f"Voltou a OK em {when}: {reason}\n\n"
+                    "A issue continua aberta: voltar a OK diz que a métrica se recuperou, "
+                    "não que a causa foi tratada. Feche-a depois de seguir o runbook.")
+        comment_on_issue(pat, owner, repo, existing, text)
+        print(f"Alarm {name} -> {state}: commented on #{existing}")
+    else:
+        print(f"Alarm {name} -> {state}: no open issue to update")
+
+
+def handle_escalation(body, params):
+    resource_id = body['resource_arn'].split(':')[-1]
+    title = f"[VIOLATION] {body['control_id']} — {resource_id}"
+
+    # The audit trail is exact and has no indexing delay; the Search API
+    # remains as the fallback for escalations with no log row of their own
+    # (system failures, whose violation_id is synthetic).
+    existing = open_issue_from_log(body['resource_arn'], body['control_id'],
+                                   params['pat'], params['owner'], params['repo'])
+    if not existing:
+        existing = find_open_issue(params['pat'], params['owner'], params['repo'], title)
+    if existing:
+        # Still link this violation to the existing issue — the audit
+        # trail (H2) must show which issue tracks each violation.
+        print(f"Open issue #{existing} already exists for {title}, linking")
+        link_issue(body['violation_id'], existing,
+                   f"https://github.com/{params['owner']}/{params['repo']}/issues/{existing}")
+        return
+
+    issue_body = (
+        f"- **Recurso**: {body['resource_arn']}\n"
+        f"- **Controle**: {body['control_id']}\n"
+        f"- **Violação ID**: {body['violation_id']}\n"
+        f"- **Erro**: {body['error']}\n"
+        f"- **Execução**: {body['step_functions_execution_arn']}\n"
+        f"- **Timestamp**: {body['timestamp']}\n"
+        f"- **Conta / Região**: {body['account_id']} / {body['region']}"
+    )
+
+    issue = create_github_issue(
+        params['pat'], params['owner'], params['repo'],
+        title, issue_body,
+    )
+    print(f"Created issue #{issue['number']}: {issue['html_url']}")
+
+    link_issue(body['violation_id'], issue['number'], issue['html_url'])
+
+
 def lambda_handler(event, context):
     params = get_github_params()
     failures = []
@@ -163,42 +279,15 @@ def lambda_handler(event, context):
         item_id = record['messageId']
         try:
             body = json.loads(record['body'])
-            resource_id = body['resource_arn'].split(':')[-1]
-
-            title = f"[VIOLATION] {body['control_id']} — {resource_id}"
-
-            # The audit trail is exact and has no indexing delay; the Search API
-            # remains as the fallback for escalations with no log row of their
-            # own (system failures, whose violation_id is synthetic).
-            existing = open_issue_from_log(body['resource_arn'], body['control_id'],
-                                           params['pat'], params['owner'], params['repo'])
-            if not existing:
-                existing = find_open_issue(params['pat'], params['owner'], params['repo'], title)
-            if existing:
-                # Still link this violation to the existing issue — the audit
-                # trail (H2) must show which issue tracks each violation.
-                print(f"Open issue #{existing} already exists for {title}, linking")
-                link_issue(body['violation_id'], existing,
-                           f"https://github.com/{params['owner']}/{params['repo']}/issues/{existing}")
-                continue
-
-            issue_body = (
-                f"- **Recurso**: {body['resource_arn']}\n"
-                f"- **Controle**: {body['control_id']}\n"
-                f"- **Violação ID**: {body['violation_id']}\n"
-                f"- **Erro**: {body['error']}\n"
-                f"- **Execução**: {body['step_functions_execution_arn']}\n"
-                f"- **Timestamp**: {body['timestamp']}\n"
-                f"- **Conta / Região**: {body['account_id']} / {body['region']}"
-            )
-
-            issue = create_github_issue(
-                params['pat'], params['owner'], params['repo'],
-                title, issue_body,
-            )
-            print(f"Created issue #{issue['number']}: {issue['html_url']}")
-
-            link_issue(body['violation_id'], issue['number'], issue['html_url'])
+            # Two queues feed this function: the escalation queue (violations
+            # the loop could not fix) and the alarm-notifications queue, where
+            # the alerts topic delivers CloudWatch alarm transitions with raw
+            # delivery, so the body is the alarm itself. One channel for
+            # everything a person has to act on.
+            if 'AlarmName' in body:
+                handle_alarm(body, params)
+            else:
+                handle_escalation(body, params)
         except Exception as e:
             print(f"Failed to process {item_id}: {e}")
             failures.append({'itemIdentifier': item_id})

@@ -237,7 +237,7 @@ artefatos de build ignorados pelo git — precisam existir localmente antes do
 
 | Camada | O que cobre | Onde | Quantidade |
 |---|---|---|---|
-| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, sincronização de exceções, reprocessamento do intake | `tests/unit`, `tests/property` | 131 |
+| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, alarmes que viram issue, sincronização de exceções, reprocessamento do intake | `tests/unit`, `tests/property` | 136 |
 | Contrato | remediação × política (OPA); padrão do EventBridge (identidades e origem forjada) e estado `ResolveResource` avaliados pela própria AWS | `tests/contract` | 23 |
 | Políticas Rego | casos conformes, violados e entradas enganosas, por controle | `controls/*/policy_test.rego` | 44 |
 | Integração | 16 cenários contra a conta real | `scripts/integration_test.py` | 16 |
@@ -404,10 +404,14 @@ O laço tem alarmes para as falhas que **não** viram escalação — o laço pa
 não o laço trabalhando: detecção perdida no EventBridge, expiração de exceção
 não reavaliada, falha por registro na sincronização de exceções, registro de
 stream abandonado, queda de Lambda, timeout e throttling do Step Functions.
-Todos publicam no tópico `compliance-loop-alerts-dev` (e-mail opcional pela
-variável `alert_email`) e aparecem no painel `compliance-loop-dev-loop`. O
-runbook, com o que cada alarme significa e a primeira ação, está no
-`design.md` (*Operação: alarmes e runbook*).
+Cada disparo vira uma **issue no GitHub** (rótulo `operations-alarm`), aberta
+pela mesma Lambda das escalações: um canal só para tudo o que exige uma pessoa.
+A volta a OK comenta na issue, e quem a fecha é quem seguiu o runbook. O
+caminho passa por uma fila, então uma queda do GitHub atrasa a notificação em
+vez de perdê-la. Os alarmes aparecem também no painel `compliance-loop-dev-loop`,
+e um e-mail no tópico (`alert_email`) fica como segunda via — é o que avisa se
+o próprio canal do GitHub cair. O runbook, com o que cada alarme significa e a
+primeira ação, está no `design.md` (*Operação: alarmes e runbook*).
 
 Nada que o laço deixa de processar some. Os consumidores dos streams do
 DynamoDB têm tentativas limitadas e uma fila de falhas. Uma detecção que o
@@ -424,11 +428,19 @@ As duas falhas silenciosas mais graves foram provocadas na conta real
 (`scripts/ops_fault_injection.py`, resultado em
 `results/ops_fault_injection.json`): uma exceção que a sincronização não
 consegue agendar e uma detecção recusada por falta de permissão. Nos dois casos
-o alarme disparou e publicou no tópico — o primeiro em ~1,5 min, o da fila em
-~2–3 min, tempos ditados pelo período das métricas — e a detecção recusada
-ficou na fila até ser reprocessada, avaliando o bucket como a original teria
-avaliado. O tópico não tem assinante nesta conta: sem `alert_email`, o alarme
-publica e ninguém recebe.
+o alarme disparou — o primeiro em ~1 min, o da fila em ~3 min, tempos ditados
+pelo período das métricas — e abriu a sua issue no GitHub no mesmo segundo; a
+volta a OK virou comentário nela. A detecção recusada ficou na fila até ser
+reprocessada, avaliando o bucket como a original teria avaliado.
+
+**Reconciliação periódica (opcional).** O laço é orientado a eventos: o que o
+CloudTrail não entrega não é avaliado. Uma varredura periódica é configuração,
+não mudança de modelo: um agendamento no EventBridge Scheduler que inicia a
+máquina de estados para cada recurso com a entrada de um `CreateBucket` (ou
+`CreateVolume`), que já avalia todos os controles daquele recurso — ou, para
+controles de conta, com o `control_id`, como a expiração de uma exceção já faz.
+Não está ativada; desenho e custo (~US$ 0,0005 por recurso por varredura) no
+`design.md`, L15.
 
 ## Custo
 

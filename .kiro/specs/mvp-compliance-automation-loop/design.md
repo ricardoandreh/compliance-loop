@@ -2645,7 +2645,9 @@ A hipótese de que o log `ALL` do Step Functions dominaria o custo não se confi
 
 ## Operação: alarmes e runbook
 
-Um laço de conformidade que falha em silêncio é pior que nenhum: dá a impressão de cobertura. Os alarmes abaixo (módulo `infra/modules/operations`) cobrem exatamente as falhas que **não** aparecem como escalação — o laço parado, e não o laço trabalhando. Todos publicam no tópico `compliance-loop-alerts-dev` (assinatura por e-mail opcional, variável `alert_email`) e aparecem no painel `compliance-loop-dev-loop` do CloudWatch.
+Um laço de conformidade que falha em silêncio é pior que nenhum: dá a impressão de cobertura. Os alarmes abaixo (módulo `infra/modules/operations`) cobrem exatamente as falhas que **não** aparecem como escalação — o laço parado, e não o laço trabalhando. Todos publicam no tópico `compliance-loop-alerts-dev`, e cada disparo vira uma **issue no GitHub** (rótulo `operations-alarm`), aberta pela mesma Lambda que abre as escalações: um canal só para tudo o que exige uma pessoa. Um novo disparo comenta na issue aberta; a volta a OK também comenta, mas não fecha — a métrica se recuperou, o que não quer dizer que a causa foi tratada (o `exception-sync-failures` volta em um minuto com o registro ainda na fila). Quem fecha é quem seguiu o runbook. Os alarmes aparecem também no painel `compliance-loop-dev-loop` do CloudWatch.
+
+**O caminho até a issue** é tópico → fila `alarm-notifications` → Lambda de escalação → GitHub. A fila no meio faz uma queda do GitHub atrasar as notificações em vez de perdê-las: a transição que a Lambda não consegue entregar volta à fila e é tentada de novo a cada 3 minutos, por até 14 dias. A deduplicação lista as issues abertas pelo rótulo, sem a Search API e o seu atraso de índice (L5). **O canal não avisa a própria falha**: se o token do GitHub expirar, escalações e alarmes param juntos, e um alarme sobre a fila parada viajaria pelo mesmo canal parado. Por isso a fila não tem alarme — aparece no painel —, e a assinatura por e-mail do tópico (`alert_email`) fica como segunda via opcional.
 
 Escalações não são alarmadas: uma execução `FAILED` com issue no GitHub é o laço funcionando como projetado (C4, C8, C9, CTRL-06).
 
@@ -2672,19 +2674,20 @@ Escalações não são alarmadas: uma execução `FAILED` com issue no GitHub é
 
 ### Falhas injetadas
 
-Um alarme que nunca disparou é uma suposição. `scripts/ops_fault_injection.py` provoca na conta real as duas falhas silenciosas que motivaram esta camada e mede quanto cada uma leva para ser acusada — e se o alarme **executou a ação** de publicar no tópico, não apenas mudou de estado (histórico de ações do CloudWatch). Resultado em `results/ops_fault_injection.json`.
+Um alarme que nunca disparou é uma suposição. `scripts/ops_fault_injection.py` provoca na conta real as duas falhas silenciosas que motivaram esta camada e mede quanto cada uma leva para ser acusada — se o alarme **executou a ação** de publicar no tópico, não apenas mudou de estado (histórico de ações do CloudWatch), e se a publicação chegou até a issue no GitHub. Resultado em `results/ops_fault_injection.json`.
 
 | | `sync` | `intake` |
 |---|---|---|
-| Falha injetada | exceção sem `control_id` e com validade vencida: a sincronização não consegue agendá-la (o modo de falha do C3) | `Deny` explícito em `states:StartExecution` na role da regra, por 54 s, e um `CreateBucket` nesse intervalo |
-| Primeira evidência | `exception-sync-failures` em ALARM após **84,2 s** | a detecção na fila `intake-failures` após **23,6 s**, com `ERROR_CODE = NO_PERMISSIONS`, sem retentativa e sem nenhuma execução iniciada |
-| Contenção | o registro na fila `stream-failures` após 4 invocações (`RetryAttemptsExhausted`); `stream-dlq` em ALARM após **188,7 s** | `intake-failed` em ALARM após **129,3 s** |
-| Recuperação | apagar a linha e esvaziar a fila: OK após **64,3 s** e **357,6 s** | `replay_intake.py`: a execução reprocessada avaliou os 4 controles do `CreateBucket`, remediou 2, e a verificação confirmou os 2; OK **407,6 s** depois |
+| Falha injetada | exceção sem `control_id` e com validade vencida: a sincronização não consegue agendá-la (o modo de falha do C3) | `Deny` explícito em `states:StartExecution` na role da regra, por 48 s, e um `CreateBucket` nesse intervalo |
+| Primeira evidência | `exception-sync-failures` em ALARM após **52,9 s** | a detecção na fila `intake-failures` após **17,9 s**, com `ERROR_CODE = NO_PERMISSIONS`, sem retentativa e sem nenhuma execução iniciada |
+| Contenção | o registro na fila `stream-failures` após 4 invocações (`RetryAttemptsExhausted`); `stream-dlq` em ALARM após **157,5 s** | `intake-failed` em ALARM após **176,1 s** |
+| Recuperação | apagar a linha e esvaziar a fila: OK após **63,8 s** e **356,5 s** | `replay_intake.py`: a execução reprocessada avaliou os 4 controles do `CreateBucket`, remediou 2, e a verificação confirmou os 2; OK **415,6 s** depois |
 | Ações publicadas no tópico | 4 de 4 transições | 2 de 2 |
+| Issue no GitHub | uma por alarme, com a volta a OK comentada nas duas | uma, com a volta a OK comentada |
 
-**Os tempos são do período das métricas, não da falha.** A detecção recusada chegou à fila em 23,6 s, mas o alarme lê a profundidade da fila em janelas de 5 minutos; o filtro de log, em janelas de 1 minuto. Nas três execuções do cenário `sync`, o primeiro alarme veio entre 43 e 84 s e o da fila entre 189 e 221 s, conforme a falha caiu na janela. Encurtar isso é trocar para alarmes de alta resolução, mais caros.
+**Os tempos são do período das métricas, não da falha.** A detecção recusada chegou à fila em 17,9 s (18 a 24 s nas três injeções), mas o alarme lê a profundidade da fila em janelas de 5 minutos — e disparou entre 124 e 176 s; o filtro de log, em janelas de 1 minuto. Nas quatro execuções completas do cenário `sync`, o primeiro alarme veio entre 43 e 84 s e o da fila entre 158 e 221 s, conforme a falha caiu na janela. Encurtar isso é trocar para alarmes de alta resolução, mais caros.
 
-**O que a injeção não prova: entrega a uma pessoa.** O tópico não tem assinante nesta conta (`topic_subscriptions = 0`): o alarme publica e ninguém recebe. Assinar é a variável `alert_email` mais uma confirmação por e-mail, deixada de fora de propósito para que o repositório não mande e-mail a quem não pediu.
+**Até uma pessoa.** Cada alarme abriu a sua issue no mesmo segundo em que a publicação foi registrada — a diferença medida, de −0,3 a +0,5 s, fica abaixo da resolução de 1 s do `created_at` do GitHub —, e a volta a OK virou comentário na mesma issue. O script fecha as issues que provocou. Numa das execuções, uma queda de DNS da máquina derrubou o script depois dos disparos: as issues já estavam abertas e receberam o comentário de OK quando a falha foi limpa à mão — o canal não depende de quem provocou a falha. O que ainda depende de alguém é ler o GitHub; e, se o próprio canal cair, só o painel e o e-mail opcional do tópico (`alert_email`, sem assinante nesta conta) avisam.
 
 **O que a injeção encontrou** — três premissas erradas, todas corrigidas:
 
@@ -2701,7 +2704,7 @@ Material de indústria descreve a governança programática de nuvem como camada
 | Política como código no deploy | Políticas em Rego versionadas e portáveis; o teste de contrato (`tests/contract/test_remediation_contract.py`) já é um portão pré-deploy: deriva o estado que cada `remediation.tf` produz e o avalia com a mesma versão do OPA, recusando controle novo sem contrato | Não há avaliação do IaC de terceiros antes do `apply`, nem *admission control*. O artefato de política é o mesmo; falta o ponto de uso |
 | RBAC/ABAC | ABAC nas leituras cujas APIs aceitam condição de tag, IAM estático onde a API não aceita, e **autoridade por incidente** via session policy — escopo derivado da avaliação, expirando com a sessão (NIST SP 800-207; SALTZER; SCHROEDER, 1975) | Sem *permissions boundary* (L17); sem operação multi-conta (L6) |
 | Controles nativos do provedor | O laço **opera** controles desse tipo: `EbsEncryptionByDefault` é uma configuração nativa gerida pelo loop, com verificação e auditoria | Não gere SCP, Organizations nem Control Tower — numa conta única essa camada é fraca por construção (L6) |
-| Remediação automática retrospectiva | É o núcleo: detecção por evento, classificação em três estados, remediação declarativa, **rodada de verificação**, exceções com reavaliação temporal, escalação rastreável, disjuntor de reincidência e controles detectivos | Sem reconciliação periódica: o laço só fecha para o que o CloudTrail entrega (L15) |
+| Remediação automática retrospectiva | É o núcleo: detecção por evento, classificação em três estados, remediação declarativa, **rodada de verificação**, exceções com reavaliação temporal, escalação rastreável, disjuntor de reincidência e controles detectivos | Reconciliação periódica não ativada: o laço só fecha para o que o CloudTrail entrega. Ativá-la é configuração de um agendamento, não mudança de modelo (L15) |
 
 Duas observações que o modelo em camadas não captura e que este trabalho evidencia:
 
@@ -2830,19 +2833,22 @@ Hoje a premissa vale por inspeção: o `remediation.tf` do ssl-only gera exatame
 
 **Como o CTRL-06 é exercitado**: criar um volume sem criptografia exige a criptografia padrão desligada, e o CTRL-05 a religa em segundos. O cenário registra uma **exceção aprovada** para o `ctrl-ebs-encryption-default` sobre o pseudo-ARN da conta enquanto dura o teste — o loop classifica `S_exception` e não remedeia —, cria o volume de 1 GiB, confirma a escalação sem remediação e desfaz tudo. De brinde, é o único ponto da suíte que exercita o mecanismo de exceção sobre um recurso de conta (L3).
 
-### L15. Sem reconciliação periódica: o laço só fecha para o que o CloudTrail entrega *(trabalho futuro)*
+### L15. Sem reconciliação periódica: o laço só fecha para o que o CloudTrail entrega *(configurável, não ativada)*
 
-**O que**: o Monitor é puramente orientado a eventos. Se um evento do CloudTrail não chegar ao EventBridge, ou se uma mudança de configuração não gerar evento, o desvio não é detectado, e para aquele recurso o laço fica aberto até a próxima mudança que gere evento. Não há varredura periódica.
+**O que**: o Monitor é puramente orientado a eventos. Se um evento do CloudTrail não chegar ao EventBridge, ou se uma mudança de configuração não gerar evento, o desvio não é detectado, e para aquele recurso o laço fica aberto até a próxima mudança que gere evento. Não há varredura periódica. (Um evento que chega e não é entregue à máquina de estados já não se perde: vai para a fila `intake-failures` — ver *Operação*.)
 
 **Consequência**: a afirmação de laço fechado vale para as mudanças observadas. Um recurso criado antes do sistema, ou alterado num intervalo em que a entrega de eventos falhou, pode permanecer não conforme indefinidamente sem que nenhuma execução o avalie.
 
-**Abordagem proposta (híbrida, não implementada)**: manter o caminho por eventos como principal — é ele que dá a exposição de segundos — e acrescentar uma reconciliação periódica como rede de segurança:
+**Como ativar — só configuração, nenhuma mudança no modelo nem na máquina de estados.** A reconciliação é só outra origem de entrada, como já é o Scheduler das exceções, e as duas entradas de que ela precisa a máquina já aceita:
 
-1. Um EventBridge Scheduler com expressão `rate(...)` (por exemplo, a cada hora ou dia) inicia a mesma máquina de estados com `trigger = reconciliation`.
-2. O `RouteControlLookup` ganha uma rota para esse gatilho: lista os recursos de cada tipo coberto (ex.: `ListBuckets`; para controles de conta, um único recurso) e percorre-os num Map — com `MaxConcurrency` limitado, ou num Distributed Map se a quantidade crescer.
-3. Cada recurso segue o caminho existente: Analyze → classificação → `PlanAction`. Uma violação encontrada pela varredura é tratada como qualquer outra, com rodada de verificação e escalação.
+1. **Controles de conta** (`ctrl-ebs-encryption-default`): um agendamento no EventBridge Scheduler, com `rate(1 day)` por exemplo, que inicia a máquina com o `control_id` e o identificador da conta (L3). É a mesma entrada que a expiração de uma exceção usa, e a rota `GetControlById` já a atende.
+2. **Controles por recurso** (buckets, volumes): o Scheduler não lista recursos, então o agendamento inicia uma listagem — uma Lambda de poucas linhas, ou uma máquina com `ListBuckets`/`DescribeVolumes` e um Map — que, para cada recurso, inicia a máquina principal com a entrada que um `CreateBucket` ou um `CreateVolume` produziria (`event_name`, `request_parameters`, `response_elements`). O fan-out por evento avalia então **todos os controles** daquele recurso, com remediação, verificação e escalação como em qualquer detecção. É o que `scripts/replay_intake.py` já faz com as entradas da fila de intake.
 
-Nada do modelo muda: a reconciliação é só outra origem de evento, como já é o Scheduler das exceções. O que muda é custo e ruído — cada varredura avalia todos os recursos, então a frequência é a troca entre janela máxima de exposição para desvios não observados e número de execuções. Também fica a decidir se violações achadas pela varredura remedeiam automaticamente ou só escalam, já que o evento original, e portanto o autor da mudança, é desconhecido.
+O caminho por eventos continua o principal — é ele que dá a exposição de segundos —, e a reconciliação vira a rede de segurança: híbrida.
+
+**Custo estimado**: cada recurso avaliado custa uma rodada de detecção, no máximo ~20 transições (média de 20,5 na série final, incluindo as rodadas que remediam), cerca de US$ 0,0005 no Step Functions. Cem buckets de hora em hora dariam ~US$ 36 por mês; uma vez por dia, ~US$ 1,50. A frequência troca a janela máxima de exposição de um desvio não observado por execuções.
+
+**Decisões em aberto**: se violações achadas pela varredura remedeiam automaticamente ou só escalam, já que o evento original, e portanto o autor da mudança, é desconhecido; e como marcar a origem na trilha de auditoria — hoje só o nome da execução a revelaria.
 
 ### L16. Limiar do disjuntor de reincidência não é calibrado
 

@@ -15,6 +15,7 @@ variable "state_machine_arn" { type = string }
 variable "schedule_group" { type = string }
 variable "stream_dlq_name" { type = string }
 variable "intake_dlq_name" { type = string }
+variable "alarm_queue_name" { type = string }
 variable "escalation_dlq_name" { type = string }
 variable "exception_sync_log_group" { type = string }
 variable "function_names" {
@@ -266,6 +267,8 @@ resource "aws_cloudwatch_dashboard" "loop" {
             ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", var.intake_dlq_name, { stat = "Maximum", label = "detecções na fila de intake" }],
             ["...", var.stream_dlq_name, { stat = "Maximum", label = "DLQ dos streams" }],
             ["...", var.escalation_dlq_name, { stat = "Maximum", label = "DLQ das escalações" }],
+            # Not alarmed: the alarm would travel through the channel that is stuck.
+            ["...", var.alarm_queue_name, { stat = "Maximum", label = "alarmes ainda sem issue" }],
           ]
         }
       },
