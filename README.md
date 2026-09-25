@@ -41,8 +41,13 @@ EventBridge detecta e dispara o loop de compliance
 
 O laço se fecha em **no máximo duas execuções** por incidente. As escritas da
 própria remediação não disparam o sistema de novo — a regra do EventBridge
-ignora a identidade da Lambda Execute —, e a rodada de verificação nunca
+ignora a role de remediação —, e a rodada de verificação nunca
 remedeia, então o loop não tem como oscilar.
+
+Só eventos emitidos pela própria AWS iniciam o laço: a regra exige `source`
+com prefixo `aws.`, que o `PutEvents` recusa a qualquer outro emissor. Sem
+isso, quem tivesse `events:PutEvents` na conta podia forjar um "AWS API Call
+via CloudTrail" e disparar avaliações — medido na regra ativa.
 
 ## Estados de classificação
 
@@ -232,8 +237,8 @@ artefatos de build ignorados pelo git — precisam existir localmente antes do
 
 | Camada | O que cobre | Onde | Quantidade |
 |---|---|---|---|
-| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, sincronização de exceções | `tests/unit`, `tests/property` | 126 |
-| Contrato | remediação × política (OPA); padrão do EventBridge e estado `ResolveResource` avaliados pela própria AWS | `tests/contract` | 22 |
+| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, sincronização de exceções, reprocessamento do intake | `tests/unit`, `tests/property` | 131 |
+| Contrato | remediação × política (OPA); padrão do EventBridge (identidades e origem forjada) e estado `ResolveResource` avaliados pela própria AWS | `tests/contract` | 23 |
 | Políticas Rego | casos conformes, violados e entradas enganosas, por controle | `controls/*/policy_test.rego` | 44 |
 | Integração | 16 cenários contra a conta real | `scripts/integration_test.py` | 16 |
 
@@ -404,11 +409,25 @@ variável `alert_email`) e aparecem no painel `compliance-loop-dev-loop`. O
 runbook, com o que cada alarme significa e a primeira ação, está no
 `design.md` (*Operação: alarmes e runbook*).
 
-Os consumidores dos streams do DynamoDB têm tentativas limitadas e uma fila de
-falhas; os logs das Lambdas têm retenção de 30 dias; o `violations_log` e a
-tabela de exceções têm recuperação pontual; e a trilha do CloudTrail tem
-validação de integridade, para que a evidência independente usada na H2 seja à
-prova de adulteração.
+Nada que o laço deixa de processar some. Os consumidores dos streams do
+DynamoDB têm tentativas limitadas e uma fila de falhas. Uma detecção que o
+EventBridge não consegue entregar à máquina de estados (por exemplo, a role
+perdeu a permissão) vai para a fila `intake-failures`, e
+`scripts/replay_intake.py` inicia depois a execução que ela deveria ter
+iniciado — no máximo uma por evento. Os logs das Lambdas têm retenção de 30
+dias; o `violations_log` e a tabela de exceções têm recuperação pontual; e a
+trilha do CloudTrail tem validação de integridade, para que a evidência
+independente usada na H2 seja à prova de adulteração.
+
+As duas falhas silenciosas mais graves foram provocadas na conta real
+(`scripts/ops_fault_injection.py`, resultado em
+`results/ops_fault_injection.json`): uma exceção que a sincronização não
+consegue agendar e uma detecção recusada por falta de permissão. Nos dois casos
+o alarme disparou e publicou no tópico — o primeiro em ~1,5 min, o da fila em
+~2–3 min, tempos ditados pelo período das métricas — e a detecção recusada
+ficou na fila até ser reprocessada, avaliando o bucket como a original teria
+avaliado. O tópico não tem assinante nesta conta: sem `alert_email`, o alarme
+publica e ninguém recebe.
 
 ## Custo
 

@@ -115,6 +115,8 @@ module "orchestration" {
   remediation_role_arn      = module.execute.remediation_role_arn
   region                    = var.region
   account_id                = data.aws_caller_identity.current.account_id
+  intake_dlq_arn            = module.alerting.intake_dlq_arn
+  intake_dlq_url            = module.alerting.intake_dlq_url
 }
 
 module "exception_scheduler" {
@@ -153,6 +155,7 @@ module "operations" {
   state_machine_arn        = module.orchestration.state_machine_arn
   schedule_group           = module.exception_scheduler.schedule_group_name
   stream_dlq_name          = module.alerting.stream_dlq_name
+  intake_dlq_name          = module.alerting.intake_dlq_name
   escalation_dlq_name      = module.escalation_queue.dlq_name
   exception_sync_log_group = module.exception_scheduler.log_group_name
   function_names = {

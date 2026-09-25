@@ -11,6 +11,8 @@ variable "controls_table_arn" { type = string }
 variable "remediation_role_arn" { type = string }
 variable "region" { type = string }
 variable "account_id" { type = string }
+variable "intake_dlq_arn" { type = string }
+variable "intake_dlq_url" { type = string }
 
 variable "recurrence_window_minutes" {
   description = "Window the circuit breaker looks back over, counting successful remediations of the same (resource, control)."
@@ -33,9 +35,11 @@ resource "aws_cloudwatch_event_rule" "s3_public_access_block" {
 
   # Only the initial pattern: controls-sync owns this rule afterwards (hence
   # ignore_changes) and regenerates it from the controls table with the same
-  # identity filter — see lambdas/controls_sync/handler.py for why the $or with
-  # exists:false is required rather than a bare anything-but.
+  # source and identity filters — see lambdas/controls_sync/handler.py for why
+  # the source prefix pins the origin and why the $or with exists:false is
+  # required rather than a bare anything-but.
   event_pattern = jsonencode({
+    source      = [{ prefix = "aws." }]
     detail-type = ["AWS API Call via CloudTrail"]
     detail = {
       eventName = ["PutBucketPublicAccessBlock", "DeleteBucketPublicAccessBlock", "CreateBucket", "PutBucketPolicy", "DeleteBucketPolicy"]
@@ -48,7 +52,10 @@ resource "aws_cloudwatch_event_rule" "s3_public_access_block" {
 
   tags = { Name = "${var.project_name}-s3-public-access-block", Environment = var.environment }
 
-  lifecycle { ignore_changes = [event_pattern] }
+  # description too: put_rule rewrites every attribute it is not given, so the
+  # first sync clears it, and each apply would put it back — a plan that is
+  # never clean.
+  lifecycle { ignore_changes = [event_pattern, description] }
 }
 
 resource "aws_cloudwatch_event_target" "step_functions" {
@@ -56,6 +63,19 @@ resource "aws_cloudwatch_event_target" "step_functions" {
   target_id = "ComplianceLoopStateMachine"
   arn       = aws_sfn_state_machine.compliance_loop.arn
   role_arn  = aws_iam_role.eventbridge_sfn.arn
+
+  # Retries stop after an hour — the same bound as the stream consumers — and
+  # the event goes to the intake queue instead of being dropped. The default
+  # keeps retrying for 24 h and then drops it; a permission error is never
+  # retried at all.
+  retry_policy {
+    maximum_event_age_in_seconds = 3600
+    maximum_retry_attempts       = 185
+  }
+
+  dead_letter_config {
+    arn = var.intake_dlq_arn
+  }
 
   input_transformer {
     input_paths = {
@@ -80,6 +100,21 @@ resource "aws_cloudwatch_event_target" "step_functions" {
     }
     EOT
   }
+}
+
+# Only this rule may put events in the intake queue.
+resource "aws_sqs_queue_policy" "intake_failures" {
+  queue_url = var.intake_dlq_url
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = "sqs:SendMessage"
+      Resource  = var.intake_dlq_arn
+      Condition = { ArnEquals = { "aws:SourceArn" = aws_cloudwatch_event_rule.s3_public_access_block.arn } }
+    }]
+  })
 }
 
 resource "aws_iam_role" "eventbridge_sfn" {

@@ -172,6 +172,7 @@ sequenceDiagram
 **Event Pattern** (gerenciado dinamicamente):
 ```json
 {
+  "source": [{"prefix": "aws."}],
   "detail-type": ["AWS API Call via CloudTrail"],
   "detail": {
     "eventName": ["CreateBucket", "PutBucketPublicAccessBlock", "PutBucketVersioning", "DisableEbsEncryptionByDefault", "..."]
@@ -179,9 +180,11 @@ sequenceDiagram
 }
 ```
 
-Nota: o filtro `source` foi removido para suportar eventos de múltiplos serviços (S3, EC2, etc.) em uma única rule. O `eventName` é suficientemente específico para evitar falsos positivos.
+**Proveniência do evento.** Uma versão anterior removeu o filtro `source` para aceitar vários serviços (S3, EC2) na mesma regra, com o argumento de que o `eventName` é específico o bastante para evitar falsos positivos. Especificidade, porém, não é proveniência. O `detail-type` é texto livre: quem tiver `events:PutEvents` no barramento padrão da conta pode publicar um "AWS API Call via CloudTrail" com qualquer `eventName` e quaisquer parâmetros, e a regra casava — medido com `aws events test-event-pattern` sobre a regra ativa, com um evento de `source` `fault.injection`: **True**. Um evento forjado não altera a classificação, porque o Analyze lê o estado real do recurso, mas inicia avaliações e remediações a pedido de quem não mudou nada, e grava na trilha de auditoria um gatilho que nunca aconteceu.
 
-O padrão gerado pelo `controls-sync` inclui ainda uma cláusula de identidade: eventos cuja sessão foi emitida pelo role da Lambda Execute são descartados, para que as escritas da própria remediação não reiniciem o loop. A cláusula usa `$or` com `exists: false`, porque identidades sem emissor de sessão (usuários IAM, root) não casariam com um `anything-but` simples — ver *Fechamento do laço em duas rodadas*.
+O prefixo `aws.` fecha a brecha sem perder o multi-serviço. O `PutEvents` recusa toda origem que começa com `aws.` (`NotAuthorizedForSourceException`, medido na conta), então só o que a própria AWS emite — as entregas do CloudTrail — casa com a regra. Depois da mudança, o mesmo evento forjado dá **False** na regra ativa, e `tests/contract/test_event_pattern.py` mantém os dois casos.
+
+O padrão gerado pelo `controls-sync` inclui ainda uma cláusula de identidade: eventos cuja sessão foi emitida pela role de remediação — a que o Execute assume para cada violação — são descartados, para que as escritas da própria remediação não reiniciem o loop. A cláusula usa `$or` com `exists: false`, porque identidades sem emissor de sessão (usuários IAM, root) não casariam com um `anything-but` simples — ver *Fechamento do laço em duas rodadas*.
 
 **Output Schema**:
 ```json
@@ -305,7 +308,7 @@ Até esta versão, o laço se fechava por **eco**: cada escrita do Execute (`Put
 
 O laço agora é explícito:
 
-1. **O eco é filtrado na origem.** A regra do EventBridge descarta eventos cuja identidade é o role da Lambda Execute. Toda escrita de remediação chega ao CloudTrail como `AssumedRole` desse role — verificado no CloudTrail da conta — enquanto mudanças humanas chegam como `IAMUser`, **sem** `sessionContext.sessionIssuer`.
+1. **O eco é filtrado na origem.** A regra do EventBridge descarta eventos cuja sessão foi emitida pela role de remediação, que o Execute assume para cada violação (ver *Autoridade por incidente*; antes da session policy, era a role da própria Lambda). Toda escrita de remediação chega ao CloudTrail como `AssumedRole` dessa role — verificado no CloudTrail da conta — enquanto mudanças humanas chegam como `IAMUser`, **sem** `sessionContext.sessionIssuer`.
 2. **A rodada de detecção agenda uma única verificação.** Se remediou algo, ela inicia a própria máquina em `mode = verify`, levando as definições dos controles remediados e o mapa controle → `violation_id`.
 3. **A rodada de verificação não remedeia.** Reavalia imediatamente exatamente os controles remediados e registra `S_nominal` ligado à violação que confirma, ou registra a não convergência e escala.
 
@@ -313,12 +316,12 @@ Um incidente custa, portanto, **no máximo duas execuções**, e oscilar é estr
 
 **A armadilha do filtro.** Um `anything-but` simples sobre o emissor da sessão descartaria justamente os eventos humanos, porque num campo ausente ele não casa. Medido com `aws events test-event-pattern`:
 
-| padrão | IAMUser | role do Execute | outro role |
+| padrão | IAMUser | role de remediação | outro role |
 |---|---|---|---|
 | só `anything-but` | **False** | False | True |
 | `$or` com `exists: false` | True | False | True |
 
-O primeiro padrão faria o sistema parar de detectar toda violação feita pelo console — o cenário C1 — sem nenhum erro. O `controls-sync` gera o segundo, e `tests/contract/test_event_pattern.py` avalia o padrão gerado no próprio EventBridge para as quatro identidades.
+O primeiro padrão faria o sistema parar de detectar toda violação feita pelo console — o cenário C1 — sem nenhum erro. O `controls-sync` gera o segundo, e `tests/contract/test_event_pattern.py` avalia o padrão gerado no próprio EventBridge para as quatro identidades e para uma origem forjada (ver *Proveniência do evento*).
 
 **Consistência de leitura: medida, não presumida.** A configuração de bucket do S3 é eventualmente consistente, e o eco escondia a questão — o evento chegava segundos depois da escrita. A primeira versão do laço explícito compensava com uma espera fixa de 15 s antes de reavaliar, um valor escolhido e não medido. A espera foi removida depois de medir o que acontece sem ela, com `scripts/verification_consistency.py`, que liga cada rodada de verificação ao fim da última remediação da execução de origem:
 
@@ -1283,7 +1286,7 @@ For any Execute failure, the violations_log entry SHALL maintain state as S_viol
 
 ### Property 25: EventBridge Rule Event Filtering
 
-For any CloudTrail event whose `eventName` is NOT in the union of `cloudtrail_events` across all registered controls, the EventBridge Rule SHALL NOT match the event and SHALL NOT trigger the Orchestrator. O event pattern é gerenciado dinamicamente pela Lambda `controls-sync` e cobre múltiplos serviços (S3, EC2). O filtro `source` foi removido para suportar multi-serviço; o `eventName` (específico por API) evita falsos positivos.
+For any CloudTrail event whose `eventName` is NOT in the union of `cloudtrail_events` across all registered controls, the EventBridge Rule SHALL NOT match the event and SHALL NOT trigger the Orchestrator. O event pattern é gerenciado dinamicamente pela Lambda `controls-sync` e cobre múltiplos serviços (S3, EC2). A mesma regra SHALL NOT casar com um evento que não foi emitido pela AWS: o `source` é fixado pelo prefixo `aws.`, que o `PutEvents` recusa (ver *Proveniência do evento*).
 
 **Validates: Requirements 1.6**
 
@@ -2377,7 +2380,7 @@ vindo do atraso de entrega do Scheduler.
 **Control**: `ctrl-s3-public-block`
 **Hipótese validada**: H2 (rastreabilidade do caminho de falha)
 
-**Como a falha é induzida**: sem mock. Uma bucket policy nega exatamente uma ação, `s3:PutBucketPublicAccessBlock`, a exatamente um principal, a role do Execute (`aws:PrincipalArn`). O Analyze, com outra role, continua lendo o bucket; o runner, um usuário IAM, continua violando e apagando. O teste espera a rodada do `CreateBucket` terminar antes de gravar a policy — a remediação do ssl-only faz merge na policy e, se tivesse lido antes, descartaria o `Deny` — e confere que o `Deny` sobreviveu antes de disparar a violação.
+**Como a falha é induzida**: sem mock. Uma bucket policy nega exatamente uma ação, `s3:PutBucketPublicAccessBlock`, a exatamente um principal, a role de remediação que o Execute assume (`aws:PrincipalArn`). O Analyze, com outra role, continua lendo o bucket; o runner, um usuário IAM, continua violando e apagando. O teste espera a rodada do `CreateBucket` terminar antes de gravar a policy — a remediação do ssl-only faz merge na policy e, se tivesse lido antes, descartaria o `Deny` — e confere que o `Deny` sobreviveu antes de disparar a violação.
 
 #### Timeline da execução
 
@@ -2511,6 +2514,7 @@ Organizadas pelas quatro categorias usuais em experimentação em engenharia de 
 - **O ambiente de execução da Lambda varia** (L12), e numa série isso sozinho produziu uma "melhoria" de 0,64 s. *Mitigação*: comparações feitas só no patamar lento, com o ambiente de cada amostra registrado em `series_facts.json`.
 - **Cold start confunde tempo de sistema com tempo de plataforma.** *Mitigação*: classificação por evidência (`Init Duration` na invocação exata), sem corte de duração.
 - **Relógio do runner** (L8). *Mitigação*: compensação medida contra o header `Date`; afeta apenas `t_detection`.
+- **O artefato mudou depois da série final.** A série descreve o sistema como estava quando foi medido. As mudanças posteriores ficam fora do trecho cronometrado: a camada de operação (alarmes, filas, retenção, PITR, validação do CloudTrail) e as sincronizações de controles e de exceções rodam fora da execução; a deduplicação de issues, depois dela; o prefixo `aws.` no `source` age no casamento do padrão, antes de a execução começar; e a fila no alvo da regra só entra em falha. A exceção é a política de criptografia v1.1, avaliada dentro do Analyze — mas é a mesma chamada ao OPA, com um conjunto maior de algoritmos aceitos e a mesma decisão para `AES256`, o único que os cenários usam. *Mitigação*: a suíte funcional completa rodou depois de todas elas — 16 de 16 cenários e a auditoria sem execução falha inesperada (`results/post_ops_check.json`). É uma rodada só, sem valor estatístico: confirma o comportamento, não os tempos.
 
 **Validade de conclusão** — as inferências estatísticas se sustentam?
 
@@ -2647,21 +2651,46 @@ Escalações não são alarmadas: uma execução `FAILED` com issue no GitHub é
 
 | Alarme | O que significa | Primeira ação |
 |---|---|---|
-| `intake-failed` | O EventBridge casou um evento mas não conseguiu iniciar a máquina de estados: **detecções perdidas** | Conferir a trust e a policy da role `eventbridge-sfn`; reprocessar pelo CloudTrail o período afetado |
+| `intake-failed` | O EventBridge casou um evento mas não conseguiu iniciar a máquina de estados: **detecção não avaliada**. A entrada que a regra montou está na fila `intake-failures`; o alarme se mantém enquanto houver mensagem na fila, e também dispara se um evento se perder de vez (falha sem fila, ou a fila recusou) | Conferir a trust e a policy da role `eventbridge-sfn`; depois, `scripts/replay_intake.py`, que inicia a execução que cada evento teria iniciado |
 | `scheduler-target-errors`, `scheduler-dropped` | Um agendamento disparou e não iniciou a execução: **exceção expirada sem reavaliação** | Conferir a role do Scheduler; reavaliar à mão os recursos cujas exceções expiraram no período |
 | `exception-sync-failures` | A mudança numa exceção não virou agendamento (filtro de métrica sobre o log — a Lambda reporta a falha por registro, então o `Errors` fica em zero) | Ler o log da `exception-scheduler-sync`; é o modo de falha que o C3 revelou |
-| `stream-dlq` | Um registro de stream (controle ou exceção) foi abandonado depois das tentativas | Corrigir a causa e reprocessar a mensagem da fila `stream-failures` |
+| `stream-dlq` | Um registro de stream (controle ou exceção) foi abandonado depois das tentativas | A mensagem identifica o lote (shard e intervalo de sequência), **não** traz o registro. Ler o log da Lambda para achar o item, corrigir a causa e reescrevê-lo: uma nova escrita gera um novo registro. Para exceção, regravar a linha; para controle, `deploy_control.sh` |
 | `escalation-dlq` | Uma escalação não virou issue depois de 3 tentativas | Conferir o token do GitHub no SSM; reprocessar a mensagem |
 | `<função>-errors` (5) | Uma Lambda **caiu** (timeout, memória, erro de runtime) — falhas estruturadas não contam aqui | Ler o log da função; no Execute, verificar o tempo do `tofu` |
 | `executions-timed-out` | Uma execução estourou os 600 s globais | Rever a cadeia de timeouts (*Property 28*): um controle novo pode ter mudado o pior caso |
 | `executions-throttled` | O Step Functions limitou execuções: rajada acima da cota da conta | Ver o volume de eventos no painel; considerar agrupar eventos |
 
-**Duas falhas silenciosas foram fechadas junto com os alarmes**:
+**Três falhas silenciosas foram fechadas junto com os alarmes**:
 
 - **O stream de controles tentava para sempre.** Sem limite de tentativas, um registro que falhasse sempre (por exemplo, o padrão com lista vazia que o EventBridge rejeita) seria reprocessado por até 24 h, bloqueando o shard: a regra ficaria congelada por um dia. Agora são 3 tentativas com bisseção e, depois, a fila `stream-failures`.
 - **O stream de exceções descartava o registro depois de 3 tentativas.** A exceção expiraria sem agendamento e sem rastro — o modo de falha do C3 em produção. Agora o registro vai para a mesma fila, e o alarme `stream-dlq` dispara.
+- **Uma detecção que o EventBridge não entregava era descartada.** O alvo da regra não tinha fila: o EventBridge tentava por 24 h e descartava o evento — e, num erro de permissão, descartava na hora, sem tentar. Restava uma métrica; a violação nunca era avaliada. É o modo de falha mais grave para um laço de conformidade, e o mais provável aqui: uma condição de trust mal posta nega em silêncio, como o `aws:SourceArn` já fez com o Scheduler. Agora as tentativas duram no máximo 1 h (o mesmo limite dos streams), e o que sobra vai para a fila `intake-failures`, com retenção de 14 dias. A fila guarda a entrada que a regra já montou — não o evento bruto do CloudTrail —, com a recusa nos atributos (`ERROR_CODE`, `ERROR_MESSAGE`). A primeira versão do reprocessamento esperava o evento bruto e falhou na injeção de falha; o achado simplificou o desenho: `scripts/replay_intake.py` inicia a execução com o corpo da mensagem como está, sem uma cópia do *input transformer* que pudesse divergir da regra. A execução reprocessada recebe o nome da mensagem, então cada evento inicia no máximo uma execução, mesmo que o reprocessamento seja interrompido e repetido (`tests/unit/test_replay_intake.py`).
+
+**O que continua sem fila**: os alvos do EventBridge Scheduler. Os alarmes `scheduler-target-errors` e `scheduler-dropped` avisam, mas a reavaliação é manual. Na rodada de verificação, a fila exigiria mudar o agendamento que a máquina de estados cria, no caminho medido — e, com isso, repetir a série. Na expiração de exceção, caberia na Lambda de sincronização, fora do caminho medido (o `DeadLetterConfig` do agendamento apontando para a mesma fila, e o reprocessamento aceitando a entrada já montada); fica como trabalho futuro.
 
 **Retenção e durabilidade**: os log groups das Lambdas passaram a ter retenção de 30 dias (antes, nunca expiravam); o `violations_log` e a tabela de exceções têm recuperação pontual (PITR, 35 dias), porque são os dados de auditoria que não se reconstroem de outra fonte; e a trilha do CloudTrail tem validação de integridade dos arquivos, para que a evidência independente citada na H2 seja à prova de adulteração.
+
+### Falhas injetadas
+
+Um alarme que nunca disparou é uma suposição. `scripts/ops_fault_injection.py` provoca na conta real as duas falhas silenciosas que motivaram esta camada e mede quanto cada uma leva para ser acusada — e se o alarme **executou a ação** de publicar no tópico, não apenas mudou de estado (histórico de ações do CloudWatch). Resultado em `results/ops_fault_injection.json`.
+
+| | `sync` | `intake` |
+|---|---|---|
+| Falha injetada | exceção sem `control_id` e com validade vencida: a sincronização não consegue agendá-la (o modo de falha do C3) | `Deny` explícito em `states:StartExecution` na role da regra, por 54 s, e um `CreateBucket` nesse intervalo |
+| Primeira evidência | `exception-sync-failures` em ALARM após **84,2 s** | a detecção na fila `intake-failures` após **23,6 s**, com `ERROR_CODE = NO_PERMISSIONS`, sem retentativa e sem nenhuma execução iniciada |
+| Contenção | o registro na fila `stream-failures` após 4 invocações (`RetryAttemptsExhausted`); `stream-dlq` em ALARM após **188,7 s** | `intake-failed` em ALARM após **129,3 s** |
+| Recuperação | apagar a linha e esvaziar a fila: OK após **64,3 s** e **357,6 s** | `replay_intake.py`: a execução reprocessada avaliou os 4 controles do `CreateBucket`, remediou 2, e a verificação confirmou os 2; OK **407,6 s** depois |
+| Ações publicadas no tópico | 4 de 4 transições | 2 de 2 |
+
+**Os tempos são do período das métricas, não da falha.** A detecção recusada chegou à fila em 23,6 s, mas o alarme lê a profundidade da fila em janelas de 5 minutos; o filtro de log, em janelas de 1 minuto. Nas três execuções do cenário `sync`, o primeiro alarme veio entre 43 e 84 s e o da fila entre 189 e 221 s, conforme a falha caiu na janela. Encurtar isso é trocar para alarmes de alta resolução, mais caros.
+
+**O que a injeção não prova: entrega a uma pessoa.** O tópico não tem assinante nesta conta (`topic_subscriptions = 0`): o alarme publica e ninguém recebe. Assinar é a variável `alert_email` mais uma confirmação por e-mail, deixada de fora de propósito para que o repositório não mande e-mail a quem não pediu.
+
+**O que a injeção encontrou** — três premissas erradas, todas corrigidas:
+
+- **O reprocessamento esperava o evento bruto do CloudTrail na fila**; a fila guarda a entrada já montada pela regra. A primeira injeção falhou nesse ponto, com a detecção retida na fila e o alarme disparado. O runbook, executado à mão com o script corrigido, a recuperou: a execução reprocessada terminou em SUCCEEDED e a verificação confirmou os dois controles remediados. Foi a primeira recuperação real desse caminho, feita pelo procedimento documentado.
+- **A listagem (`--dry-run`) escondia a mensagem do alarme.** Ela recebia a mensagem com 120 s de invisibilidade, e nesse intervalo a mensagem sumia da métrica que o alarme lê. Uma listagem não pode silenciar o alarme; agora esconde por 10 s.
+- **Supunha-se que, com fila, o `FailedInvocations` deixasse de contar os eventos enviados a ela.** Contou: nas duas injeções de `intake`, 2 recusas, 2 `FailedInvocations` e 2 `InvocationsSentToDlq`. O alarme continua certo, mas pelo motivo que agora está escrito: só com o `FailedInvocations`, ele voltaria a OK depois de um período, com o evento ainda sem tratamento; a profundidade da fila o mantém disparado até o reprocessamento.
 
 ## Posicionamento: camadas de controle da governança programática
 

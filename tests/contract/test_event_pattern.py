@@ -34,9 +34,9 @@ handler = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(handler)
 
 
-def event(user_identity):
+def event(user_identity, source="aws.s3"):
     return json.dumps({
-        "id": "1", "account": "123456789012", "source": "aws.s3",
+        "id": "1", "account": "123456789012", "source": source,
         "time": "2026-09-12T00:00:00Z", "region": "us-east-1", "resources": [],
         "detail-type": "AWS API Call via CloudTrail",
         "detail": {"eventName": "PutBucketPublicAccessBlock", "userIdentity": user_identity},
@@ -97,3 +97,13 @@ def test_generated_pattern_matches_everyone_but_the_remediation(client, who):
     result = client.test_event_pattern(EventPattern=pattern, Event=event(identity))["Result"]
     assert result is should_match, (
         f"{who}: expected match={should_match}, EventBridge says {result}")
+
+
+def test_a_forged_cloudtrail_event_does_not_match(client):
+    """Same detail-type, event and identity as a real violation, published with
+    PutEvents under a custom source. Before the source prefix, this matched."""
+    identity, _ = IDENTITIES["iam_user"]
+    pattern = json.dumps(handler.build_pattern(["PutBucketPublicAccessBlock"], ROLE))
+    assert client.test_event_pattern(EventPattern=pattern, Event=event(identity))["Result"] is True
+    forged = event(identity, source="fault.injection")
+    assert client.test_event_pattern(EventPattern=pattern, Event=forged)["Result"] is False

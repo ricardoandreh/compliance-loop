@@ -49,6 +49,12 @@ def test_identities_without_a_session_issuer_still_match():
     assert len(branches) == 2
 
 
+def test_only_events_emitted_by_aws_match():
+    """detail-type is free text anyone with events:PutEvents can publish; the
+    source prefix is what PutEvents cannot forge."""
+    assert handler.build_pattern(["CreateBucket"], ROLE)["source"] == [{"prefix": "aws."}]
+
+
 def _pages(*pages):
     from unittest.mock import MagicMock
     paginator = MagicMock()

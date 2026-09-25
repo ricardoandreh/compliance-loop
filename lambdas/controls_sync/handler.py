@@ -31,9 +31,18 @@ def build_pattern(event_names, remediation_role_arn):
         pattern               IAMUser   Execute role   other role
         anything-but only     False     False          True
         $or + exists:false    True      False          True
+
+    The source prefix pins the origin. detail-type is free text: anyone allowed
+    events:PutEvents on the default bus can publish "AWS API Call via
+    CloudTrail" with any eventName and request parameters, and without the
+    prefix the rule matched it (checked with test-event-pattern, source
+    "fault.injection": True). PutEvents refuses every source starting with
+    "aws." (NotAuthorizedForSourceException), so only events emitted by AWS
+    itself — the CloudTrail deliveries — can start the loop.
     """
     issuer = lambda cond: {"userIdentity": {"sessionContext": {"sessionIssuer": {"arn": [cond]}}}}
     return {
+        "source": [{"prefix": "aws."}],
         "detail-type": ["AWS API Call via CloudTrail"],
         "detail": {
             "eventName": sorted(set(event_names)),

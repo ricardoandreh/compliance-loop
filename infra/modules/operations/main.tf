@@ -14,6 +14,7 @@ variable "rule_name" { type = string }
 variable "state_machine_arn" { type = string }
 variable "schedule_group" { type = string }
 variable "stream_dlq_name" { type = string }
+variable "intake_dlq_name" { type = string }
 variable "escalation_dlq_name" { type = string }
 variable "exception_sync_log_group" { type = string }
 variable "function_names" {
@@ -28,22 +29,62 @@ locals {
 
 # --- Intake: detections that never started an execution -------------------
 # EventBridge matched a CloudTrail event but could not start the state machine
-# (role trust broken, state machine deleted, throttled). The violation happened
-# and the loop never saw it.
+# (role trust broken, state machine deleted, throttled for an hour). The
+# violation happened and the loop has not seen it. FailedInvocations alone
+# reports it for one period and returns to OK with the event still unhandled;
+# the depth of the intake queue holds the alarm until the queue is replayed or
+# emptied. (Measured in the fault injection: each refusal counted both as a
+# FailedInvocation and as InvocationsSentToDlq.) InvocationsFailedToBeSentToDlq
+# covers the one case the queue cannot hold: the queue itself refused it.
 resource "aws_cloudwatch_metric_alarm" "intake_failed" {
   alarm_name          = "${local.p}-intake-failed"
-  alarm_description   = "EventBridge could not start the state machine: detections are being lost. Runbook: design.md, Operação."
-  namespace           = "AWS/Events"
-  metric_name         = "FailedInvocations"
-  dimensions          = { RuleName = var.rule_name }
-  statistic           = "Sum"
-  period              = 300
+  alarm_description   = "A detection did not start an execution. Waiting in the intake queue: fix the cause, then scripts/replay_intake.py. Runbook: design.md, Operação."
   evaluation_periods  = 1
   threshold           = 0
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   alarm_actions       = local.actions
   ok_actions          = local.actions
+
+  metric_query {
+    id          = "undelivered"
+    expression  = "FILL(waiting, 0) + FILL(failed, 0) + FILL(unqueued, 0)"
+    label       = "Detections that did not start an execution"
+    return_data = true
+  }
+
+  metric_query {
+    id = "waiting"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateNumberOfMessagesVisible"
+      dimensions  = { QueueName = var.intake_dlq_name }
+      stat        = "Maximum"
+      period      = 300
+    }
+  }
+
+  metric_query {
+    id = "failed"
+    metric {
+      namespace   = "AWS/Events"
+      metric_name = "FailedInvocations"
+      dimensions  = { RuleName = var.rule_name }
+      stat        = "Sum"
+      period      = 300
+    }
+  }
+
+  metric_query {
+    id = "unqueued"
+    metric {
+      namespace   = "AWS/Events"
+      metric_name = "InvocationsFailedToBeSentToDlq"
+      dimensions  = { RuleName = var.rule_name }
+      stat        = "Sum"
+      period      = 300
+    }
+  }
 }
 
 # --- Exceptions: expiries that will not be re-evaluated ---------------------
@@ -222,7 +263,8 @@ resource "aws_cloudwatch_dashboard" "loop" {
           metrics = [
             ["AWS/Events", "MatchedEvents", "RuleName", var.rule_name, { stat = "Sum", label = "eventos detectados" }],
             [".", "FailedInvocations", ".", ".", { stat = "Sum", label = "detecções perdidas" }],
-            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", var.stream_dlq_name, { stat = "Maximum", label = "DLQ dos streams" }],
+            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", var.intake_dlq_name, { stat = "Maximum", label = "detecções na fila de intake" }],
+            ["...", var.stream_dlq_name, { stat = "Maximum", label = "DLQ dos streams" }],
             ["...", var.escalation_dlq_name, { stat = "Maximum", label = "DLQ das escalações" }],
           ]
         }

@@ -1,0 +1,69 @@
+{
+  "scenarios": {
+    "sync": {
+      "injected": "fault-injection-7d12950c",
+      "seconds_to_alarm": {
+        "compliance-loop-dev-exception-sync-failures": 84.2,
+        "compliance-loop-dev-stream-dlq": 188.7
+      },
+      "stream_dlq_messages": 1,
+      "dlq_record_context": {
+        "condition": "RetryAttemptsExhausted",
+        "approximateInvokeCount": 4
+      },
+      "seconds_to_ok_after_clearing": {
+        "compliance-loop-dev-exception-sync-failures": 64.3,
+        "compliance-loop-dev-stream-dlq": 357.6
+      },
+      "notified": {
+        "compliance-loop-dev-exception-sync-failures": [
+          "02:29:18Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
+          "02:32:18Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
+        ],
+        "compliance-loop-dev-stream-dlq": [
+          "02:31:10Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
+          "02:37:10Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
+        ]
+      },
+      "passed": true
+    },
+    "intake": {
+      "bucket": "compliance-fault-intake-8656fc35",
+      "seconds_to_queue": 23.6,
+      "executions_before_replay": 0,
+      "queued": {
+        "body_keys": [
+          "account_id",
+          "event_name",
+          "event_time",
+          "region",
+          "request_parameters",
+          "response_elements"
+        ],
+        "event_name": "CreateBucket",
+        "ERROR_CODE": "NO_PERMISSIONS"
+      },
+      "seconds_to_alarm": 129.3,
+      "replayed": 1,
+      "replay_status": "SUCCEEDED",
+      "verification_status": "SUCCEEDED",
+      "audit_rows": [
+        "ctrl-s3-encryption detection S_nominal -",
+        "ctrl-s3-public-block detection S_nominal -",
+        "ctrl-s3-ssl-only detection S_violation success",
+        "ctrl-s3-ssl-only verification S_nominal -",
+        "ctrl-s3-versioning detection S_violation success",
+        "ctrl-s3-versioning verification S_nominal -"
+      ],
+      "seconds_to_ok_after_replay": 407.6,
+      "notified": {
+        "compliance-loop-dev-intake-failed": [
+          "02:19:58Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev",
+          "02:26:58Z Successfully executed action arn:aws:sns:us-east-1:034362047722:compliance-loop-alerts-dev"
+        ]
+      },
+      "passed": true
+    }
+  },
+  "topic_subscriptions": 0
+}
