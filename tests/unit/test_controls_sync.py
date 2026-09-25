@@ -47,3 +47,40 @@ def test_identities_without_a_session_issuer_still_match():
     arns = [b["userIdentity"]["sessionContext"]["sessionIssuer"]["arn"][0] for b in branches]
     assert {"exists": False} in arns
     assert len(branches) == 2
+
+
+def _pages(*pages):
+    from unittest.mock import MagicMock
+    paginator = MagicMock()
+    paginator.paginate.return_value = [{"Items": items} for items in pages]
+    client = MagicMock()
+    client.get_paginator.return_value = paginator
+    return client
+
+
+def _control(*names):
+    return {"cloudtrail_events": {"SS": list(names)}}
+
+
+def test_controls_on_every_page_are_watched():
+    """A scan returns at most 1 MB per page; a control on the second page must
+    still reach the rule (design.md, L2)."""
+    from unittest.mock import MagicMock, patch
+    events = MagicMock()
+    with patch.object(handler, "dynamodb", _pages([_control("CreateBucket")],
+                                                  [_control("CreateVolume")])), \
+         patch.object(handler, "events", events):
+        handler.lambda_handler({}, None)
+    pattern = __import__("json").loads(events.put_rule.call_args.kwargs["EventPattern"])
+    assert pattern["detail"]["eventName"] == ["CreateBucket", "CreateVolume"]
+
+
+def test_an_empty_table_disables_the_rule_instead_of_failing():
+    """EventBridge rejects an empty eventName list. Building one would fail on
+    every record of the stream; with nothing to watch, the rule is disabled."""
+    from unittest.mock import MagicMock, patch
+    events = MagicMock()
+    with patch.object(handler, "dynamodb", _pages([])), patch.object(handler, "events", events):
+        handler.lambda_handler({}, None)
+    events.disable_rule.assert_called_once_with(Name="rule")
+    events.put_rule.assert_not_called()

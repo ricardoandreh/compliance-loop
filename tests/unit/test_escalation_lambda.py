@@ -66,6 +66,42 @@ def test_no_issue_in_the_trail_yields_none(handler):
         assert handler.open_issue_from_log("arn:aws:s3:::b", "ctrl-x", **PARAMS) is None
 
 
+def test_no_limit_is_applied_before_the_filter(handler):
+    """DynamoDB applies Limit to the rows it reads, before the FilterExpression:
+    a limit would let other controls' rows crowd out the one being looked for."""
+    table = MagicMock()
+    table.query.return_value = rows()
+    with patch.object(handler, "violations_table", table):
+        handler.open_issue_from_log("arn:aws:s3:::b", "ctrl-x", **PARAMS)
+    assert "Limit" not in table.query.call_args.kwargs
+
+
+def test_an_issue_on_a_later_page_is_found(handler):
+    """The first page can come back empty after the filter and still carry a
+    LastEvaluatedKey: the lookup has to keep paging, not stop there."""
+    table = MagicMock()
+    table.query.side_effect = [
+        {"Items": [], "LastEvaluatedKey": {"k": "1"}},
+        {"Items": [{"github_issue_id": "42"}]},
+    ]
+    with patch.object(handler, "violations_table", table), \
+         patch.object(handler, "issue_is_open", return_value=True):
+        assert handler.open_issue_from_log("arn:aws:s3:::b", "ctrl-x", **PARAMS) == 42
+    assert table.query.call_args_list[1].kwargs["ExclusiveStartKey"] == {"k": "1"}
+
+
+def test_the_same_issue_is_checked_once(handler):
+    """Several rows of one incident point at the same issue; it is one GitHub
+    call, not one per row."""
+    table = MagicMock()
+    table.query.return_value = rows({"github_issue_id": "7"}, {"github_issue_id": "7"},
+                                    {"github_issue_id": "7"})
+    with patch.object(handler, "violations_table", table), \
+         patch.object(handler, "issue_is_open", return_value=False) as is_open:
+        assert handler.open_issue_from_log("arn:aws:s3:::b", "ctrl-x", **PARAMS) is None
+    is_open.assert_called_once()
+
+
 def test_search_api_is_only_the_fallback(handler):
     """A system failure has a synthetic violation_id and no row of its own, so
     the trail cannot answer — only then is the delayed index consulted."""

@@ -28,7 +28,7 @@
     "S": "HIGH"
   },
   "policy_version": {
-    "S": "v1.0"
+    "S": "v1.1"
   },
   "fetch_config": {
     "M": {

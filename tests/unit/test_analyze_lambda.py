@@ -527,6 +527,18 @@ class TestLambdaHandler:
         result, _, _ = self.run_handler(base_event([control]), compliant=False)
         assert result['results'][0]['remediation'] == 'manual'
 
+    def test_every_evaluation_gets_its_own_violation_id(self):
+        """Property 11: violation_id is the table key of violations_log, so two
+        evaluations sharing one would overwrite each other's audit row. Unique
+        across the controls of one invocation and across invocations."""
+        controls = [typed_control('ctrl-a'), typed_control('ctrl-b'), typed_control('ctrl-c')]
+        ids = []
+        for compliant in (True, False, True):
+            result, _, _ = self.run_handler(base_event(controls), compliant=compliant)
+            ids += [r['violation_id'] for r in result['results']]
+        assert len(ids) == 9
+        assert len(set(ids)) == 9
+
     def test_one_result_per_control(self):
         controls = [
             typed_control('ctrl-s3-public-block', 's3_public_access'),

@@ -8,9 +8,10 @@ from boto3.dynamodb.conditions import Attr, Key
 ssm = boto3.client('ssm')
 dynamodb = boto3.resource('dynamodb')
 violations_table = dynamodb.Table(os.environ.get('VIOLATIONS_TABLE', 'violations_log'))
-# How far back to look for an issue already tracking this resource+control. The
-# GSI is sorted by timestamp, so these are the most recent rows.
-LOG_LOOKBACK_ROWS = 20
+# How many distinct issues to check before giving up and opening a new one.
+# Each check is a GitHub API call; the rows themselves are read without a limit
+# (see open_issue_from_log).
+MAX_ISSUES_CHECKED = 5
 
 
 def link_issue(violation_id, issue_number, issue_url):
@@ -46,19 +47,37 @@ def open_issue_from_log(resource_arn, control_id, pat, owner, repo):
     GSI answers with the recent rows of this resource, and any github_issue_url
     among them points at an issue this system opened. Whether it is still open
     is then read directly from the issue (not from the search index).
+
+    No Limit on the query: DynamoDB applies Limit to the items it READS, before
+    the FilterExpression. With a limit of 20, the 20 newest rows of a bucket —
+    several controls, two rounds per incident — could all belong to other
+    controls, the filter would empty the page, and an issue already open for
+    this control would be missed: the duplicate this lookup exists to prevent.
+    query_exception in the Analyze avoids the same trap for the same reason.
+    The rows of one resource are few, so the query pages through all of them,
+    newest first, and stops at the first issue that is still open.
     """
-    resp = violations_table.query(
+    kwargs = dict(
         IndexName='resource_arn-timestamp-index',
         KeyConditionExpression=Key('resource_arn').eq(resource_arn),
         FilterExpression=Attr('control_id').eq(control_id) & Attr('github_issue_id').exists(),
         ScanIndexForward=False,
-        Limit=LOG_LOOKBACK_ROWS,
     )
-    for row in resp.get('Items', []):
-        number = row['github_issue_id']
-        if issue_is_open(pat, owner, repo, number):
-            return int(number)
-    return None
+    checked = set()
+    while True:
+        resp = violations_table.query(**kwargs)
+        for row in resp.get('Items', []):
+            number = row['github_issue_id']
+            if number in checked:
+                continue
+            checked.add(number)
+            if issue_is_open(pat, owner, repo, number):
+                return int(number)
+            if len(checked) >= MAX_ISSUES_CHECKED:
+                return None
+        if 'LastEvaluatedKey' not in resp:
+            return None
+        kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
 
 
 def issue_is_open(pat, owner, repo, number):
@@ -118,7 +137,9 @@ def create_github_issue(pat, owner, repo, title, body):
     payload = json.dumps({
         'title': title,
         'body': body,
-        'labels': ['compliance-violation'],
+        # Both labels from Requirement 8.11: what the issue is about, and that
+        # no person opened it.
+        'labels': ['compliance-violation', 'auto-escalation'],
     }).encode()
     req = Request(
         f'https://api.github.com/repos/{owner}/{repo}/issues',
