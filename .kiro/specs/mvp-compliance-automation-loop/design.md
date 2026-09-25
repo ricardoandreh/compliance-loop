@@ -2489,7 +2489,34 @@ Duas decisões afetam a interpretação dos números:
 1. **Latências consideram apenas execuções em que o cenário passou.** Incluir os tempos parciais de uma execução que falhou favoreceria artificialmente o resultado. As falhas não são omitidas: cada linha traz a taxa de sucesso (`k/N`) ao lado da latência, de modo que confiabilidade e latência são lidas juntas.
 2. **n=1 é reportado como observação única**, com traços nas colunas de desvio e intervalo — nunca como média com precisão inventada. O agregador emite aviso explícito nomeando as métricas nessa condição.
 
-**Ameaças à validade**: as medições foram feitas em conta e região únicas (`us-east-1`), com violações sintéticas induzidas pelo próprio runner, sobre 5 controles — e apenas o S3 tem cobertura repetida (ver L6).
+### Ameaças à validade
+
+Organizadas pelas quatro categorias usuais em experimentação em engenharia de software (WOHLIN et al., 2012). Cada ameaça traz o que foi feito para mitigá-la e o que resta.
+
+**Validade de construto** — as métricas medem o que dizem medir?
+
+- **MTTR é a duração da execução, não o tempo até um humano perceber.** `t_remediation` vai do início da execução à confirmação da remediação; não inclui a detecção (que está em `t_detection` e `t_exposure`) nem o tempo até alguém notar a violação num processo manual. A comparação com o baseline manual (dias a semanas) é de ordem de grandeza, não de precisão. *Mitigação*: a exposição total (`t_exposure`) é reportada ao lado, e a decomposição `t_detection + t_remediation = t_exposure` fecha em todas as execuções.
+- **O baseline manual não foi medido.** Vem de relatório de mercado (Verizon DBIR). *Mitigação*: nenhuma afirmação depende do valor exato; a conclusão é de ordens de grandeza, e se sustenta mesmo com um baseline de horas.
+- **Convergência é o que a política aceita.** `t_verified` confirma que a política Rego avalia o recurso como conforme — não que o recurso seja seguro num sentido mais amplo. *Mitigação*: o teste de contrato garante que remediação e política concordam para cada controle (L11).
+
+**Validade interna** — as diferenças observadas vêm das mudanças no sistema?
+
+- **O instrumento errou antes de acertar.** Seis defeitos de medição foram encontrados e corrigidos (L10, e a seção *Como estes números foram obtidos* da página de resultados). *Mitigação*: correlação por identidade do evento e não por proximidade temporal, conferência de duração no classificador, e a auditoria de execuções falhas inesperadas (AUDIT) em toda rodada.
+- **O ambiente de execução da Lambda varia** (L12), e numa série isso sozinho produziu uma "melhoria" de 0,64 s. *Mitigação*: comparações feitas só no patamar lento, com o ambiente de cada amostra registrado em `series_facts.json`.
+- **Cold start confunde tempo de sistema com tempo de plataforma.** *Mitigação*: classificação por evidência (`Init Duration` na invocação exata), sem corte de duração.
+- **Relógio do runner** (L8). *Mitigação*: compensação medida contra o header `Date`; afeta apenas `t_detection`.
+
+**Validade de conclusão** — as inferências estatísticas se sustentam?
+
+- **Amostras de uma mesma rodada não são independentes**: compartilham a janela de tempo e, em geral, o ambiente de execução. O intervalo por amostra assume independência. *Mitigação*: o intervalo foi recalculado sobre a média de cada rodada (n = 10, a unidade independente) — ver *Validação estatística das comparações*. Ele é até 1,5× mais largo, e nenhuma conclusão muda.
+- **Comparações "a olho" entre intervalos.** *Mitigação*: teste de Welch, teste de permutação e tamanho de efeito para cada comparação que o texto faz (`scripts/compare_series.py`).
+- **n = 1 no regime frio.** *Mitigação*: reportado como observação única, sem desvio nem intervalo.
+
+**Validade externa** — os resultados generalizam?
+
+- **Uma conta, uma região, violações sintéticas** induzidas pelo próprio runner (L6). Violações reais podem vir em rajada, de vários recursos ao mesmo tempo, o que a suíte não exercita.
+- **Seis controles em dois serviços**, com S3 dominante. O custo do laço se mostrou independente do serviço (S3 e EBS custam o mesmo), mas a consistência de leitura só foi medida em S3 e EBS (L13).
+- **Volume de teste**, muito abaixo de uma conta de produção: limites de concorrência, throttling de API e paginação (L2) não foram exercitados.
 
 A variância de `t_remediation` no regime quente **depende do ambiente de execução** em que a invocação do Execute cai (L12). Na série de leitura imediata, um ambiente remediou em **5,08 s** ± 0,08 (n = 17) e os outros em **6,24 s** ± 0,10 (n = 12); a média agregada daquela série (5,56 s ± 0,59) misturava dois patamares e não deve ser lida como melhoria do sistema. Nas séries seguintes — três estados e a atual — **nenhuma** das 330 e 470 invocações caiu no patamar rápido, então os valores são diretamente comparáveis entre si e com o patamar lento das anteriores. Dentro de cada patamar a variância é pequena (~1,7%).
 
@@ -2498,6 +2525,33 @@ O cold start também não se espalha pela amostra: aparece como observação iso
 **Nem toda amostra fria custa o mesmo.** A da série atual (C5, rodada 08) custou **+1,93 s** sobre a média quente, contra ~8,2 s das séries anteriores. A diferença está em *qual* Lambda estava fria: aqui só o Analyze iniciou um ambiente novo (`Init Duration` 0,57 s), enquanto o Execute estava quente — nas anteriores o Execute também subiu do zero e precisou baixar o cache de provider dentro do handler, que é o grosso do custo.
 
 **Janelas de rodada**: cada rodada é delimitada pela duração registrada no `benchmark.log`, e não pelo fim da rodada anterior. Uma tentativa que falhou entre duas rodadas (token expirado) deixou um bucket cujas execuções casavam com o prefixo do cenário; a conferência de duração do classificador detectou a divergência (6,25 s contra 5,21 s gravados) antes de qualquer número ser publicado.
+
+### Validação estatística das comparações
+
+Cada afirmação de "esta mudança custou X" ou "esta mudança não mexeu no MTTR" foi testada formalmente, em vez de comparar intervalos a olho. Amostras quentes, no patamar lento de ambiente de execução, C1 · C3 · C5 (`scripts/compare_series.py`, resultado em `results/comparisons.json`):
+
+| De → para | Mudança | Δ | t de Welch (gl) | p (permutação) | g de Hedges |
+|---|---|---|---|---|---|
+| eco → duas rodadas | verificação explícita | **+0,177 s** | 6,53 (56,9) | **< 0,0001** | 1,68 |
+| duas rodadas → leitura imediata | remoção da espera de 15 s | +0,039 s | 1,16 (21,0) | 0,25 | 0,39 |
+| leitura imediata → três estados | grafo com três estados formais | +0,017 s | 0,50 (22,7) | 0,63 | 0,16 |
+| três estados → sessão escopada | autoridade de remediação por sessão | **+0,280 s** | 9,93 (56,0) | **< 0,0001** | 2,57 |
+| sessão escopada → final | identidades de serviço endurecidas | −0,001 s | −0,03 (45,7) | 0,98 | −0,01 |
+
+As duas mudanças que o texto atribui são as únicas significativas, com efeito grande (g > 1,6); as três que o texto diz não terem mexido no MTTR não são distinguíveis de zero. O teste de permutação não assume forma para a distribuição, e concorda com o de Welch em todas as linhas.
+
+**Dependência entre amostras.** As três amostras de uma rodada compartilham a janela e, em geral, o ambiente de execução. Recalculando o intervalo sobre as médias por rodada (n = 10):
+
+| Série | IC 95% por amostra | IC 95% por rodada | Razão |
+|---|---|---|---|
+| eco | 6,025 ± 0,040 (n = 30) | 6,025 ± 0,061 | 1,52 |
+| duas rodadas | 6,202 ± 0,038 (n = 29) | 6,197 ± 0,046 | 1,22 |
+| leitura imediata | 6,241 ± 0,062 (n = 12) | 6,221 ± 0,068 (n = 9) | 1,10 |
+| três estados | 6,258 ± 0,041 (n = 29) | 6,261 ± 0,054 | 1,30 |
+| sessão escopada | 6,538 ± 0,040 (n = 29) | 6,536 ± 0,050 | 1,23 |
+| final | 6,537 ± 0,058 (n = 26) | 6,540 ± 0,049 | 0,85 |
+
+Os intervalos por amostra subestimam a incerteza em até 1,5×, o que é esperado com amostras correlacionadas. Nenhuma conclusão muda: os degraus significativos estão a mais de 6 erros-padrão, e os não significativos continuam longe de sê-lo.
 
 ### Síntese por Hipótese
 

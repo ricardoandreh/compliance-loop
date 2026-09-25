@@ -1,0 +1,6 @@
+# What the offline test suite needs (tests/unit, tests/property, tests/contract).
+# The Lambdas themselves use only the runtime's boto3.
+boto3==1.42.83
+botocore[crt]==1.42.83
+hypothesis==6.151.11
+pytest==9.0.2

@@ -6,6 +6,24 @@ O MVP Compliance Automation Loop é um sistema de automação de conformidade ba
 
 O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia conformidade usando políticas Rego executadas pelo Open Policy Agent (OPA), e remedia violações usando OpenTofu. O MVP implementa controle para bloqueio de acesso público em buckets S3.
 
+## Revisões dos requisitos
+
+Este documento é a especificação inicial do MVP e fica preservado como tal. O sistema construído a partir dele evoluiu, e alguns critérios foram alterados por decisão de projeto — cada um está marcado abaixo com *(revisado)* ou *(não atendido)* e justificado no `design.md`. A situação de cada requisito e de cada propriedade de corretude, com a evidência correspondente, está em [`traceability.md`](traceability.md).
+
+| Critério | Especificado | Construído | Justificativa |
+|---|---|---|---|
+| 1.1 | captura em até 5 s | 7,2–8,1 s em média; 4 de 120 amostras abaixo de 5 s | latência de entrega do CloudTrail, fora do sistema — *não atendido* |
+| 1.6, 10.1 | apenas `ctrl-s3-public-block` | seis controles em dois serviços | extensibilidade: controles cadastrados em tabela (*Arquitetura de Extensibilidade*) |
+| 2.5 | encerrar após a remediação | agenda uma rodada de verificação antes de encerrar | fechamento explícito do laço (*Fechamento do laço em duas rodadas*) |
+| 3.2 | política `s3_public_access` | uma política Rego por controle | idem 1.6 |
+| 3.6, 5.3 | índice por `control_id` | índice `resource-control-index` | consulta pontual por recurso e controle, sem varredura |
+| 4.2–4.4 | política no pacote da Lambda | política no S3, versionada por `policy_version` | mudar política sem novo deploy da Lambda |
+| 6.1 | o Analyze grava a linha | o orquestrador grava; falha de avaliação não gera linha | Analyze sem efeitos colaterais; modelo de três estados |
+| 11.1 | detecção em até 10 s | 109 de 120 amostras (91%) | idem 1.1 — *parcialmente atendido* |
+| 15.3, 15.7 | apenas `bucketName` | também volume e recurso de conta | controles de EC2 |
+| 15.6 | descartar evento incompleto | identificador sintético da conta | o EventBridge só admite eventos de controles cadastrados (L3) |
+| 17.1–17.3 | 15 / 45 / 60 s | 60 / 90 / 600 s | os valores originais não cobriam o pior caso (*Property 28*) |
+
 ## Glossary
 
 - **Compliance_Loop**: O sistema completo de automação de conformidade baseado no padrão MAPE-K
@@ -31,12 +49,12 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 
 #### Acceptance Criteria
 
-1. WHEN a PutBucketPublicAccessBlock event occurs in CloudTrail, THE Monitor SHALL capture the event within 5 seconds
+1. WHEN a PutBucketPublicAccessBlock event occurs in CloudTrail, THE Monitor SHALL capture the event within 5 seconds *(não atendido — ver Revisões)*
 2. THE Monitor SHALL extract the bucket ARN from the event detail
 3. THE Monitor SHALL extract the AWS account ID from the event detail
 4. THE Monitor SHALL extract the AWS region from the event detail
 5. THE Monitor SHALL trigger the Orchestrator with the extracted event metadata
-6. THE Monitor SHALL process only events matching the control_id "ctrl-s3-public-block"
+6. THE Monitor SHALL process only events matching the control_id "ctrl-s3-public-block" *(revisado)*
 
 ### Requirement 2: Orquestrar Transições de Estado do Loop MAPE-K
 
@@ -48,7 +66,7 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 2. WHEN Analyze returns S_nominal, THE Orchestrator SHALL terminate the workflow without invoking Execute
 3. WHEN Analyze returns S_exception, THE Orchestrator SHALL terminate the workflow without invoking Execute
 4. WHEN Analyze returns S_violation, THE Orchestrator SHALL invoke the Execute component
-5. WHEN Execute succeeds, THE Orchestrator SHALL terminate the workflow
+5. WHEN Execute succeeds, THE Orchestrator SHALL terminate the workflow *(revisado)*
 6. IF Execute fails, THEN THE Orchestrator SHALL invoke the escalation mechanism
 7. THE Orchestrator SHALL complete the entire loop within 60 seconds
 
@@ -59,11 +77,11 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 #### Acceptance Criteria
 
 1. WHEN Analyze receives event metadata, THE Analyze SHALL retrieve the current resource configuration from AWS
-2. THE Analyze SHALL evaluate the resource configuration against the s3_public_access Rego policy using OPA
+2. THE Analyze SHALL evaluate the resource configuration against the s3_public_access Rego policy using OPA *(revisado)*
 3. WHEN the resource is compliant with the policy, THE Analyze SHALL return S_nominal
 4. WHEN the resource is non-compliant and has a valid exception, THE Analyze SHALL return S_exception
 5. WHEN the resource is non-compliant without valid exception, THE Analyze SHALL return S_violation
-6. THE Analyze SHALL query the Knowledge_Base exceptions table via control_id index, filtering by resource_arn match and valid_until greater than current timestamp
+6. THE Analyze SHALL query the Knowledge_Base exceptions table via control_id index, filtering by resource_arn match and valid_until greater than current timestamp *(revisado)*
 7. WHEN an exception exists with valid_until in the future, THE Analyze SHALL consider the exception valid
 8. WHEN an exception exists with valid_until in the past, THE Analyze SHALL consider the exception expired
 9. THE Analyze SHALL produce deterministic classification for identical inputs
@@ -75,9 +93,9 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 #### Acceptance Criteria
 
 1. THE Compliance_Loop SHALL version Rego policies in a Git repository
-2. THE Analyze Lambda SHALL load Rego policies from the deployment package at runtime
-3. THE Rego policy file SHALL be included in the Lambda deployment artifact
-4. WHEN a policy changes, THE change SHALL require redeployment of the Analyze Lambda
+2. THE Analyze Lambda SHALL load Rego policies from the deployment package at runtime *(revisado)*
+3. THE Rego policy file SHALL be included in the Lambda deployment artifact *(revisado)*
+4. WHEN a policy changes, THE change SHALL require redeployment of the Analyze Lambda *(revisado)*
 5. THE Knowledge_Base controls table SHALL reference the policy package name, not store policy text
 6. THE Git repository SHALL serve as the single source of truth for policy definitions
 
@@ -89,7 +107,7 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 
 1. THE Knowledge_Base SHALL store exceptions in the exceptions table
 2. THE Knowledge_Base SHALL use exception_id (UUID) as partition key
-3. THE Knowledge_Base SHALL index exceptions by control_id via Global Secondary Index
+3. THE Knowledge_Base SHALL index exceptions by control_id via Global Secondary Index *(revisado)*
 4. THE Knowledge_Base SHALL store resource_arn for each exception
 5. THE Knowledge_Base SHALL store control_id for each exception
 6. THE Knowledge_Base SHALL store valid_until as Unix timestamp
@@ -106,7 +124,7 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 
 #### Acceptance Criteria
 
-1. THE Analyze SHALL create exactly one entry in the violations_log table for each evaluation
+1. THE Analyze SHALL create exactly one entry in the violations_log table for each evaluation *(revisado)*
 2. THE violations_log entry SHALL use violation_id (UUID) as partition key
 3. THE violations_log entry SHALL include resource_arn as indexed attribute
 4. THE violations_log entry SHALL include control_id
@@ -170,7 +188,7 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 
 #### Acceptance Criteria
 
-1. THE Compliance_Loop SHALL implement control_id "ctrl-s3-public-block"
+1. THE Compliance_Loop SHALL implement control_id "ctrl-s3-public-block" *(revisado: ampliado)*
 2. THE s3_public_access policy SHALL evaluate BlockPublicAcls setting
 3. THE s3_public_access policy SHALL evaluate IgnorePublicAcls setting
 4. THE s3_public_access policy SHALL evaluate BlockPublicPolicy setting
@@ -184,7 +202,7 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 
 #### Acceptance Criteria
 
-1. WHEN a bucket is created with public access enabled, THE Compliance_Loop SHALL detect the violation within 10 seconds
+1. WHEN a bucket is created with public access enabled, THE Compliance_Loop SHALL detect the violation within 10 seconds *(parcialmente atendido — ver Revisões)*
 2. THE Analyze SHALL classify the resource as S_violation
 3. THE Execute SHALL remediate the bucket to compliant state
 4. THE violations_log SHALL contain entry with remediation_status "success"
@@ -236,7 +254,7 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 3. THE Monitor SHALL extract detail.requestParameters.bucketName field
 4. THE Monitor SHALL extract detail.userIdentity.accountId field
 5. THE Monitor SHALL extract detail.awsRegion field
-6. IF any required field is missing, THEN THE Monitor SHALL log error and discard event
+6. IF any required field is missing, THEN THE Monitor SHALL log error and discard event *(revisado)*
 7. THE Monitor SHALL construct resource ARN in format "arn:aws:s3:::bucket-name"
 
 ### Requirement 16: Garantir Determinismo na Avaliação de Políticas
@@ -256,9 +274,9 @@ O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia c
 
 #### Acceptance Criteria
 
-1. THE Analyze SHALL timeout after 15 seconds
-2. THE Execute SHALL timeout after 45 seconds
-3. THE Orchestrator SHALL timeout the entire workflow after 60 seconds
+1. THE Analyze SHALL timeout after 15 seconds *(revisado)*
+2. THE Execute SHALL timeout after 45 seconds *(revisado)*
+3. THE Orchestrator SHALL timeout the entire workflow after 60 seconds *(revisado)*
 4. WHEN a component times out, THE Orchestrator SHALL log timeout error and terminate workflow
 
 ### Requirement 18: Persistir Estado S_violation Após Falha de Remediação

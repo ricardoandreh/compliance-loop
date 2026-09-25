@@ -1,0 +1,42 @@
+# Runs everything that does not need an AWS account: unit, property and
+# contract tests, the Rego policy tests, and the state machine's structural
+# checks. The contract test that asks EventBridge to evaluate the live pattern
+# skips itself without credentials; the integration suite and the benchmarks
+# run against a real account and stay manual (scripts/integration_test.py,
+# scripts/benchmark.py).
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Same OPA version the Lambda layer ships, read from the build script so
+      # the two cannot drift apart.
+      - name: Rego policy tests
+        run: |
+          OPA_VERSION="$(grep -oP 'OPA_VERSION="\$\{OPA_VERSION:-v?\K[0-9.]+' scripts/build_analyze.sh)"
+          docker run --rm -v "$PWD/controls:/controls:ro" "openpolicyagent/opa:${OPA_VERSION}" test /controls -v
+
+      - name: Unit, property and contract tests
+        run: python -m pytest tests -q
+
+      - name: OpenTofu formatting and validation
+        run: |
+          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra fmt -check -recursive
+          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra init -backend=false -input=false
+          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra validate
