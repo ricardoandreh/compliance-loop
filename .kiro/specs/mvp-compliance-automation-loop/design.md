@@ -1478,6 +1478,12 @@ tests/
     └── test_escalation_properties.py
 ```
 
+### Testes de política (Rego)
+
+Cada controle tem um `policy_test.rego` com os casos conformes, os violados e as formas de entrada que costumam enganar uma política — campo ausente, booleano como string, configuração vazia (44 testes, `scripts/test_policies.sh`, com a mesma versão do OPA da layer). Eles complementam o teste de contrato: o contrato garante que a remediação produz um estado que a política aceita; os testes de política garantem que a política aceita o que deve aceitar.
+
+**O que eles encontraram**: a política do `ctrl-s3-encryption` (v1.0) aceitava apenas `AES256` e `aws:kms`. Um bucket com DSSE-KMS (`aws:kms:dsse`), a criptografia mais forte que o S3 oferece, seria classificado como violação, e a remediação o reescreveria para `AES256` — o laço **rebaixaria** a criptografia e registraria convergência. Nenhum cenário da suíte usava DSSE-KMS, então nenhuma série teria mostrado o defeito. A v1.1 aceita os três algoritmos.
+
 ### Property-Based Testing Strategy
 
 **Library Selection**:
@@ -2617,6 +2623,30 @@ Os intervalos por amostra subestimam a incerteza em até 1,5×, o que é esperad
 - **Execuções por rodada da suíte**: 48,5 (eco) → 36,0 (espera de 15 s) → 35,9 (leitura imediata) → 43,0 (três estados) → **62,0** nas duas últimas. As altas são da suíte, não do sistema: entraram C8, CTRL-05, C9, C10 e CTRL-06, e só o C9 provoca quatro violações em sequência. O ganho estrutural permanece: um incidente com N controles remediados custava 1 + N execuções e custa **no máximo 2**, qualquer que seja N
 - **Duração de uma rodada da suíte**: ~530 s (eco) → ~660 s (espera de 15 s) → 508 s (leitura imediata) → 625 s (três estados) → **946 s** nas duas últimas (16 cenários). Os valores medem o teste, não a latência de remediação
 
+## Operação: alarmes e runbook
+
+Um laço de conformidade que falha em silêncio é pior que nenhum: dá a impressão de cobertura. Os alarmes abaixo (módulo `infra/modules/operations`) cobrem exatamente as falhas que **não** aparecem como escalação — o laço parado, e não o laço trabalhando. Todos publicam no tópico `compliance-loop-alerts-dev` (assinatura por e-mail opcional, variável `alert_email`) e aparecem no painel `compliance-loop-dev-loop` do CloudWatch.
+
+Escalações não são alarmadas: uma execução `FAILED` com issue no GitHub é o laço funcionando como projetado (C4, C8, C9, CTRL-06).
+
+| Alarme | O que significa | Primeira ação |
+|---|---|---|
+| `intake-failed` | O EventBridge casou um evento mas não conseguiu iniciar a máquina de estados: **detecções perdidas** | Conferir a trust e a policy da role `eventbridge-sfn`; reprocessar pelo CloudTrail o período afetado |
+| `scheduler-target-errors`, `scheduler-dropped` | Um agendamento disparou e não iniciou a execução: **exceção expirada sem reavaliação** | Conferir a role do Scheduler; reavaliar à mão os recursos cujas exceções expiraram no período |
+| `exception-sync-failures` | A mudança numa exceção não virou agendamento (filtro de métrica sobre o log — a Lambda reporta a falha por registro, então o `Errors` fica em zero) | Ler o log da `exception-scheduler-sync`; é o modo de falha que o C3 revelou |
+| `stream-dlq` | Um registro de stream (controle ou exceção) foi abandonado depois das tentativas | Corrigir a causa e reprocessar a mensagem da fila `stream-failures` |
+| `escalation-dlq` | Uma escalação não virou issue depois de 3 tentativas | Conferir o token do GitHub no SSM; reprocessar a mensagem |
+| `<função>-errors` (5) | Uma Lambda **caiu** (timeout, memória, erro de runtime) — falhas estruturadas não contam aqui | Ler o log da função; no Execute, verificar o tempo do `tofu` |
+| `executions-timed-out` | Uma execução estourou os 600 s globais | Rever a cadeia de timeouts (*Property 28*): um controle novo pode ter mudado o pior caso |
+| `executions-throttled` | O Step Functions limitou execuções: rajada acima da cota da conta | Ver o volume de eventos no painel; considerar agrupar eventos |
+
+**Duas falhas silenciosas foram fechadas junto com os alarmes**:
+
+- **O stream de controles tentava para sempre.** Sem limite de tentativas, um registro que falhasse sempre (por exemplo, o padrão com lista vazia que o EventBridge rejeita) seria reprocessado por até 24 h, bloqueando o shard: a regra ficaria congelada por um dia. Agora são 3 tentativas com bisseção e, depois, a fila `stream-failures`.
+- **O stream de exceções descartava o registro depois de 3 tentativas.** A exceção expiraria sem agendamento e sem rastro — o modo de falha do C3 em produção. Agora o registro vai para a mesma fila, e o alarme `stream-dlq` dispara.
+
+**Retenção e durabilidade**: os log groups das Lambdas passaram a ter retenção de 30 dias (antes, nunca expiravam); o `violations_log` e a tabela de exceções têm recuperação pontual (PITR, 35 dias), porque são os dados de auditoria que não se reconstroem de outra fonte; e a trilha do CloudTrail tem validação de integridade dos arquivos, para que a evidência independente citada na H2 seja à prova de adulteração.
+
 ## Posicionamento: camadas de controle da governança programática
 
 Material de indústria descreve a governança programática de nuvem como camadas sobrepostas de controle, cada uma com lacunas próprias — motores de política como código no deploy, RBAC/ABAC, controles nativos do provedor e remediação automática retrospectiva (GARTNER, 2025). É o argumento clássico de defesa em profundidade, em que a proteção vem da sobreposição e não de uma camada isolada (REASON, 2000). Situar o trabalho nessas camadas delimita o que ele cobre e o que declaradamente não cobre.
@@ -2651,9 +2681,11 @@ Esta seção registra lacunas **identificadas e não fechadas**, com a justifica
 
 **Efeito colateral a tratar junto**: se `RegisterViolation` falhar e o fluxo seguir para a remediação, os `UpdateLog*` viram *upsert* e criam linha fantasma — o mesmo defeito que o `ConditionExpression attribute_exists(violation_id)` corrigiu na Lambda de escalação. A correção é simétrica: aplicar a mesma condição aos dois `UpdateLog*`.
 
-### L2. `Scan` sem paginação na resolução de controles
+### L2. `Scan` sem paginação na resolução de controles *(metade resolvida)*
 
-`QueryControls` (integração SDK, que não pagina automaticamente) e `controls_sync` (sem paginator boto3) leem apenas a primeira página de 1 MB. Irrelevante com 5 controles; ao crescer, controles seriam silenciosamente omitidos do enforcement e da regra do EventBridge. Fechar exige paginação explícita ou, preferencialmente, um GSI por `cloudtrail_event` que substitua o scan por query.
+> **Estado atual**: o `controls_sync` pagina o scan, então a regra do EventBridge sempre inclui os eventos de todos os controles. Continua em aberto o `QueryControls` da máquina de estados.
+
+`QueryControls` (integração SDK, que não pagina automaticamente) lê apenas a primeira página de 1 MB. Irrelevante com 6 controles; ao crescer, controles seriam detectados pela regra mas omitidos da avaliação. Fechar exige paginação explícita no grafo ou, preferencialmente, um GSI por `cloudtrail_event` que substitua o scan por query — mudança no caminho medido, por isso não feita depois da série final.
 
 ### L3. Pseudo-ARN de recursos account-level
 
@@ -2668,6 +2700,8 @@ O TTL sobre `valid_until` permanece habilitado para limpeza eventual. Como a del
 ### L5. Latência de indexação na deduplicação de issues *(resolvido)*
 
 > **Estado atual**: resolvido. Antes de abrir uma issue, a Lambda de escalação consulta o GSI `resource_arn-timestamp-index` do `violations_log` pelas linhas recentes do mesmo recurso e controle que já carreguem `github_issue_id`, e lê o estado da issue direto (`GET /repos/{owner}/{repo}/issues/{n}`), sem passar pelo índice de busca. A Search API continua como *fallback* para escalações que não têm linha própria — uma falha de sistema tem `violation_id` sintético. Coberto por `tests/unit/test_escalation_lambda.py`.
+
+**Aresta corrigida depois**: a primeira versão da consulta ao log usava `Limit=20` antes do `FilterExpression` — o mesmo erro que o `query_exception` do Analyze documenta e evita. As 20 linhas mais recentes de um bucket podiam ser todas de outros controles, o filtro esvaziava a página e a issue aberta passava despercebida. A consulta agora pagina sem limite e confere cada issue uma única vez (`tests/unit/test_escalation_lambda.py`).
 
 `find_open_issue()` usava a Search API do GitHub, cujo índice tem atraso de segundos a minutos. Uma issue recém-criada podia não ser encontrada, gerando duplicata. O `MessageGroupId` serializa o processamento por par recurso+controle, o que reduzia a janela, mas não a eliminava.
 
@@ -2784,3 +2818,19 @@ Nada do modelo muda: a reconciliação é só outra origem de evento, como já �
 **Consequência**: o mecanismo reduz o raio de alcance por invocação, e não o raio de alcance máximo do sistema. Quem edita o Terraform continua podendo alargar tudo.
 
 **Como mitigar**: uma *permissions boundary* na role de remediação, limitando o máximo às oito APIs de configuração mesmo que a policy seja reescrita; e negar `iam:*` explicitamente na role. Não implementado — a boundary precisaria ser gerida junto com a role, e o ganho só aparece contra um erro futuro de quem tem acesso ao Terraform, que é o mesmo ator que aplicaria a boundary.
+
+### L18. Integridade da política Rego no armazenamento
+
+**O que**: o Analyze baixa a política de cada controle do bucket de controles e a executa. Um `remediation.tf` adulterado é barrado pela session policy (C10), mas um `policy.rego` trocado no bucket muda a **decisão** de conformidade sem deixar rastro no laço — pode classificar como conforme um recurso violado.
+
+**Por que não foi fechado**: a verificação ficaria no Analyze, que está no caminho medido; mudá-lo depois da série final exigiria uma nova série para que a série publicada continue descrevendo o artefato implantado. E o ganho é limitado pela fronteira de confiança: quem escreve no bucket de controles é o mesmo papel que publica controles.
+
+**Como fechar**: gravar o `sha256` da política no `control.json` (tabela `controls`) no `deploy_control.sh` e conferi-lo no Analyze depois do download, tratando divergência como falha de sistema. O atacante passaria a precisar adulterar dois armazenamentos, e a divergência escalaria. Complementarmente, versionamento com *object lock* no bucket de controles.
+
+### L19. Cache do fetcher por método e recurso
+
+**O que**: dentro de uma invocação, o Analyze guarda o resultado de cada chamada de leitura com a chave `método:recurso`, ignorando os `params`. Dois controles que chamassem o mesmo método sobre o mesmo recurso com parâmetros diferentes receberiam o resultado do primeiro.
+
+**Consequência**: nenhuma hoje — nenhum par de controles tem essa forma. Um controle futuro que a tenha avaliaria o dado errado sem erro visível.
+
+**Como fechar**: incluir os `params` serializados na chave do cache. Não feito pelo mesmo motivo do L18: o Analyze está no caminho medido.
