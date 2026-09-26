@@ -12,11 +12,11 @@ on:
 
 jobs:
   offline:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.13"
           cache: pip
@@ -41,6 +41,6 @@ jobs:
       - name: OpenTofu formatting and validation
         run: |
           touch lambdas/analyze/opa_layer.zip lambdas/execute/tofu_layer.zip
-          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra fmt -check -recursive
-          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra init -backend=false -input=false
-          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra validate
+          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:1.12.6 -chdir=infra fmt -check -recursive
+          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:1.12.6 -chdir=infra init -backend=false -input=false
+          docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:1.12.6 -chdir=infra validate

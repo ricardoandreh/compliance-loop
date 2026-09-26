@@ -159,7 +159,7 @@ Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão I
 
 - Python 3.13+ com `boto3` — os scripts de teste e benchmark não rodam sem ele
 - AWS CLI configurado
-- OpenTofu (executado via Docker: `ghcr.io/opentofu/opentofu:latest`)
+- OpenTofu (executado via Docker: `ghcr.io/opentofu/opentofu:1.12.6`)
 
 O `boto3` precisa estar no interpretador que você usa para chamar os scripts.
 Neste ambiente ele vive num virtualenv:
@@ -204,7 +204,7 @@ aws lambda invoke --function-name compliance-loop-controls-sync-dev --payload '{
 > eval "$(aws configure export-credentials --format env)"
 > docker run --rm -v "$PWD:/workspace" -w /workspace \
 >   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_REGION=us-east-1 \
->   ghcr.io/opentofu/opentofu:latest -chdir=infra apply
+>   ghcr.io/opentofu/opentofu:1.12.6 -chdir=infra apply
 > ```
 
 > **Não rode de dentro de `infra/`.** Se o `tofu` do seu PATH for o wrapper
@@ -225,7 +225,7 @@ Alternativa sem wrapper, invocando o Docker diretamente da raiz:
 
 ```bash
 docker run --rm -v "$(pwd):/work" -v "$HOME/.aws:/root/.aws:ro" \
-  -w /work/infra ghcr.io/opentofu/opentofu:latest apply
+  -w /work/infra ghcr.io/opentofu/opentofu:1.12.6 apply
 ```
 
 As layers OPA e OpenTofu usam zips pré-construídos
