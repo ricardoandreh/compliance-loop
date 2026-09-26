@@ -2581,6 +2581,22 @@ Depois da série final, as dependências do caminho medido foram atualizadas par
 
 A hipótese H1 continua sustentada — segundos contra dias —, mas o número que descreve o artefato implantado passa a ser o desta série. Manter as versões antigas economizaria ~0,9 s por remediação ao preço de ficar atrás em correções de segurança do provider e do OPA; a atualização foi mantida.
 
+### Dimensionamento das Lambdas
+
+Memória configurada contra a máxima que alguma invocação usou, e a distribuição de duração contra o timeout, na série `results/upgrade/` — lido das linhas `REPORT` de todas as invocações da janela (`scripts/lambda_sizing.py`, resultado em `results/upgrade/lambda_sizing.json`):
+
+| Lambda | Memória | Máx. usada | Uso | Invocações | Duração p50 · p99 · máx | Timeout |
+|---|---|---|---|---|---|---|
+| analyze | 512 MB | 174 MB | 34% | 620 | 0,14 · 0,52 · 1,50 s | 60 s |
+| **execute** | **2048 MB** | **1630 MB** | **80%** | 470 | **6,52 · 8,01 · 12,65 s** | 90 s |
+| escalation | 256 MB | 104 MB | 41% | 40 | 0,96 · 1,36 · 1,36 s | 30 s |
+| controls-sync | 128 MB | 98 MB | 77% | 20 | 0,48 · 1,02 · 1,02 s | 15 s |
+| exception-scheduler-sync | 128 MB | 99 MB | 77% | 60 | 0,47 · 0,56 · 0,56 s | 30 s |
+
+As três funções fora do caminho medido estão no piso ou perto dele, com timeouts folgados. O Execute concentra o tempo e a memória: os 80% vêm do provider de 780 MB carregado a cada `apply`. Na Lambda, memória também compra CPU (cerca de 1 vCPU a 1.769 MB), então uso baixo de memória não quer dizer função superdimensionada — o Analyze usa 34% da memória, mas a avaliação do OPA é CPU — e a tabela diz onde olhar, não o que configurar.
+
+**Onde o tempo do Execute está.** O handler é Python, mas quase todo o tempo é do `tofu apply` e do provider AWS, que são binários Go; a avaliação de política do Analyze é o binário do OPA, também Go. Reescrever os handlers em Go só mexeria na fração Python — estimada em décimos de segundo — e o ganho grande, se desejado, estaria em trocar o OpenTofu por chamadas diretas ao SDK, uma decisão de desenho (ver *OpenTofu vs. SDK direto*), não de linguagem.
+
 ### Síntese por Hipótese
 
 > **Base**: 10 execuções completas da suíte na configuração final (`results/final/`, 160/160 cenários aprovados), comparadas às cinco séries anteriores, cada uma também com 10 execuções.
