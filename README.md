@@ -157,7 +157,7 @@ Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão I
 
 ## Pré-requisitos
 
-- Python 3.13+ com `boto3` — os scripts de teste e benchmark não rodam sem ele
+- Python 3.14+ com `boto3` — os scripts de teste e benchmark não rodam sem ele
 - AWS CLI configurado
 - OpenTofu (executado via Docker: `ghcr.io/opentofu/opentofu:1.12.6`)
 
@@ -165,7 +165,7 @@ Versões fixadas (nenhuma é `latest`):
 
 | Peça | Versão | Onde está fixada |
 |---|---|---|
-| Runtime das Lambdas | Python 3.13 (arm64) | `infra/modules/*/main.tf` |
+| Runtime das Lambdas | Python 3.14 (arm64) | `infra/modules/*/main.tf` |
 | OpenTofu (deploy e CI) | 1.12.6 | README, `.github/workflows/tests.yml` |
 | OpenTofu (layer do Execute) | 1.12.6 | `scripts/build_execute.sh` |
 | OPA (layer do Analyze, testes e CI) | 1.21.0 | `scripts/build_analyze.sh` |
@@ -429,8 +429,8 @@ pela mesma Lambda das escalações: um canal só para tudo o que exige uma pesso
 A volta a OK comenta na issue, e quem a fecha é quem seguiu o runbook. O
 caminho passa por uma fila, então uma queda do GitHub atrasa a notificação em
 vez de perdê-la. Os alarmes aparecem também no painel `compliance-loop-dev-loop`,
-e um e-mail no tópico (`alert_email`) fica como segunda via — é o que avisa se
-o próprio canal do GitHub cair. O runbook, com o que cada alarme significa e a
+que é o que resta se o próprio canal do GitHub cair (token expirado, por
+exemplo): o tópico tem uma assinatura só, por decisão. O runbook, com o que cada alarme significa e a
 primeira ação, está no `design.md` (*Operação: alarmes e runbook*).
 
 Nada que o laço deixa de processar some. Os consumidores dos streams do

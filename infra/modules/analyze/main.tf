@@ -22,7 +22,7 @@ resource "aws_lambda_function" "analyze" {
   filename         = data.archive_file.handler.output_path
   source_code_hash = data.archive_file.handler.output_base64sha256
   handler          = "handler.lambda_handler"
-  runtime          = "python3.13"
+  runtime          = "python3.14"
   architectures    = ["arm64"]
   # 60s, not 15: worst case is (n_controls x OPA_MAX_TIMEOUT). CreateBucket
   # alone fans out to 4 S3 controls, so 15s could not even cover the nominal

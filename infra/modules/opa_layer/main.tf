@@ -5,7 +5,7 @@ resource "aws_lambda_layer_version" "opa" {
   layer_name               = "${var.project_name}-opa-binary-${var.environment}"
   filename                 = "${path.module}/../../../lambdas/analyze/opa_layer.zip"
   source_code_hash         = filebase64sha256("${path.module}/../../../lambdas/analyze/opa_layer.zip")
-  compatible_runtimes      = ["python3.13"]
+  compatible_runtimes      = ["python3.14"]
   compatible_architectures = ["arm64"]
   description              = "OPA binary for policy evaluation"
 }

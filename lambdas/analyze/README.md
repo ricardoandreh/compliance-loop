@@ -4,7 +4,7 @@ Classifica o estado de conformidade de recursos AWS usando OPA/Rego.
 
 ## Arquitetura
 
-- **Runtime**: Python 3.13 (arm64)
+- **Runtime**: Python 3.14 (arm64)
 - **Layer**: OPA binary (`/opt/bin/opa`, ~20MB)
 - **Deployment**: `analyze.zip` (~2.5KB)
 - **Permissões**: Leitura de recursos AWS (ABAC) + Query na tabela `exceptions`

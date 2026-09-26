@@ -4,7 +4,7 @@ Remedia recursos em violação usando OpenTofu com templates HCL declarativos.
 
 ## Arquitetura
 
-- **Runtime**: Python 3.13 (arm64)
+- **Runtime**: Python 3.14 (arm64)
 - **Layer**: OpenTofu 1.12.6 (`/opt/bin/tofu`, ~29MB), gerada por `scripts/build_execute.sh`
 - **Provider cache**: S3 (`provider-cache/tf-dot-terraform.tar.gz`, ~156MB, provider AWS 6.66.0), baixado no cold start
 - **Deployment**: `execute.zip` (~4KB)

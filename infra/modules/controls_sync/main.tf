@@ -24,7 +24,7 @@ resource "aws_lambda_function" "controls_sync" {
   filename         = data.archive_file.handler.output_path
   source_code_hash = data.archive_file.handler.output_base64sha256
   handler          = "handler.lambda_handler"
-  runtime          = "python3.13"
+  runtime          = "python3.14"
   architectures    = ["arm64"]
   timeout          = 15
   memory_size      = 128

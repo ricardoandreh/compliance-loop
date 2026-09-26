@@ -3,27 +3,10 @@
 
 variable "project_name" { type = string }
 variable "environment" { type = string }
-variable "alert_email" {
-  description = "Optional e-mail subscribed to the alerts topic. Empty = topic only (subscribe later)."
-  type        = string
-  default     = ""
-}
 
 resource "aws_sns_topic" "alerts" {
   name = "${var.project_name}-alerts-${var.environment}"
   tags = { Name = "${var.project_name}-alerts", Environment = var.environment }
-}
-
-# A second channel, optional. AWS asks the address to confirm the subscription
-# by e-mail before anything is delivered, so this cannot page anyone who did
-# not opt in. It matters when the first channel is what broke: the GitHub
-# issues below go through the escalation Lambda, which cannot report its own
-# failure through itself.
-resource "aws_sns_topic_subscription" "email" {
-  count     = var.alert_email == "" ? 0 : 1
-  topic_arn = aws_sns_topic.alerts.arn
-  protocol  = "email"
-  endpoint  = var.alert_email
 }
 
 # Records a stream consumer gave up on (after its retries) land here instead of

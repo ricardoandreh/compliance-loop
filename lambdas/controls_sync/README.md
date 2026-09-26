@@ -4,7 +4,7 @@ Atualiza o EventBridge rule dinamicamente quando controles são adicionados/remo
 
 ## Arquitetura
 
-- **Runtime**: Python 3.13 (arm64)
+- **Runtime**: Python 3.14 (arm64)
 - **Trigger**: DynamoDB Stream (tabela `controls`)
 - **Deployment**: `handler.zip` (~0.5KB)
 

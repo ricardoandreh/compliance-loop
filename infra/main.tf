@@ -31,7 +31,6 @@ module "alerting" {
   source       = "./modules/alerting"
   project_name = var.project_name
   environment  = var.environment
-  alert_email  = var.alert_email
 }
 
 module "knowledge" {

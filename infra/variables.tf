@@ -28,9 +28,3 @@ variable "github_repo" {
   type        = string
   default     = ""
 }
-
-variable "alert_email" {
-  description = "Optional e-mail to receive the loop's operational alarms (AWS sends a confirmation first). Empty = no subscription."
-  type        = string
-  default     = ""
-}

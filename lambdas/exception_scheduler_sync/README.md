@@ -4,7 +4,7 @@ Cria EventBridge Schedulers para re-avaliação automática após expiração de
 
 ## Arquitetura
 
-- **Runtime**: Python 3.13 (arm64)
+- **Runtime**: Python 3.14 (arm64)
 - **Trigger**: DynamoDB Stream (tabela `exceptions`, INSERT/MODIFY)
 - **Deployment**: `handler.zip` (~1.4KB)
 

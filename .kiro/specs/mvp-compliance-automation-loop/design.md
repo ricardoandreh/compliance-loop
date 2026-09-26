@@ -371,7 +371,7 @@ Persistência no `violations_log`: o **Step Functions é o único componente que
 **Responsibility**: Classificar estado de conformidade do recurso usando OPA/Rego e consulta de exceções.
 
 **Implementation**:
-- Runtime: Python 3.13
+- Runtime: Python 3.14
 - Architecture: arm64
 - OPA binary via Lambda Layer (`/opt/bin/opa`), políticas Rego carregadas do S3 em runtime
 - Deployment package: handler.py (~2.5KB)
@@ -473,7 +473,7 @@ allow if {
 **Responsibility**: Remediar recursos em violação usando OpenTofu com infraestrutura como código declarativa.
 
 **Implementation**:
-- Runtime: Python 3.13
+- Runtime: Python 3.14
 - Architecture: arm64
 - OpenTofu binary via Lambda Layer (`/opt/bin/tofu`)
 - Provider AWS 6.66.0 pré-inicializado armazenado no S3 como `tf-dot-terraform.tar.gz` (~156MB), baixado e extraído em `/tmp` no cold start
@@ -869,7 +869,7 @@ A deleção física de itens expirados pelo DynamoDB TTL é **não-determinísti
 #### Escalation Lambda
 
 **Implementation**:
-- Runtime: Python 3.13 (arm64)
+- Runtime: Python 3.14 (arm64)
 - Trigger: SQS FIFO queue (batch size: 1)
 - Timeout: 30 seconds
 - HTTP via `urllib.request` (sem dependência externa `requests`)
@@ -2665,7 +2665,7 @@ A hipótese de que o log `ALL` do Step Functions dominaria o custo não se confi
 
 Um laço de conformidade que falha em silêncio é pior que nenhum: dá a impressão de cobertura. Os alarmes abaixo (módulo `infra/modules/operations`) cobrem exatamente as falhas que **não** aparecem como escalação — o laço parado, e não o laço trabalhando. Todos publicam no tópico `compliance-loop-alerts-dev`, e cada disparo vira uma **issue no GitHub** (rótulo `operations-alarm`), aberta pela mesma Lambda que abre as escalações: um canal só para tudo o que exige uma pessoa. Um novo disparo comenta na issue aberta; a volta a OK também comenta, mas não fecha — a métrica se recuperou, o que não quer dizer que a causa foi tratada (o `exception-sync-failures` volta em um minuto com o registro ainda na fila). Quem fecha é quem seguiu o runbook. Os alarmes aparecem também no painel `compliance-loop-dev-loop` do CloudWatch.
 
-**O caminho até a issue** é tópico → fila `alarm-notifications` → Lambda de escalação → GitHub. A fila no meio faz uma queda do GitHub atrasar as notificações em vez de perdê-las: a transição que a Lambda não consegue entregar volta à fila e é tentada de novo a cada 3 minutos, por até 14 dias. A deduplicação lista as issues abertas pelo rótulo, sem a Search API e o seu atraso de índice (L5). **O canal não avisa a própria falha**: se o token do GitHub expirar, escalações e alarmes param juntos, e um alarme sobre a fila parada viajaria pelo mesmo canal parado. Por isso a fila não tem alarme — aparece no painel —, e a assinatura por e-mail do tópico (`alert_email`) fica como segunda via opcional.
+**O caminho até a issue** é tópico → fila `alarm-notifications` → Lambda de escalação → GitHub. A fila no meio faz uma queda do GitHub atrasar as notificações em vez de perdê-las: a transição que a Lambda não consegue entregar volta à fila e é tentada de novo a cada 3 minutos, por até 14 dias. A deduplicação lista as issues abertas pelo rótulo, sem a Search API e o seu atraso de índice (L5). **O canal não avisa a própria falha**: se o token do GitHub expirar, escalações e alarmes param juntos, e um alarme sobre a fila parada viajaria pelo mesmo canal parado. Por isso a fila não tem alarme: aparece no painel, que é o último recurso nesse caso. Uma segunda assinatura no tópico (e-mail, por exemplo) cobriria essa falha; ficou de fora por decisão — um canal só, o mesmo das escalações.
 
 Escalações não são alarmadas: uma execução `FAILED` com issue no GitHub é o laço funcionando como projetado (C4, C8, C9, CTRL-06).
 
@@ -2705,7 +2705,7 @@ Um alarme que nunca disparou é uma suposição. `scripts/ops_fault_injection.py
 
 **Os tempos são do período das métricas, não da falha.** A detecção recusada chegou à fila em 17,9 s (18 a 24 s nas três injeções), mas o alarme lê a profundidade da fila em janelas de 5 minutos — e disparou entre 124 e 176 s; o filtro de log, em janelas de 1 minuto. Nas quatro execuções completas do cenário `sync`, o primeiro alarme veio entre 43 e 84 s e o da fila entre 158 e 221 s, conforme a falha caiu na janela. Encurtar isso é trocar para alarmes de alta resolução, mais caros.
 
-**Até uma pessoa.** Cada alarme abriu a sua issue no mesmo segundo em que a publicação foi registrada — a diferença medida, de −0,3 a +0,5 s, fica abaixo da resolução de 1 s do `created_at` do GitHub —, e a volta a OK virou comentário na mesma issue. O script fecha as issues que provocou. Numa das execuções, uma queda de DNS da máquina derrubou o script depois dos disparos: as issues já estavam abertas e receberam o comentário de OK quando a falha foi limpa à mão — o canal não depende de quem provocou a falha. O que ainda depende de alguém é ler o GitHub; e, se o próprio canal cair, só o painel e o e-mail opcional do tópico (`alert_email`, sem assinante nesta conta) avisam.
+**Até uma pessoa.** Cada alarme abriu a sua issue no mesmo segundo em que a publicação foi registrada — a diferença medida, de −0,3 a +0,5 s, fica abaixo da resolução de 1 s do `created_at` do GitHub —, e a volta a OK virou comentário na mesma issue. O script fecha as issues que provocou. Numa das execuções, uma queda de DNS da máquina derrubou o script depois dos disparos: as issues já estavam abertas e receberam o comentário de OK quando a falha foi limpa à mão — o canal não depende de quem provocou a falha. O que ainda depende de alguém é ler o GitHub; e, se o próprio canal cair, só o painel mostra a fila de notificações parada.
 
 **O que a injeção encontrou** — três premissas erradas, todas corrigidas:
 
