@@ -35,8 +35,12 @@ jobs:
       - name: Unit, property and contract tests
         run: python -m pytest tests -q
 
+      # validate hashes the Lambda layer zips (filebase64sha256). They are build
+      # artifacts, not in the repository, and validate checks the configuration,
+      # not the artifacts: empty placeholders stand in for them.
       - name: OpenTofu formatting and validation
         run: |
+          touch lambdas/analyze/opa_layer.zip lambdas/execute/tofu_layer.zip
           docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra fmt -check -recursive
           docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra init -backend=false -input=false
           docker run --rm -v "$PWD":/work -w /work ghcr.io/opentofu/opentofu:latest -chdir=infra validate
