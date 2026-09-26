@@ -45,9 +45,15 @@ resource "aws_dynamodb_table" "exceptions" {
   # table PK, so each grant keeps its own immutable audit record (H2) and the
   # scheduler-sync (keyed by exception_id) is unaffected.
   global_secondary_index {
-    name               = "resource-control-index"
-    hash_key           = "resource_arn"
-    range_key          = "control_id"
+    name = "resource-control-index"
+    key_schema {
+      attribute_name = "resource_arn"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "control_id"
+      key_type       = "RANGE"
+    }
     projection_type    = "INCLUDE"
     non_key_attributes = ["valid_until", "exception_id", "approved_by"]
   }
@@ -87,9 +93,15 @@ resource "aws_dynamodb_table" "violations_log" {
   }
 
   global_secondary_index {
-    name            = "resource_arn-timestamp-index"
-    hash_key        = "resource_arn"
-    range_key       = "timestamp"
+    name = "resource_arn-timestamp-index"
+    key_schema {
+      attribute_name = "resource_arn"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "timestamp"
+      key_type       = "RANGE"
+    }
     projection_type = "ALL"
   }
 

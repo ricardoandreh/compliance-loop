@@ -161,6 +161,20 @@ Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão I
 - AWS CLI configurado
 - OpenTofu (executado via Docker: `ghcr.io/opentofu/opentofu:1.12.6`)
 
+Versões fixadas (nenhuma é `latest`):
+
+| Peça | Versão | Onde está fixada |
+|---|---|---|
+| Runtime das Lambdas | Python 3.13 (arm64) | `infra/modules/*/main.tf` |
+| OpenTofu (deploy e CI) | 1.12.6 | README, `.github/workflows/tests.yml` |
+| OpenTofu (layer do Execute) | 1.12.6 | `scripts/build_execute.sh` |
+| OPA (layer do Analyze, testes e CI) | 1.21.0 | `scripts/build_analyze.sh` |
+| Provider AWS (infra) | 6.66.0 | `infra/main.tf`, `infra/.terraform.lock.hcl` |
+| Provider AWS (cache do Execute) | 6.66.0 | `controls/*/remediation.tf` (`~> 6.0`), cache no S3 |
+
+As séries publicadas em `results/` foram medidas antes da atualização, com OPA
+1.4.2 e o provider 5.100.0 — ver *Ameaças à validade* no `design.md`.
+
 O `boto3` precisa estar no interpretador que você usa para chamar os scripts.
 Neste ambiente ele vive num virtualenv:
 
@@ -374,7 +388,7 @@ exposição, contra 15,4s quando havia a espera de 15s.
 baixa o cache do provider, +1,9s quando só o Analyze está frio, +0,7s numa classificação
 sem remediação.
 
-A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~128MB), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
+A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~156MB, provider 6.66.0), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 
 Relatório com os gráficos interativos e a tabela completa: `results/report.html`.
 Cada série fica numa pasta própria — `results/echo/`, `results/two-round/`,

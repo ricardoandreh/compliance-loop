@@ -30,7 +30,10 @@ resource "aws_lambda_function" "execute" {
   memory_size      = 2048
   layers           = [var.tofu_layer_arn]
 
-  ephemeral_storage { size = 1024 }
+  # The AWS provider 6.66.0 binary is 780 MB unpacked, extracted to /tmp on a
+  # cold start while its 156 MB archive is still there: 936 MB would leave
+  # under 90 MB of a 1024 MB /tmp.
+  ephemeral_storage { size = 2048 }
 
   environment {
     variables = {

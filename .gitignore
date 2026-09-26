@@ -43,6 +43,8 @@ sdist/
 *.tar
 .terraform/
 .terraform.lock.hcl
+# ...except the infra lock: it is what pins the provider versions the plan was checked against.
+!infra/.terraform.lock.hcl
 # Testing
 *.tfstate
 *.tfstate.*

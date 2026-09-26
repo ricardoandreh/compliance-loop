@@ -476,19 +476,19 @@ allow if {
 - Runtime: Python 3.13
 - Architecture: arm64
 - OpenTofu binary via Lambda Layer (`/opt/bin/tofu`)
-- Provider AWS pré-inicializado armazenado no S3 como `tf-dot-terraform.tar.gz` (~128MB), baixado e extraído em `/tmp` no cold start
+- Provider AWS 6.66.0 pré-inicializado armazenado no S3 como `tf-dot-terraform.tar.gz` (~156MB), baixado e extraído em `/tmp` no cold start
 - Deployment package: handler.py (~1.3KB)
-- Lambda Layer: `tofu-binary` (~29MB comprimido, binário OpenTofu arm64)
+- Lambda Layer: `tofu-binary` (~29MB comprimido, OpenTofu 1.12.6 arm64, gerado por `scripts/build_execute.sh`)
 - Templates HCL carregados do S3 em runtime
 - Timeout: 90 segundos
 - Memory: 2048 MB
-- Ephemeral storage: 1024 MB (para provider cache + tfstate)
+- Ephemeral storage: 2048 MB (provider cache + tfstate: o provider 6.66.0 tem 780 MB extraído, e durante a extração o arquivo de 156 MB ainda ocupa o `/tmp` — 936 MB deixariam menos de 90 MB livres em 1024)
 
 **Provider Cache Strategy**:
 
-O provider AWS extraído (~628MB) não cabe numa Lambda Layer (limite 250MB descomprimido). A solução usa S3 como cache:
+O provider AWS extraído (780 MB no 6.66.0; 657 MB no 5.100.0, usado nas séries) não cabe numa Lambda Layer (limite 250MB descomprimido). A solução usa S3 como cache:
 
-1. **Build time**: um Dockerfile auxiliar executa `tofu init` uma vez, gerando o `.terraform/` (provider extraído) e o `.terraform.lock.hcl`. Esses artefatos são empacotados como `tf-dot-terraform.tar.gz` (~128MB) e armazenados no S3.
+1. **Build time**: o pacote oficial `linux_arm64` do provider é baixado com `tofu providers mirror` (assinatura verificada) e extraído na estrutura de um `.terraform/`; o `.terraform.lock.hcl` vem de `tofu providers lock -platform=linux_arm64`. Os dois são empacotados como `tf-dot-terraform.tar.gz` (~156MB) e armazenados no S3 — o procedimento está em `lambdas/execute/README.md`.
 2. **Cold start**: o handler baixa o tar.gz do S3 (~2-3s) e extrai para `/tmp` (~3-5s) usando `tarfile` do Python.
 3. **Warm start**: `/tmp` persiste entre invocações — o provider já está disponível, custo zero.
 4. **Setup por controle**: o handler cria um symlink (`ln -s /tmp/tf-dot-terraform .terraform`) e copia o lock file (1KB) para o diretório de trabalho de cada controle.
@@ -1764,7 +1764,7 @@ O `tofu init` com `-plugin-dir` extraía o provider AWS (~140MB zip → ~628MB b
 
 **Fase 2 — Lambda Layer + S3 provider cache (atual)**:
 1. O binário OpenTofu é distribuído via Lambda Layer (`/opt/bin/tofu`, ~29MB comprimido)
-2. O `.terraform/` pré-inicializado (provider extraído + lock file) é empacotado como `tar.gz` (~128MB) e armazenado no S3
+2. O `.terraform/` pré-inicializado (provider extraído + lock file) é empacotado como `tar.gz` (~156MB com o provider 6.66.0) e armazenado no S3
 3. No cold start, o handler baixa o tar.gz do S3 e extrai para `/tmp` usando `tarfile` do Python
 4. Em invocações warm, `/tmp` persiste — custo zero
 5. O symlink funciona igual à fase anterior: `ln -s /tmp/tf-dot-terraform .terraform`
@@ -2515,6 +2515,7 @@ Organizadas pelas quatro categorias usuais em experimentação em engenharia de 
 - **Cold start confunde tempo de sistema com tempo de plataforma.** *Mitigação*: classificação por evidência (`Init Duration` na invocação exata), sem corte de duração.
 - **Relógio do runner** (L8). *Mitigação*: compensação medida contra o header `Date`; afeta apenas `t_detection`.
 - **O artefato mudou depois da série final.** A série descreve o sistema como estava quando foi medido. As mudanças posteriores ficam fora do trecho cronometrado: a camada de operação (alarmes, filas, retenção, PITR, validação do CloudTrail) e as sincronizações de controles e de exceções rodam fora da execução; a deduplicação de issues, depois dela; o prefixo `aws.` no `source` age no casamento do padrão, antes de a execução começar; e a fila no alvo da regra só entra em falha. A exceção é a política de criptografia v1.1, avaliada dentro do Analyze — mas é a mesma chamada ao OPA, com um conjunto maior de algoritmos aceitos e a mesma decisão para `AES256`, o único que os cenários usam. *Mitigação*: a suíte funcional completa rodou depois de todas elas — 16 de 16 cenários e a auditoria sem execução falha inesperada (`results/post_ops_check.json`). É uma rodada só, sem valor estatístico: confirma o comportamento, não os tempos.
+- **As versões do caminho medido foram atualizadas depois das séries.** OPA 1.4.2 → 1.21.0 (layer do Analyze), OpenTofu → 1.12.6 (layer do Execute), provider AWS 5.100.0 → 6.66.0 (cache do Execute e infra) e `/tmp` do Execute 1024 → 2048 MB. Isso **está** no trecho cronometrado: as séries em `results/` descrevem as versões anteriores. *Mitigação*: a suíte completa passou nas versões novas — 16 de 16 e auditoria limpa (`results/post_upgrade_check.json`) — e os 44 testes Rego e os de contrato passam no OPA 1.21.0. *O que resta*: nessa rodada, o `t_remediation` quente ficou entre 7,5 e 7,9 s em quatro cenários, contra ~6,5 s na série final, e o Execute frio em ~12,7 s contra ~10,6 s — coerente com um provider 19% maior (780 MB contra 657 MB) para carregar. É uma rodada só; confirmar o custo exige repetir a série.
 
 **Validade de conclusão** — as inferências estatísticas se sustentam?
 
@@ -2802,7 +2803,7 @@ Mas nada impõe essa premissa. Se uma política e sua remediação discordarem �
 Hoje a premissa vale por inspeção: o `remediation.tf` do ssl-only gera exatamente o que a rego exige (Principal `*`, Action `s3:*`, os ARNs do bucket e dos objetos, `aws:SecureTransport = false`).
 
 **Como fechar**, em ordem de custo:
-1. **Teste de contrato por controle** — *implementado* em `tests/contract/test_remediation_contract.py`. Para cada controle, deriva o estado remediado do próprio `remediation.tf` (sem fixture transcrita à mão), converte-o para o formato que a API devolve ao `fetch_config` e avalia a política com a **mesma versão do OPA do layer** (1.4.2, lida do `build_analyze.sh`). Cada controle carrega também uma variante quebrada que precisa ser negada, para que o teste não passe por vacuidade, e a suíte falha se um controle novo chegar sem contrato. Validado por mutação: trocar o `status` do versioning para `"Suspended"` derruba exatamente o teste daquele controle. Execução: `scripts/test_policies.sh`. A convergência deixa de ser propriedade inspecionada e passa a ser testada — para os estados que a remediação produz; não cobre um processo externo que desfaça a remediação.
+1. **Teste de contrato por controle** — *implementado* em `tests/contract/test_remediation_contract.py`. Para cada controle, deriva o estado remediado do próprio `remediation.tf` (sem fixture transcrita à mão), converte-o para o formato que a API devolve ao `fetch_config` e avalia a política com a **mesma versão do OPA do layer** (1.21.0, lida do `build_analyze.sh`; 1.4.2 nas séries). Cada controle carrega também uma variante quebrada que precisa ser negada, para que o teste não passe por vacuidade, e a suíte falha se um controle novo chegar sem contrato. Validado por mutação: trocar o `status` do versioning para `"Suspended"` derruba exatamente o teste daquele controle. Execução: `scripts/test_policies.sh`. A convergência deixa de ser propriedade inspecionada e passa a ser testada — para os estados que a remediação produz; não cobre um processo externo que desfaça a remediação.
 2. **Disjuntor por (recurso, controle)** — *implementado*: o `CountRecentRemediations` consulta o GSI `resource_arn-timestamp-index` antes do `PlanAction` e, acima do limiar na janela, a violação escala como `recurrent_violation` em vez de ser remediada (ver *Disjuntor de reincidência*). É o que fecha a oscilação **entre** incidentes, que as duas rodadas não alcançam; a calibração do limiar fica em L16, e a concorrência legítima de L6 é o que impede um limiar menor.
 
 ### L12. Heterogeneidade entre ambientes de execução da Lambda

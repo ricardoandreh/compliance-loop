@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ANALYZE_DIR="$PROJECT_ROOT/lambdas/analyze"
-OPA_VERSION="${OPA_VERSION:-v1.4.2}"
+OPA_VERSION="${OPA_VERSION:-v1.21.0}"
 
 cd "$ANALYZE_DIR"
 
