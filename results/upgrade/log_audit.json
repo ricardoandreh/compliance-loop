@@ -1,0 +1,23 @@
+{
+  "results": "results/upgrade",
+  "window": [
+    "2026-09-26T04:48:38.000Z",
+    "2026-09-26T07:40:19.000Z"
+  ],
+  "rows": 1155,
+  "unique_violation_ids": true,
+  "by_state": {
+    "S_nominal": 649,
+    "S_violation": 456,
+    "S_exception": 50
+  },
+  "by_remediation_status": {
+    "success": 426,
+    "failed": 10
+  },
+  "verification_rows": 430,
+  "rows_with_issue": 30,
+  "complete_rows": 1155,
+  "problems": {},
+  "example_violation_ids": {}
+}

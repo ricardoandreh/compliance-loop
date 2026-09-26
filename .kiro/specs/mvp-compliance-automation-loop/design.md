@@ -2442,7 +2442,7 @@ Nesta série os **dois patamares de ambiente de execução** reapareceram: 49 da
 
 \*C3: janelas pós-expiração, não comparáveis às demais — incluem o buffer de 30 s do Scheduler mais o seu atraso de entrega (19,3 s em média nesta série, faixa 1,1–42,1 s), que é a fonte do desvio de ~15,6 s.
 
-**As seis séries**, todas com 10 execuções da suíte, no patamar lento de ambiente de execução:
+**As sete séries**, todas com 10 execuções da suíte, no patamar lento de ambiente de execução:
 
 | Série | `t_remediation` quente | O que mudou nela |
 |---|---|---|
@@ -2452,6 +2452,7 @@ Nesta série os **dois patamares de ambiente de execução** reapareceram: 49 da
 | `results/three-state/` | 6,26 s ± 0,11 | grafo com os três estados formais, C8 e CTRL-05 |
 | `results/session-policy/` | 6,54 s ± 0,11 | disjuntor, controle detectivo e **autoridade por sessão** |
 | **`results/final/`** | **6,54 s ± 0,14** | **identidades de serviço endurecidas** |
+| `results/upgrade/` | 7,41 s ± 0,48 | versões: OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0 (ver *Atualização de versões*) |
 
 ### Validação por Controle
 
@@ -2515,7 +2516,7 @@ Organizadas pelas quatro categorias usuais em experimentação em engenharia de 
 - **Cold start confunde tempo de sistema com tempo de plataforma.** *Mitigação*: classificação por evidência (`Init Duration` na invocação exata), sem corte de duração.
 - **Relógio do runner** (L8). *Mitigação*: compensação medida contra o header `Date`; afeta apenas `t_detection`.
 - **O artefato mudou depois da série final.** A série descreve o sistema como estava quando foi medido. As mudanças posteriores ficam fora do trecho cronometrado: a camada de operação (alarmes, filas, retenção, PITR, validação do CloudTrail) e as sincronizações de controles e de exceções rodam fora da execução; a deduplicação de issues, depois dela; o prefixo `aws.` no `source` age no casamento do padrão, antes de a execução começar; e a fila no alvo da regra só entra em falha. A exceção é a política de criptografia v1.1, avaliada dentro do Analyze — mas é a mesma chamada ao OPA, com um conjunto maior de algoritmos aceitos e a mesma decisão para `AES256`, o único que os cenários usam. *Mitigação*: a suíte funcional completa rodou depois de todas elas — 16 de 16 cenários e a auditoria sem execução falha inesperada (`results/post_ops_check.json`). É uma rodada só, sem valor estatístico: confirma o comportamento, não os tempos.
-- **As versões do caminho medido foram atualizadas depois das séries.** OPA 1.4.2 → 1.21.0 (layer do Analyze), OpenTofu → 1.12.6 (layer do Execute), provider AWS 5.100.0 → 6.66.0 (cache do Execute e infra) e `/tmp` do Execute 1024 → 2048 MB. Isso **está** no trecho cronometrado: as séries em `results/` descrevem as versões anteriores. *Mitigação*: a suíte completa passou nas versões novas — 16 de 16 e auditoria limpa (`results/post_upgrade_check.json`) — e os 44 testes Rego e os de contrato passam no OPA 1.21.0. *O que resta*: nessa rodada, o `t_remediation` quente ficou entre 7,5 e 7,9 s em quatro cenários, contra ~6,5 s na série final, e o Execute frio em ~12,7 s contra ~10,6 s — coerente com um provider 19% maior (780 MB contra 657 MB) para carregar. É uma rodada só; confirmar o custo exige repetir a série.
+- **As versões do caminho medido foram atualizadas depois das séries.** OPA 1.4.2 → 1.21.0 (layer do Analyze), OpenTofu → 1.12.6 (layer do Execute), provider AWS 5.100.0 → 6.66.0 (cache do Execute e infra) e `/tmp` do Execute 1024 → 2048 MB. Isso **está** no trecho cronometrado: as séries em `results/` descrevem as versões anteriores. *Mitigação*: a suíte completa passou nas versões novas — 16 de 16 e auditoria limpa (`results/post_upgrade_check.json`) — e os 44 testes Rego e os de contrato passam no OPA 1.21.0. *Medido*: a série `results/upgrade/` quantificou o efeito — +0,871 s na remediação quente, quase todo no Execute (ver *Atualização de versões*).
 
 **Validade de conclusão** — as inferências estatísticas se sustentam?
 
@@ -2548,8 +2549,9 @@ Cada afirmação de "esta mudança custou X" ou "esta mudança não mexeu no MTT
 | leitura imediata → três estados | grafo com três estados formais | +0,017 s | 0,50 (22,7) | 0,63 | 0,16 |
 | três estados → sessão escopada | autoridade de remediação por sessão | **+0,280 s** | 9,93 (56,0) | **< 0,0001** | 2,57 |
 | sessão escopada → final | identidades de serviço endurecidas | −0,001 s | −0,03 (45,7) | 0,98 | −0,01 |
+| final → atualização | OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0 | **+0,871 s** | 9,14 (32,1) | **< 0,0001** | 2,38 |
 
-As duas mudanças que o texto atribui são as únicas significativas, com efeito grande (g > 1,6); as três que o texto diz não terem mexido no MTTR não são distinguíveis de zero. O teste de permutação não assume forma para a distribuição, e concorda com o de Welch em todas as linhas.
+As três mudanças que o texto atribui são as únicas significativas, com efeito grande (g > 1,6) — a maior delas é a atualização de versões, e não uma mudança de desenho; as três que o texto diz não terem mexido no MTTR não são distinguíveis de zero. O teste de permutação não assume forma para a distribuição, e concorda com o de Welch em todas as linhas.
 
 **Dependência entre amostras.** As três amostras de uma rodada compartilham a janela e, em geral, o ambiente de execução. Recalculando o intervalo sobre as médias por rodada (n = 10):
 
@@ -2561,8 +2563,23 @@ As duas mudanças que o texto atribui são as únicas significativas, com efeito
 | três estados | 6,258 ± 0,041 (n = 29) | 6,261 ± 0,054 | 1,30 |
 | sessão escopada | 6,538 ± 0,040 (n = 29) | 6,536 ± 0,050 | 1,23 |
 | final | 6,537 ± 0,058 (n = 26) | 6,540 ± 0,049 | 0,85 |
+| atualização | 7,409 ± 0,187 (n = 28) | 7,396 ± 0,261 | 1,40 |
 
 Os intervalos por amostra subestimam a incerteza em até 1,5×, o que é esperado com amostras correlacionadas. Nenhuma conclusão muda: os degraus significativos estão a mais de 6 erros-padrão, e os não significativos continuam longe de sê-lo.
+
+### Atualização de versões (série `results/upgrade/`)
+
+Depois da série final, as dependências do caminho medido foram atualizadas para as versões mais recentes, todas fixadas explicitamente: OPA 1.4.2 → 1.21.0 (layer do Analyze), OpenTofu → 1.12.6 (layer do Execute, agora gerada por `scripts/build_execute.sh`), provider AWS 5.100.0 → 6.66.0 (cache do Execute e infra) e `/tmp` do Execute de 1024 para 2048 MB. Uma nova série de 10 execuções mediu o efeito, com a mesma suíte e o mesmo pipeline de análise.
+
+- **Funcionalmente, nada mudou**: 160/160 cenários aprovados, auditoria de 1.155 linhas todas completas, 269 rodadas de verificação todas confirmadas.
+- **A remediação quente ficou 0,871 s mais lenta** (6,54 → 7,41 s, p < 0,0001, g = 2,38) — o maior degrau de todas as séries, e não vem de uma mudança de desenho.
+- **O custo está no Execute**: a invocação quente passou de 5,51 s para 6,28 s (+0,77 s); o Analyze com o OPA novo, de 0,147 s para 0,175 s (+0,03 s). O provider 6.66.0 tem 780 MB contra 657 MB do 5.100.0, e o OpenTofu o carrega a cada `apply`.
+- **A variância subiu**: IC por rodada de ±0,049 s para ±0,261 s, e o desvio de 0,14 s para 0,48 s.
+- **O frio ficou mais caro**: as duas amostras frias levaram 16,2 e 17,2 s.
+- **Custo por incidente**: US$ 0,001295 → 0,001345 (+3,9%), puxado pelos 18% a mais de GB-s do Execute.
+- **O patamar rápido de ambiente de execução (L12) não apareceu**: 0 de 470 invocações, contra 49 na série final — a comparação é entre patamares lentos nas duas séries.
+
+A hipótese H1 continua sustentada — segundos contra dias —, mas o número que descreve o artefato implantado passa a ser o desta série. Manter as versões antigas economizaria ~0,9 s por remediação ao preço de ficar atrás em correções de segurança do provider e do OPA; a atualização foi mantida.
 
 ### Síntese por Hipótese
 

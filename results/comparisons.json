@@ -69,6 +69,20 @@
       "welch_df": 45.7,
       "permutation_p": 0.9814,
       "hedges_g": -0.01
+    },
+    {
+      "from": "final",
+      "to": "upgrade",
+      "change": "OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0",
+      "n": [
+        26,
+        28
+      ],
+      "delta_s": 0.871,
+      "welch_t": 9.14,
+      "welch_df": 32.1,
+      "permutation_p": 0.0,
+      "hedges_g": 2.38
     }
   ],
   "clustering": [
@@ -155,6 +169,20 @@
         "n": 10
       },
       "width_ratio": 0.85
+    },
+    {
+      "series": "upgrade",
+      "per_sample": {
+        "mean": 7.409,
+        "ci_half": 0.187,
+        "n": 28
+      },
+      "per_run": {
+        "mean": 7.396,
+        "ci_half": 0.261,
+        "n": 10
+      },
+      "width_ratio": 1.4
     }
   ]
 }

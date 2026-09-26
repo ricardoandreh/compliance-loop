@@ -369,11 +369,17 @@ lento**, o único presente em todas (L12).
 | **t_verified** (convergência confirmada) | **14,87s** ± 1,75 · n=17 | — |
 | t_detection (evento → SFN start) | sem classe: 8,13s ± 1,68 · IC [7,34 · 8,92] · n=20 | |
 
-**Toda a variação do MTTR entre as seis séries é atribuível, estado a estado:**
+**Toda a variação do MTTR entre as seis primeiras séries é atribuível, estado a estado:**
 6,03s no laço por eco → +0,18s do estado que agenda a verificação → +0,28s da autoridade
 por sessão = 6,54s. Leitura imediata, grafo de três estados, disjuntor, controle detectivo
 e endurecimento das identidades de serviço **não** mexeram no MTTR — o último foi medido
 em 6,54s ± 0,14 contra 6,54s ± 0,11 da série anterior.
+
+**A atualização de versões custou mais que qualquer mudança de desenho.** Com OPA
+1.21.0, OpenTofu 1.12.6 e o provider AWS 6.66.0 (`results/upgrade/`, 160/160), a
+remediação quente foi a **7,41s ± 0,48**: +0,87s (p < 0,0001), quase todo no Execute
+(+0,77s), que carrega um provider 19% maior a cada `apply`. É o número que descreve o
+artefato implantado hoje; a tabela acima descreve a série final, com as versões anteriores.
 
 **A exposição é dominada pela detecção:** desvio de 1,68s na detecção contra 0,14s na
 remediação, com `t_detection + t_remediation = t_exposure` em todas as execuções. Reduzir

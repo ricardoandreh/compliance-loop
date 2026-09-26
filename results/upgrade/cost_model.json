@@ -1,0 +1,80 @@
+{
+  "results": "results/upgrade",
+  "prices_usd": {
+    "sfn_transition": 2.5e-05,
+    "lambda_gb_s_arm": 1.33334e-05,
+    "lambda_request": 2.0000000000000002e-07,
+    "ddb_write": 6.25e-07,
+    "ddb_read": 1.25e-07,
+    "logs_ingest_gb": 0.5,
+    "sqs_fifo_request": 5e-07,
+    "alarm_month": 0.1,
+    "dashboard_month": 3.0,
+    "pitr_gb_month": 0.2
+  },
+  "executions": {
+    "verify": {
+      "executions": 270,
+      "transitions": 2750
+    },
+    "detect": {
+      "executions": 350,
+      "transitions": 7170
+    }
+  },
+  "transitions_per_execution": {
+    "verify": 10.2,
+    "detect": 20.5
+  },
+  "remediating_detections": 270,
+  "lambda": {
+    "analyze": {
+      "invocations": 620,
+      "gb_seconds": 58.8
+    },
+    "execute": {
+      "invocations": 470,
+      "gb_seconds": 6316.1
+    },
+    "escalation": {
+      "invocations": 40,
+      "gb_seconds": 11.9
+    },
+    "controls-sync": {
+      "invocations": 20,
+      "gb_seconds": 2.1
+    },
+    "exception-scheduler-sync": {
+      "invocations": 60,
+      "gb_seconds": 4.4
+    }
+  },
+  "log_mb": {
+    "step-functions": 57.35,
+    "analyze": 1.53,
+    "execute": 0.16,
+    "escalation": 0.02,
+    "controls-sync": 0.02,
+    "exception-scheduler-sync": 0.03
+  },
+  "series_cost_usd": {
+    "step_functions": 0.248,
+    "lambda_compute": 0.0852,
+    "lambda_requests": 0.0002,
+    "logs_ingestion": 0.0296,
+    "total": 0.363
+  },
+  "per_remediated_incident_usd": {
+    "step_functions": 0.000919,
+    "lambda_compute": 0.000316,
+    "lambda_requests": 1e-06,
+    "logs_ingestion": 0.000109,
+    "total": 0.001345
+  },
+  "share_of_variable_cost": {
+    "step_functions": 0.683,
+    "lambda_compute": 0.235,
+    "lambda_requests": 0.001,
+    "logs_ingestion": 0.081
+  }
+}
