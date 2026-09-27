@@ -1,0 +1,26 @@
+{
+  "results": "results/py314",
+  "verification_rounds": 274,
+  "controls_checked": {
+    "ctrl-ebs-encryption-default": {
+      "verified": 20
+    },
+    "ctrl-s3-public-block": {
+      "verified": 124
+    },
+    "ctrl-s3-ssl-only": {
+      "verified": 152
+    },
+    "ctrl-s3-versioning": {
+      "verified": 142
+    }
+  },
+  "not_verified": [],
+  "read_after_write_gap_s": {
+    "n": 274,
+    "mean": 0.36,
+    "median": 0.35,
+    "min": 0.23,
+    "max": 0.76
+  }
+}

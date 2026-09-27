@@ -83,6 +83,20 @@
       "welch_df": 32.1,
       "permutation_p": 0.0,
       "hedges_g": 2.38
+    },
+    {
+      "from": "upgrade",
+      "to": "py314",
+      "change": "runtime Python 3.13 → 3.14",
+      "n": [
+        28,
+        30
+      ],
+      "delta_s": -0.276,
+      "welch_t": -1.98,
+      "welch_df": 55.3,
+      "permutation_p": 0.0556,
+      "hedges_g": -0.51
     }
   ],
   "clustering": [
@@ -183,6 +197,20 @@
         "n": 10
       },
       "width_ratio": 1.4
+    },
+    {
+      "series": "py314",
+      "per_sample": {
+        "mean": 7.133,
+        "ci_half": 0.216,
+        "n": 30
+      },
+      "per_run": {
+        "mean": 7.133,
+        "ci_half": 0.165,
+        "n": 10
+      },
+      "width_ratio": 0.77
     }
   ]
 }

@@ -35,7 +35,7 @@ import random
 import statistics
 
 # Oldest first. Each series is one configuration of the system.
-SERIES = ["echo", "two-round", "no-wait", "three-state", "session-policy", "final", "upgrade"]
+SERIES = ["echo", "two-round", "no-wait", "three-state", "session-policy", "final", "upgrade", "py314"]
 
 # The comparisons the text makes, with what changed between the two series.
 CLAIMS = [
@@ -45,6 +45,7 @@ CLAIMS = [
     ("three-state", "session-policy", "autoridade de remediação por sessão"),
     ("session-policy", "final", "identidades de serviço endurecidas"),
     ("final", "upgrade", "OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0"),
+    ("upgrade", "py314", "runtime Python 3.13 → 3.14"),
 ]
 
 # Two-sided 95% t quantiles by degrees of freedom (df > 30 uses 1.96).

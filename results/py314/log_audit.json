@@ -1,0 +1,23 @@
+{
+  "results": "results/py314",
+  "window": [
+    "2026-09-26T20:44:32.000Z",
+    "2026-09-26T23:34:51.000Z"
+  ],
+  "rows": 1187,
+  "unique_violation_ids": true,
+  "by_state": {
+    "S_nominal": 665,
+    "S_violation": 472,
+    "S_exception": 50
+  },
+  "by_remediation_status": {
+    "success": 442,
+    "failed": 10
+  },
+  "verification_rows": 442,
+  "rows_with_issue": 30,
+  "complete_rows": 1187,
+  "problems": {},
+  "example_violation_ids": {}
+}
