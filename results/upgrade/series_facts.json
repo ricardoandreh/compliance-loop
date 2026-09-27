@@ -19,8 +19,8 @@
   },
   "execute_invocations": {
     "total": 470,
-    "fast": 0,
-    "fast_threshold_s": 4.8,
+    "fast": 45,
+    "fast_threshold_s": 5.825,
     "containers": {
       "f66af1": {
         "invocations": 182,
@@ -32,7 +32,7 @@
       },
       "a7776f": {
         "invocations": 70,
-        "fast": 0
+        "fast": 45
       },
       "fc2d99": {
         "invocations": 64,
@@ -229,22 +229,22 @@
     "run-08.json/C3": {
       "container": "a7776f",
       "execute_s": 5.3,
-      "fast": false
+      "fast": true
     },
     "run-08.json/C8": {
       "container": "a7776f",
       "execute_s": 5.145,
-      "fast": false
+      "fast": true
     },
     "run-08.json/CTRL-05": {
       "container": "a7776f",
       "execute_s": 5.224,
-      "fast": false
+      "fast": true
     },
     "run-09.json/C1": {
       "container": "a7776f",
       "execute_s": 5.274,
-      "fast": false
+      "fast": true
     },
     "run-09.json/C5": {
       "container": "fc2d99",
@@ -259,7 +259,7 @@
     "run-09.json/C8": {
       "container": "a7776f",
       "execute_s": 5.144,
-      "fast": false
+      "fast": true
     },
     "run-09.json/CTRL-05": {
       "container": "fc2d99",
@@ -274,12 +274,12 @@
     "run-10.json/C5": {
       "container": "a7776f",
       "execute_s": 5.263,
-      "fast": false
+      "fast": true
     },
     "run-10.json/C3": {
       "container": "a7776f",
       "execute_s": 5.435,
-      "fast": false
+      "fast": true
     },
     "run-10.json/C8": {
       "container": "fc2d99",
@@ -289,7 +289,7 @@
     "run-10.json/CTRL-05": {
       "container": "a7776f",
       "execute_s": 5.221,
-      "fast": false
+      "fast": true
     }
   }
 }

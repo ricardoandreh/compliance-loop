@@ -1,0 +1,23 @@
+{
+  "results": "results/optimized",
+  "window": [
+    "2026-09-27T00:37:08.000Z",
+    "2026-09-27T03:25:34.000Z"
+  ],
+  "rows": 1160,
+  "unique_violation_ids": true,
+  "by_state": {
+    "S_nominal": 650,
+    "S_violation": 460,
+    "S_exception": 50
+  },
+  "by_remediation_status": {
+    "success": 430,
+    "failed": 10
+  },
+  "verification_rows": 430,
+  "rows_with_issue": 30,
+  "complete_rows": 1160,
+  "problems": {},
+  "example_violation_ids": {}
+}

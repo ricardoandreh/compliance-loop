@@ -177,9 +177,10 @@ Versões fixadas (nenhuma é `latest`):
 | OPA (layer do Analyze, testes e CI) | 1.21.0 | `scripts/build_analyze.sh` |
 | Provider AWS (infra) | 6.66.0 | `infra/main.tf`, `infra/.terraform.lock.hcl` |
 | Provider AWS (cache do Execute) | 6.66.0 | `controls/*/remediation.tf` (`~> 6.0`), cache no S3 |
+| Memória do Execute | 3008 MB | `infra/modules/execute/main.tf` (medido em `results/perf/`) |
 
-As séries publicadas em `results/` foram medidas antes da atualização, com OPA
-1.4.2 e o provider 5.100.0 — ver *Ameaças à validade* no `design.md`.
+As séries até `results/final/` foram medidas com OPA 1.4.2 e o provider 5.100.0; a
+série atual é `results/optimized/` — ver *Ameaças à validade* no `design.md`.
 
 O `boto3` precisa estar no interpretador que você usa para chamar os scripts.
 Neste ambiente ele vive num virtualenv:
@@ -381,11 +382,16 @@ por sessão = 6,54s. Leitura imediata, grafo de três estados, disjuntor, contro
 e endurecimento das identidades de serviço **não** mexeram no MTTR — o último foi medido
 em 6,54s ± 0,14 contra 6,54s ± 0,11 da série anterior.
 
-**A atualização de versões custou mais que qualquer mudança de desenho.** Com OPA
-1.21.0, OpenTofu 1.12.6 e o provider AWS 6.66.0 (`results/upgrade/`, 160/160), a
-remediação quente foi a **7,41s ± 0,48**: +0,87s (p < 0,0001), quase todo no Execute
-(+0,77s), que carrega um provider 19% maior a cada `apply`. É o número que descreve o
-artefato implantado hoje; a tabela acima descreve a série final, com as versões anteriores.
+**A atualização de versões custou mais que qualquer mudança de desenho, e a
+otimização do Execute a devolveu.** Com OPA 1.21.0, OpenTofu 1.12.6 e o provider AWS
+6.66.0 (`results/upgrade/`), a remediação quente foi a **7,59s ± 0,15** (+1,06s,
+p < 0,0001), quase toda no Execute, que carrega um provider 19% maior a cada
+`apply`. O Python 3.14 não mudou nada (`results/py314/`, −0,01s, p = 0,83). Com o
+Execute a 3008 MB, o cache do provider em zstd baixado no init, os `skip_*` do provider
+e o cliente escopado sob demanda (`results/optimized/`, 160/160), voltou a
+**6,61s ± 0,11** (−0,97s, p < 0,0001) — o nível da série final, com as versões novas.
+É o número que descreve o artefato implantado hoje. O Python do handler responde por
+3% do tempo do Execute; os outros 97% são o `tofu` (`results/perf/`).
 
 **A exposição é dominada pela detecção:** desvio de 1,68s na detecção contra 0,14s na
 remediação, com `t_detection + t_remediation = t_exposure` em todas as execuções. Reduzir

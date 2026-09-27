@@ -20,7 +20,7 @@
   "execute_invocations": {
     "total": 470,
     "fast": 49,
-    "fast_threshold_s": 4.8,
+    "fast_threshold_s": 4.773,
     "containers": {
       "4868d8": {
         "invocations": 106,

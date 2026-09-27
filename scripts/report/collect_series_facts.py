@@ -37,7 +37,28 @@ import boto3
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from classify_cold_starts import REGION, lambda_request_ids, list_executions, run_windows  # noqa: E402
 
-FAST_EXECUTE_S = 4.8
+# Below this gap between the two tiers, a series is taken to have one tier.
+MIN_TIER_GAP_S = 0.5
+
+
+def fast_threshold(durations):
+    """Where the fast execution environment ends, from this series' own data.
+
+    The Execute runs in one of two tiers depending on the host (L12), about a
+    second apart. A fixed cut-off (4.8 s, fitted to the first series) held
+    until the dependency upgrade moved both tiers up: 5.1-5.4 s became the
+    fast tier and the cut-off called every sample slow, mixing the tiers in
+    the comparison. The cut-off is now the middle of the widest gap between
+    consecutive warm durations, when that gap is wider than MIN_TIER_GAP_S;
+    otherwise the series has a single tier and nothing is fast. Cold
+    invocations (over 1.5x the median) are left out: they are a third regime.
+    """
+    warm = sorted(d for d in durations if d < 1.5 * statistics.median(durations))
+    gaps = [(b - a, (a + b) / 2) for a, b in zip(warm, warm[1:])]
+    if not gaps:
+        return 0.0
+    width, middle = max(gaps)
+    return round(middle, 3) if width >= MIN_TIER_GAP_S else 0.0
 FUNCTION = "compliance-loop-execute-dev"
 
 
@@ -74,11 +95,6 @@ def main():
 
     since, until = windows[0][1], windows[-1][2] + 300
     invocations = report_lines(logs, since, until)
-    containers = {}
-    for stream, dur in invocations.values():
-        c = containers.setdefault(stream[-6:], {"invocations": 0, "fast": 0})
-        c["invocations"] += 1
-        c["fast"] += dur < FAST_EXECUTE_S
 
     samples = {}
     cold_path = os.path.join(args.results, "cold_starts.json")
@@ -97,8 +113,19 @@ def main():
                 continue
             stream, dur = invocations[ids[0]]
             samples[f"{s['run']}/{s['scenario']}"] = {
-                "container": stream[-6:], "execute_s": round(dur, 3),
-                "fast": (not s["cold"]) and dur < FAST_EXECUTE_S}
+                "container": stream[-6:], "execute_s": round(dur, 3), "cold": s["cold"]}
+
+    # The cut-off comes from the samples being compared - one kind of
+    # remediation each - not from every Execute invocation, whose mix of
+    # remediations blurs the two tiers into one spread.
+    FAST_EXECUTE_S = fast_threshold([x["execute_s"] for x in samples.values() if not x["cold"]])
+    for x in samples.values():
+        x["fast"] = (not x.pop("cold")) and x["execute_s"] < FAST_EXECUTE_S
+    containers = {}
+    for stream, dur in invocations.values():
+        c = containers.setdefault(stream[-6:], {"invocations": 0, "fast": 0})
+        c["invocations"] += 1
+        c["fast"] += dur < FAST_EXECUTE_S
 
     durations = []
     log_path = os.path.join(args.results, "benchmark.log")

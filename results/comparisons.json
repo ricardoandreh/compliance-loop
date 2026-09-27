@@ -76,27 +76,41 @@
       "change": "OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0",
       "n": [
         26,
-        28
+        24
       ],
-      "delta_s": 0.871,
-      "welch_t": 9.14,
-      "welch_df": 32.1,
+      "delta_s": 1.056,
+      "welch_t": 25.76,
+      "welch_df": 47.6,
       "permutation_p": 0.0,
-      "hedges_g": 2.38
+      "hedges_g": 7.18
     },
     {
       "from": "upgrade",
       "to": "py314",
       "change": "runtime Python 3.13 → 3.14",
       "n": [
-        28,
-        30
+        24,
+        18
       ],
-      "delta_s": -0.276,
-      "welch_t": -1.98,
-      "welch_df": 55.3,
-      "permutation_p": 0.0556,
-      "hedges_g": -0.51
+      "delta_s": -0.01,
+      "welch_t": -0.21,
+      "welch_df": 36.0,
+      "permutation_p": 0.8348,
+      "hedges_g": -0.07
+    },
+    {
+      "from": "py314",
+      "to": "optimized",
+      "change": "Execute a 3008 MB, cache zstd no init, skip_* e cliente sob demanda",
+      "n": [
+        18,
+        15
+      ],
+      "delta_s": -0.972,
+      "welch_t": -21.36,
+      "welch_df": 30.5,
+      "permutation_p": 0.0,
+      "hedges_g": -7.08
     }
   ],
   "clustering": [
@@ -187,30 +201,44 @@
     {
       "series": "upgrade",
       "per_sample": {
-        "mean": 7.409,
-        "ci_half": 0.187,
-        "n": 28
+        "mean": 7.594,
+        "ci_half": 0.061,
+        "n": 24
       },
       "per_run": {
-        "mean": 7.396,
-        "ci_half": 0.261,
+        "mean": 7.571,
+        "ci_half": 0.079,
         "n": 10
       },
-      "width_ratio": 1.4
+      "width_ratio": 1.28
     },
     {
       "series": "py314",
       "per_sample": {
-        "mean": 7.133,
-        "ci_half": 0.216,
-        "n": 30
+        "mean": 7.584,
+        "ci_half": 0.075,
+        "n": 18
       },
       "per_run": {
-        "mean": 7.133,
-        "ci_half": 0.165,
+        "mean": 7.585,
+        "ci_half": 0.089,
         "n": 10
       },
-      "width_ratio": 0.77
+      "width_ratio": 1.19
+    },
+    {
+      "series": "optimized",
+      "per_sample": {
+        "mean": 6.612,
+        "ci_half": 0.061,
+        "n": 15
+      },
+      "per_run": {
+        "mean": 6.636,
+        "ci_half": 0.052,
+        "n": 10
+      },
+      "width_ratio": 0.86
     }
   ]
 }

@@ -2442,7 +2442,7 @@ Nesta série os **dois patamares de ambiente de execução** reapareceram: 49 da
 
 \*C3: janelas pós-expiração, não comparáveis às demais — incluem o buffer de 30 s do Scheduler mais o seu atraso de entrega (19,3 s em média nesta série, faixa 1,1–42,1 s), que é a fonte do desvio de ~15,6 s.
 
-**As oito séries**, todas com 10 execuções da suíte, no patamar lento de ambiente de execução:
+**As nove séries**, todas com 10 execuções da suíte, no patamar lento de ambiente de execução:
 
 | Série | `t_remediation` quente | O que mudou nela |
 |---|---|---|
@@ -2452,8 +2452,9 @@ Nesta série os **dois patamares de ambiente de execução** reapareceram: 49 da
 | `results/three-state/` | 6,26 s ± 0,11 | grafo com os três estados formais, C8 e CTRL-05 |
 | `results/session-policy/` | 6,54 s ± 0,11 | disjuntor, controle detectivo e **autoridade por sessão** |
 | **`results/final/`** | **6,54 s ± 0,14** | **identidades de serviço endurecidas** |
-| `results/upgrade/` | 7,41 s ± 0,48 | versões: OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0 (ver *Atualização de versões*) |
-| `results/py314/` | 7,13 s ± 0,58 | runtime Python 3.13 → 3.14 |
+| `results/upgrade/` | 7,59 s ± 0,15 | versões: OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0 (ver *Atualização de versões*) |
+| `results/py314/` | 7,58 s ± 0,15 | runtime Python 3.13 → 3.14 |
+| **`results/optimized/`** | **6,61 s ± 0,11** | **Execute a 3008 MB, cache zstd no init, `skip_*` e cliente sob demanda (atual)** |
 
 ### Validação por Controle
 
@@ -2513,11 +2514,11 @@ Organizadas pelas quatro categorias usuais em experimentação em engenharia de 
 **Validade interna** — as diferenças observadas vêm das mudanças no sistema?
 
 - **O instrumento errou antes de acertar.** Seis defeitos de medição foram encontrados e corrigidos (L10, e a seção *Como estes números foram obtidos* da página de resultados). *Mitigação*: correlação por identidade do evento e não por proximidade temporal, conferência de duração no classificador, e a auditoria de execuções falhas inesperadas (AUDIT) em toda rodada.
-- **O ambiente de execução da Lambda varia** (L12), e numa série isso sozinho produziu uma "melhoria" de 0,64 s. *Mitigação*: comparações feitas só no patamar lento, com o ambiente de cada amostra registrado em `series_facts.json`.
+- **O ambiente de execução da Lambda varia** (L12), e numa série isso sozinho produziu uma "melhoria" de 0,64 s. *Mitigação*: comparações feitas só no patamar lento, com o ambiente de cada amostra registrado em `series_facts.json`, e o limiar entre patamares tirado dos dados de cada série — o fixo deixou de valer quando a atualização de versões moveu os dois patamares (ver *Atualização de versões*).
 - **Cold start confunde tempo de sistema com tempo de plataforma.** *Mitigação*: classificação por evidência (`Init Duration` na invocação exata), sem corte de duração.
 - **Relógio do runner** (L8). *Mitigação*: compensação medida contra o header `Date`; afeta apenas `t_detection`.
 - **O artefato mudou depois da série final.** A série descreve o sistema como estava quando foi medido. As mudanças posteriores ficam fora do trecho cronometrado: a camada de operação (alarmes, filas, retenção, PITR, validação do CloudTrail) e as sincronizações de controles e de exceções rodam fora da execução; a deduplicação de issues, depois dela; o prefixo `aws.` no `source` age no casamento do padrão, antes de a execução começar; e a fila no alvo da regra só entra em falha. A exceção é a política de criptografia v1.1, avaliada dentro do Analyze — mas é a mesma chamada ao OPA, com um conjunto maior de algoritmos aceitos e a mesma decisão para `AES256`, o único que os cenários usam. *Mitigação*: a suíte funcional completa rodou depois de todas elas — 16 de 16 cenários e a auditoria sem execução falha inesperada (`results/post_ops_check.json`). É uma rodada só, sem valor estatístico: confirma o comportamento, não os tempos.
-- **As versões do caminho medido foram atualizadas depois das séries.** OPA 1.4.2 → 1.21.0 (layer do Analyze), OpenTofu → 1.12.6 (layer do Execute), provider AWS 5.100.0 → 6.66.0 (cache do Execute e infra) e `/tmp` do Execute 1024 → 2048 MB. Isso **está** no trecho cronometrado: as séries em `results/` descrevem as versões anteriores. *Mitigação*: a suíte completa passou nas versões novas — 16 de 16 e auditoria limpa (`results/post_upgrade_check.json`) — e os 44 testes Rego e os de contrato passam no OPA 1.21.0. *Medido*: a série `results/upgrade/` quantificou o efeito — +0,871 s na remediação quente, quase todo no Execute (ver *Atualização de versões*).
+- **As versões do caminho medido foram atualizadas depois das séries.** OPA 1.4.2 → 1.21.0 (layer do Analyze), OpenTofu → 1.12.6 (layer do Execute), provider AWS 5.100.0 → 6.66.0 (cache do Execute e infra) e `/tmp` do Execute 1024 → 2048 MB. Isso **está** no trecho cronometrado: as séries em `results/` descrevem as versões anteriores. *Mitigação*: a suíte completa passou nas versões novas — 16 de 16 e auditoria limpa (`results/post_upgrade_check.json`) — e os 44 testes Rego e os de contrato passam no OPA 1.21.0. *Medido*: a série `results/upgrade/` quantificou o efeito — +1,056 s na remediação quente, quase todo no Execute — e a série `results/optimized/` mostrou que a otimização do Execute o devolve (ver *Atualização de versões* e *Otimização do Execute*).
 
 **Validade de conclusão** — as inferências estatísticas se sustentam?
 
@@ -2550,10 +2551,11 @@ Cada afirmação de "esta mudança custou X" ou "esta mudança não mexeu no MTT
 | leitura imediata → três estados | grafo com três estados formais | +0,017 s | 0,50 (22,7) | 0,63 | 0,16 |
 | três estados → sessão escopada | autoridade de remediação por sessão | **+0,280 s** | 9,93 (56,0) | **< 0,0001** | 2,57 |
 | sessão escopada → final | identidades de serviço endurecidas | −0,001 s | −0,03 (45,7) | 0,98 | −0,01 |
-| final → atualização | OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0 | **+0,871 s** | 9,14 (32,1) | **< 0,0001** | 2,38 |
-| atualização → Python 3.14 | runtime das Lambdas | −0,276 s | −1,98 (55,3) | 0,056 | −0,51 |
+| final → atualização | OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0 | **+1,056 s** | 25,76 (47,6) | **< 0,0001** | 7,18 |
+| atualização → Python 3.14 | runtime das Lambdas | −0,010 s | −0,21 (36,0) | 0,83 | −0,07 |
+| Python 3.14 → otimizada | memória, cache e chamadas do Execute | **−0,972 s** | −21,36 (30,5) | **< 0,0001** | −7,08 |
 
-As três mudanças que o texto atribui são as únicas significativas, com efeito grande (g > 1,6) — a maior delas é a atualização de versões, e não uma mudança de desenho; as três que o texto diz não terem mexido no MTTR não são distinguíveis de zero. O teste de permutação não assume forma para a distribuição, e concorda com o de Welch em todas as linhas.
+As mudanças que o texto atribui são as únicas significativas, com efeito grande (|g| > 1,6) — as maiores são a atualização de versões e a otimização do Execute que a desfez, nenhuma delas uma mudança de desenho; as três que o texto diz não terem mexido no MTTR não são distinguíveis de zero. O teste de permutação não assume forma para a distribuição, e concorda com o de Welch em todas as linhas.
 
 **Dependência entre amostras.** As três amostras de uma rodada compartilham a janela e, em geral, o ambiente de execução. Recalculando o intervalo sobre as médias por rodada (n = 10):
 
@@ -2565,8 +2567,9 @@ As três mudanças que o texto atribui são as únicas significativas, com efeit
 | três estados | 6,258 ± 0,041 (n = 29) | 6,261 ± 0,054 | 1,30 |
 | sessão escopada | 6,538 ± 0,040 (n = 29) | 6,536 ± 0,050 | 1,23 |
 | final | 6,537 ± 0,058 (n = 26) | 6,540 ± 0,049 | 0,85 |
-| atualização | 7,409 ± 0,187 (n = 28) | 7,396 ± 0,261 | 1,40 |
-| Python 3.14 | 7,133 ± 0,216 (n = 30) | 7,133 ± 0,165 | 0,77 |
+| atualização | 7,594 ± 0,061 (n = 24) | 7,571 ± 0,079 | 1,28 |
+| Python 3.14 | 7,584 ± 0,075 (n = 18) | 7,585 ± 0,089 | 1,19 |
+| otimizada | 6,612 ± 0,061 (n = 15) | 6,636 ± 0,052 | 0,86 |
 
 Os intervalos por amostra subestimam a incerteza em até 1,5×, o que é esperado com amostras correlacionadas. Nenhuma conclusão muda: os degraus significativos estão a mais de 6 erros-padrão, e os não significativos continuam longe de sê-lo.
 
@@ -2575,18 +2578,18 @@ Os intervalos por amostra subestimam a incerteza em até 1,5×, o que é esperad
 Depois da série final, as dependências do caminho medido foram atualizadas para as versões mais recentes, todas fixadas explicitamente: OPA 1.4.2 → 1.21.0 (layer do Analyze), OpenTofu → 1.12.6 (layer do Execute, agora gerada por `scripts/build_execute.sh`), provider AWS 5.100.0 → 6.66.0 (cache do Execute e infra) e `/tmp` do Execute de 1024 para 2048 MB. Uma nova série de 10 execuções mediu o efeito, com a mesma suíte e o mesmo pipeline de análise.
 
 - **Funcionalmente, nada mudou**: 160/160 cenários aprovados, auditoria de 1.155 linhas todas completas, 269 rodadas de verificação todas confirmadas.
-- **A remediação quente ficou 0,871 s mais lenta** (6,54 → 7,41 s, p < 0,0001, g = 2,38) — o maior degrau de todas as séries, e não vem de uma mudança de desenho.
-- **O custo está no Execute**: a invocação quente passou de 5,51 s para 6,28 s (+0,77 s); o Analyze com o OPA novo, de 0,147 s para 0,175 s (+0,03 s). O provider 6.66.0 tem 780 MB contra 657 MB do 5.100.0, e o OpenTofu o carrega a cada `apply`.
-- **A variância subiu**: IC por rodada de ±0,049 s para ±0,261 s, e o desvio de 0,14 s para 0,48 s.
+- **A remediação quente ficou 1,056 s mais lenta** (6,54 → 7,59 s, p < 0,0001, g = 7,18) — o maior degrau de todas as séries, e não vem de uma mudança de desenho.
+- **O custo está no Execute**: a invocação quente, no patamar lento, passou de 5,51 s para 6,49 s (+0,97 s); o Analyze com o OPA novo, de 0,147 s para 0,175 s (+0,03 s). O provider 6.66.0 tem 780 MB contra 657 MB do 5.100.0, e o OpenTofu o carrega a cada `apply`.
 - **O frio ficou mais caro**: as duas amostras frias levaram 16,2 e 17,2 s.
 - **Custo por incidente**: US$ 0,001295 → 0,001345 (+3,9%), puxado pelos 18% a mais de GB-s do Execute.
-- **O patamar rápido de ambiente de execução (L12) não apareceu**: 0 de 470 invocações, contra 49 na série final — a comparação é entre patamares lentos nas duas séries.
 
-A hipótese H1 continua sustentada — segundos contra dias —, mas o número que descreve o artefato implantado passa a ser o desta série. Manter as versões antigas economizaria ~0,9 s por remediação ao preço de ficar atrás em correções de segurança do provider e do OPA; a atualização foi mantida.
+**O limiar dos patamares estava errado nesta série, e o erro foi achado depois.** A separação entre o patamar rápido e o lento de ambiente de execução (L12) usava um limiar fixo de 4,8 s para a duração do Execute, ajustado às primeiras séries. A atualização subiu os dois patamares: o rápido foi para 5,1–5,4 s, e o limiar passou a chamar tudo de lento — a primeira versão desta seção dizia que o patamar rápido "não apareceu" e reportava +0,871 s, com desvio de 0,48 s, misturando os dois. O limiar agora vem de cada série: o meio do maior vão entre as durações quentes das amostras comparadas, quando esse vão passa de 0,5 s (`scripts/report/collect_series_facts.py`). Nas séries antigas ele reproduz o fixo (4,77 s na final; nenhum patamar rápido em sessão escopada e três estados); nesta, fica em 5,83 s e acha 45 das 470 invocações no patamar rápido. Separados, o desvio volta a 0,15 s, igual ao das outras séries.
+
+A hipótese H1 continua sustentada — segundos contra dias —, mas o número que descreve o artefato implantado passa a ser o desta série. Manter as versões antigas economizaria ~1 s por remediação ao preço de ficar atrás em correções de segurança do provider e do OPA; a atualização foi mantida — e a otimização do Execute devolveu esse segundo (ver abaixo).
 
 ### Python 3.14 (série `results/py314/`)
 
-As cinco funções e as duas layers passaram para `python3.14`. Funcionalmente nada mudou (160/160; auditoria e verificação completas). A remediação quente saiu 0,276 s mais rápida, mas com p = 0,056: **não é distinguível de zero a 5%**, e é registrada como ausência de efeito demonstrável, não como ganho. O dimensionamento ficou igual ao da série anterior (`results/py314/lambda_sizing.json`).
+As cinco funções e as duas layers passaram para `python3.14`. Funcionalmente nada mudou (160/160; auditoria e verificação completas). A remediação quente, no patamar lento, ficou igual: −0,010 s, p = 0,83. Com o limiar fixo antigo, que misturava os patamares, a mesma série parecia 0,28 s mais rápida — um artefato de classificação, não do runtime. O dimensionamento ficou igual ao da série anterior (`results/py314/lambda_sizing.json`).
 
 ### Otimização do Execute (experimento)
 
@@ -2606,21 +2609,21 @@ A instrumentação dos handlers (cada invocação registra o tempo de cada fase)
 - **Memória compra CPU.** 1769 MB é mais lento; 3008 MB tira mais 0,6 s. Carregar o provider a cada `apply` é trabalho de CPU. O custo sobe 32% em GB-s — cerca de US$ 0,00005 por remediação.
 - **O Analyze fica em 512 MB.** A 256 MB ele passa de 0,18 para 0,43 s, com o OPA de 0,10 para 0,24 s: menos memória, menos CPU.
 
-As três primeiras mudanças e os 3008 MB foram adotados, e as chaves do experimento saíram do código — há um caminho só. A série de confirmação é `results/optimized/`. O cache em gzip continua no bucket só para que as variantes de base do experimento possam ser repetidas.
+As três primeiras mudanças e os 3008 MB foram adotados, e as chaves do experimento saíram do código — há um caminho só. **A série de confirmação (`results/optimized/`, 160/160, nenhuma amostra fria em 80) mediu 6,61 s ± 0,11 na remediação quente**: −0,972 s em relação ao Python 3.14 (p < 0,0001), de volta ao nível da série final (6,54 s) com as versões novas. O Execute quente, no patamar lento, foi a 5,53 s — o mesmo 5,51 s da série final. O custo por incidente caiu para US$ 0,001283. O cache em gzip continua no bucket só para que as variantes de base do experimento possam ser repetidas.
 
 ### Dimensionamento das Lambdas
 
-Memória configurada contra a máxima que alguma invocação usou, e a distribuição de duração contra o timeout, na série `results/upgrade/` — lido das linhas `REPORT` de todas as invocações da janela (`scripts/lambda_sizing.py`, resultado em `results/upgrade/lambda_sizing.json`):
+Memória configurada contra a máxima que alguma invocação usou, e a distribuição de duração contra o timeout, na série atual `results/optimized/` — lido das linhas `REPORT` de todas as invocações da janela (`scripts/lambda_sizing.py`, resultado em `results/optimized/lambda_sizing.json`; a mesma tabela das séries `upgrade` e `py314` está nas respectivas pastas):
 
 | Lambda | Memória | Máx. usada | Uso | Invocações | Duração p50 · p99 · máx | Timeout |
 |---|---|---|---|---|---|---|
-| analyze | 512 MB | 174 MB | 34% | 620 | 0,14 · 0,52 · 1,50 s | 60 s |
-| **execute** | **2048 MB** | **1630 MB** | **80%** | 470 | **6,52 · 8,01 · 12,65 s** | 90 s |
-| escalation | 256 MB | 104 MB | 41% | 40 | 0,96 · 1,36 · 1,36 s | 30 s |
-| controls-sync | 128 MB | 98 MB | 77% | 20 | 0,48 · 1,02 · 1,02 s | 15 s |
-| exception-scheduler-sync | 128 MB | 99 MB | 77% | 60 | 0,47 · 0,56 · 0,56 s | 30 s |
+| analyze | 512 MB | 176 MB | 34% | 620 | 0,13 · 0,52 · 1,52 s | 60 s |
+| **execute** | **3008 MB** | **1477 MB** | **49%** | 470 | **5,51 · 6,87 · 7,14 s** | 90 s |
+| escalation | 256 MB | 106 MB | 41% | 40 | 0,94 · 1,33 · 1,33 s | 30 s |
+| controls-sync | 128 MB | 100 MB | 78% | 20 | 0,50 · 0,78 · 0,78 s | 15 s |
+| exception-scheduler-sync | 128 MB | 101 MB | 79% | 60 | 0,46 · 0,58 · 0,58 s | 30 s |
 
-As três funções fora do caminho medido estão no piso ou perto dele, com timeouts folgados. O Execute concentra o tempo e a memória: os 80% vêm do provider de 780 MB carregado a cada `apply`. Na Lambda, memória também compra CPU (cerca de 1 vCPU a 1.769 MB), então uso baixo de memória não quer dizer função superdimensionada — o Analyze usa 34% da memória, mas a avaliação do OPA é CPU — e a tabela diz onde olhar, não o que configurar.
+As três funções fora do caminho medido estão no piso ou perto dele, com timeouts folgados. O Execute concentra o tempo e a memória: o provider de 780 MB é carregado a cada `apply`. A 2048 MB ele usava 80% da memória; a 3008 MB usa 49%, e não é a memória que ele aproveita, é a CPU que vem com ela (ver *Otimização do Execute*). Na Lambda, memória também compra CPU (cerca de 1 vCPU a 1.769 MB), então uso baixo de memória não quer dizer função superdimensionada — o Analyze usa 34% da memória, mas a avaliação do OPA é CPU — e a tabela diz onde olhar, não o que configurar.
 
 **Onde o tempo do Execute está.** O handler é Python, mas quase todo o tempo é do `tofu apply` e do provider AWS, que são binários Go; a avaliação de política do Analyze é o binário do OPA, também Go. Reescrever os handlers em Go só mexeria na fração Python — estimada em décimos de segundo — e o ganho grande, se desejado, estaria em trocar o OpenTofu por chamadas diretas ao SDK, uma decisão de desenho (ver *OpenTofu vs. SDK direto*), não de linguagem.
 
