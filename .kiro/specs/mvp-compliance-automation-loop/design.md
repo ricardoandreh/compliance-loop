@@ -35,6 +35,102 @@ Não há quarto estado. Um controle que não pôde ser avaliado — leitura da c
 A rodada (detecção ou verificação) também não é estado: não muda a classificação do recurso, só a ação que o loop toma diante dela (ver *Orchestrator*). O mesmo vale para o disjuntor de reincidência e para os controles detectivos: uma violação reincidente e uma violação sem remediação automática continuam sendo `S_violation` — o que muda é o que o Plan decide fazer.
 
 
+## Metodologia de Pesquisa: Design Science Research
+
+Este trabalho segue a Design Science Research (DSR): produz um **artefato** para um problema real e gera conhecimento ao construí-lo e avaliá-lo (HEVNER et al., 2004). O processo é o de Peffers et al. (2007); os ciclos, os de Hevner (2007); a estratégia de avaliação, a do FEDS (VENABLE; PRIES-HEJE; BASKERVILLE, 2016). As seções seguintes deste documento são as atividades desse processo — esta seção diz qual é qual.
+
+### Ciclos
+
+| Ciclo (HEVNER, 2007) | Neste trabalho |
+|---|---|
+| **Relevância** — o problema vem do ambiente | Desvios de configuração em nuvem ficam expostos por dias a semanas até a remediação manual (Verizon DBIR), sem trilha que ligue detecção, decisão e correção |
+| **Rigor** — a base de conhecimento | MAPE-K (KEPHART; CHESS, 2003); policy-as-code (OPA/Rego); infraestrutura como código (OpenTofu); menor privilégio (SALTZER; SCHROEDER, 1975; NIST SP 800-207); validade experimental (WOHLIN et al., 2012) |
+| **Design** — construir e avaliar em iteração | Nove séries de medição, cada uma um ciclo de construção e avaliação (*Episódios de avaliação*, abaixo) |
+
+### O artefato
+
+Pelos tipos de March e Smith (1995):
+
+| Tipo | Neste trabalho | Onde |
+|---|---|---|
+| **Construto** | Os três estados formais (`S_nominal`, `S_violation`, `S_exception`) e as métricas `t_detection`, `t_remediation`, `t_exposure`, `t_verified` | *State Classification Model*; *Metodologia de Medição* |
+| **Modelo** | O mapeamento do MAPE-K para serviços AWS, o grafo de estados e o modelo de dados do Knowledge | *MAPE-K Architecture Mapping*; *Data Models* |
+| **Método** | O laço em duas rodadas (detecção e verificação), a autoridade por incidente, o disjuntor de reincidência, a exceção com expiração | *Components and Interfaces*; *Autoridade por incidente* |
+| **Instanciação** | A prova de conceito na AWS: 6 controles em 2 serviços (S3 e EC2) | o repositório |
+
+Na matriz de Gregor e Hevner (2013), a contribuição é de **melhoria**: solução nova — laço autônomo com verificação e autoridade restrita ao incidente — para um problema conhecido, a remediação de conformidade.
+
+### Processo
+
+| Atividade (PEFFERS et al., 2007) | Neste trabalho |
+|---|---|
+| 1. Identificar o problema | Exposição longa e sem trilha de auditoria na remediação manual — ponto de entrada da pesquisa |
+| 2. Definir os objetivos | *Design Goals* e três hipóteses: **H1** — o laço reduz o MTTR de dias para segundos; **H2** — toda avaliação e toda ação deixam registro completo e encadeado; **H3** — o tempo de exposição cai na mesma proporção |
+| 3. Projetar e desenvolver | `requirements.md` e este documento, com 30 propriedades de corretude (*Correctness Properties*) |
+| 4. Demonstrar | 16 cenários na conta real (C1–C10, CTRL-01–06) e traces de execução (*Evidências Experimentais*) |
+| 5. Avaliar | *Estratégia de avaliação*, abaixo |
+| 6. Comunicar | o TCC, este documento e a página de resultados |
+
+As atividades 3 a 5 se repetiram nove vezes.
+
+### Estratégia de avaliação
+
+**Technical Risk & Efficacy** (VENABLE; PRIES-HEJE; BASKERVILLE, 2016): avaliação **artificial**, **formativa** ao longo das séries e **somativa** na última. É a estratégia indicada quando o risco principal é técnico — o laço convergir, não oscilar, não ampliar privilégio — e não de aceitação por usuários.
+
+**Métodos** (tipologia de HEVNER et al., 2004):
+
+| Método | Aplicação | Evidência |
+|---|---|---|
+| **Experimental** — experimento controlado | 9 séries × 10 execuções da suíte completa; entre séries, teste de Welch, teste de permutação e g de Hedges; IC 95% por amostra e por rodada | `results/*/`, *Validação estatística das comparações* |
+| **Experimental** — simulação | Falhas injetadas na camada de operação; experimento de variantes de desempenho do Execute | *Falhas injetadas*; *Otimização do Execute* |
+| **Teste** — caixa-preta | 16 cenários na conta real, 160/160 por série | `scripts/integration_test.py` |
+| **Teste** — caixa-branca | 168 testes (unitários, de propriedade, de contrato) e 44 de política Rego, no CI a cada push | *Testing Strategy* |
+| **Analítico** — estático | Propriedades do grafo verificadas sem executar: no máximo duas execuções por incidente, a verificação nunca remedia, issue só em linha escalada (P23) | *Testes estruturais do grafo* |
+| **Analítico** — arquitetura e otimização | Custo medido por incidente, dimensionamento das Lambdas, tempo por fase do Execute | *Custo em dinheiro, medido*; *Dimensionamento das Lambdas* |
+| **Descritivo** | Cenários com traces reais; argumentação sobre alternativas (Standard vs. Express, OpenTofu vs. SDK, fetcher genérico vs. código carregado) | *Evidências Experimentais*; seções de decisão |
+
+### Episódios de avaliação
+
+Cada série mediu o sistema como estava, e o resultado orientou a iteração seguinte. Δ é a variação do MTTR quente, no patamar lento, sobre a série anterior:
+
+| Série | Mudança | Δ MTTR | O que a avaliação ensinou |
+|---|---|---|---|
+| eco | confirmação pelo eco do CloudTrail | — | converge, mas a confirmação depende de um evento que o próprio sistema provoca |
+| duas rodadas | verificação explícita, espera de 15 s | +0,18 s | a verificação é barata; a espera custava 15 s na convergência |
+| leitura imediata | espera removida | +0,04 s (n.s.) | nenhuma leitura desatualizada — a espera era desnecessária |
+| três estados | grafo com os estados formais | +0,02 s (n.s.) | formalizar o modelo não custa |
+| sessão escopada | disjuntor, controle detectivo, autoridade por incidente | +0,28 s | o menor privilégio tem preço, e ele é pequeno |
+| final | identidades de serviço endurecidas | 0,00 s (n.s.) | condições de IAM não custam |
+| upgrade | OPA, OpenTofu e provider AWS novos | +1,06 s | a dependência pesa mais que qualquer mudança de desenho |
+| Python 3.14 | runtime | −0,01 s (n.s.) | a linguagem dos handlers não é gargalo |
+| **otimizada** | Execute a 3008 MB, cache no init | −0,97 s | **avaliação somativa**: o segundo perdido no upgrade volta |
+
+### Resultado da avaliação somativa
+
+| Hipótese | Resultado (série `results/optimized/`) |
+|---|---|
+| **H1** | **6,61 s** ± 0,11 de remediação, contra dias a semanas do processo manual |
+| **H2** | 1.160 linhas de auditoria, todas completas; 430 remediações, cada uma com exatamente uma verificação; cada escrita no CloudTrail leva o `violation_id` como nome da sessão |
+| **H3** | **13,87 s** ± 1,71 de exposição, dos quais 7,90 s são a entrega do CloudTrail, fora do sistema |
+
+O detalhe, com intervalos e testes, está em *Síntese por Hipótese*; as ameaças à validade, em *Ameaças à validade*.
+
+### Limites da avaliação
+
+1. **Nenhum episódio naturalista.** Uma conta, uma região, violações sintéticas; sem uso em produção nem avaliação com praticantes (L6). Pelo FEDS, o próximo episódio seria naturalista — um piloto em conta real ou uma avaliação com especialistas.
+2. **O baseline manual não foi medido.** Vem do Verizon DBIR; a comparação de H1 é de ordem de grandeza.
+3. **Utilidade percebida não foi avaliada.** A avaliação cobre eficácia e eficiência técnica, não aceitação.
+
+### Conhecimento de desenho
+
+Além do artefato, a avaliação produziu conhecimento reaproveitável em outros laços de remediação:
+
+- **O custo da remediação está na ferramenta, não no serviço**: remediar S3 e EC2 custa o mesmo, porque o tempo é a inicialização do OpenTofu e do provider
+- **A exposição é dominada pela detecção**: reduzi-la exige trocar o Monitor, não otimizar o laço
+- **Menor privilégio por incidente é viável**: +0,28 s, e mais estreito que o controle por atributo — as APIs usadas nem aceitam condição de tag (*Modelo de Permissões*)
+- **Verificação sem espera**: 2.760 leituras imediatas após a escrita, todas consistentes
+- **Um laço automático precisa de disjuntor**: sem ele, uma remediação que a política não aceita oscila sem limite (L11)
+
 ## Architecture
 
 ### High-Level Architecture Diagram
@@ -1444,15 +1540,15 @@ A estratégia planejada no início (LocalStack, mocks do GitHub, testes de carga
 
 | Camada | Onde | Quantidade | Precisa da AWS | O que prova |
 |---|---|---|---|---|
-| Unitários | `tests/unit` | 126 | não | handlers (Analyze, Execute, escalação, sincronizações, reprocessamento do intake) e propriedades estruturais do grafo da máquina de estados |
+| Unitários | `tests/unit` | 129 | não | handlers (Analyze, Execute, escalação, sincronizações, reprocessamento do intake) e propriedades estruturais do grafo da máquina de estados |
 | Propriedade (Hypothesis, 100 exemplos cada) | `tests/property` | 13 | não | Properties 3–6, 8 e 15–18 sobre entradas geradas |
-| Contrato | `tests/contract` | 23 | parte | remediação × política (o estado que cada `remediation.tf` produz, avaliado pela política com o OPA da layer); padrão do EventBridge e estado `ResolveResource` avaliados pela própria AWS (`test-event-pattern`, `test-state`) |
+| Contrato | `tests/contract` | 26 | parte | permissões de leitura da Analyze × leituras dos controles; remediação × política (o estado que cada `remediation.tf` produz, avaliado pela política com o OPA da layer); padrão do EventBridge e estado `ResolveResource` avaliados pela própria AWS (`test-event-pattern`, `test-state`) |
 | Política (Rego) | `controls/*/policy_test.rego` | 44 | não | cada política aceita e recusa o que deve |
 | Integração | `scripts/integration_test.py` | 16 cenários + auditoria | sim | o laço inteiro, na conta real |
 | Séries | `scripts/benchmark.py` | 10 execuções da suíte por configuração | sim | as hipóteses, com intervalo de confiança e teste estatístico |
 | Operação | `scripts/ops_fault_injection.py` | 2 falhas injetadas | sim | os alarmes disparam, publicam e viram issue |
 
-O CI (`.github/workflows/tests.yml`) roda a cada push as camadas que não precisam de conta — Rego, pytest (os testes de contrato que chamam a AWS se pulam sem credenciais: 149 passam e 10 são pulados) e `tofu fmt`/`validate` — com versões fixadas: Python 3.14, OPA lido do script da layer, OpenTofu 1.12.6.
+O CI (`.github/workflows/tests.yml`) roda a cada push as camadas que não precisam de conta — Rego, pytest (os testes de contrato que chamam a AWS se pulam sem credenciais: 158 passam e 10 são pulados) e `tofu fmt`/`validate` — com versões fixadas: Python 3.14, OPA lido do script da layer, OpenTofu 1.12.6.
 
 ### Testes de política (Rego)
 
@@ -1462,7 +1558,7 @@ Cada controle tem um `policy_test.rego` com os casos conformes, os violados e as
 
 ### Testes estruturais do grafo
 
-`tests/unit/test_state_machine.py` lê a definição da máquina e verifica propriedades que nenhum teste de exemplo cobriria: a classificação tem exatamente os três estados formais; todo `Choice` tem `Default`; todo estado é alcançável; toda saída de `RegisterViolation` passa pelo `PlanAction`, cuja primeira regra impede a rodada de verificação de alcançar `InvokeExecute`; só uma rodada de detecção agenda verificação; e cada `Retry` usa o prefixo de erro da sua integração (`DynamoDb.*` na `aws-sdk`, `DynamoDB.*` na otimizada).
+`tests/unit/test_state_machine.py` lê a definição da máquina e verifica propriedades que nenhum teste de exemplo cobriria: a classificação tem exatamente os três estados formais; todo `Choice` tem `Default`; todo estado é alcançável; toda saída de `RegisterViolation` passa pelo `PlanAction`, cuja primeira regra impede a rodada de verificação de alcançar `InvokeExecute`; só uma rodada de detecção agenda verificação; só uma linha escalada pode receber issue (P23); e cada `Retry` usa o prefixo de erro da sua integração (`DynamoDb.*` na `aws-sdk`, `DynamoDB.*` na otimizada).
 
 ### Integração e medição
 
@@ -2510,7 +2606,7 @@ As três funções fora do caminho medido estão no piso ou perto dele, com time
   | sessão escopada | 6,56 s (n = 10) | 6,53 s (n = 10) | 6,52 s (n = 9) | 6,51 s (n = 10) | 0,05 s |
 
   A amplitude entre caminhos (0,05–0,22 s) é da mesma ordem que a variação do **mesmo** caminho entre séries (até 0,16 s no CTRL-05), então nenhuma diferença entre rotas ou entre serviços é sustentada pelos dados. O que os dados sustentam é o contrário do intuitivo: remediar uma configuração de conta do EC2 custa o mesmo que remediar um bucket, porque o custo é a inicialização do `tofu` e do provider, não o serviço
-- **Custo de ambiente frio** (série final, a última com frios na suíte): +4 a +5 s quando o Execute sobe do zero e baixa o cache de provider; +1,9 s quando só o Analyze está frio; +0,7 s numa classificação sem remediação (C6)
+- **Custo de ambiente frio** (série final; o upgrade teve dois frios, de 16,2 e 17,2 s, +9 s sobre o quente, antes do cache ir para o init; a otimizada, nenhum): +4 a +5 s quando o Execute sobe do zero e baixa o cache de provider; +1,9 s quando só o Analyze está frio; +0,7 s numa classificação sem remediação (C6)
 - Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual. Redução de **ordens de grandeza** (segundos vs. dias), em qualquer regime
 
 **H2 — Rastreabilidade**
@@ -2810,3 +2906,31 @@ O caminho por eventos continua o principal — é ele que dá a exposição de s
 **Consequência**: nenhuma hoje — nenhum par de controles tem essa forma. Um controle futuro que a tenha avaliaria o dado errado sem erro visível.
 
 **Como fechar**: incluir os `params` serializados na chave do cache. Não feito pelo mesmo motivo do L18: mudança no Analyze, fora do conjunto medido pela série atual.
+
+## Referências
+
+GARTNER. *[título a completar]*. 2025. — citado em *Posicionamento*; a referência completa está na bibliografia do TCC.
+
+GREGOR, S.; HEVNER, A. R. Positioning and presenting design science research for maximum impact. *MIS Quarterly*, v. 37, n. 2, p. 337–355, 2013.
+
+HEVNER, A. R. A three cycle view of design science research. *Scandinavian Journal of Information Systems*, v. 19, n. 2, p. 87–92, 2007.
+
+HEVNER, A. R.; MARCH, S. T.; PARK, J.; RAM, S. Design science in information systems research. *MIS Quarterly*, v. 28, n. 1, p. 75–105, 2004.
+
+KEPHART, J. O.; CHESS, D. M. The vision of autonomic computing. *Computer*, v. 36, n. 1, p. 41–50, 2003.
+
+MARCH, S. T.; SMITH, G. F. Design and natural science research on information technology. *Decision Support Systems*, v. 15, n. 4, p. 251–266, 1995.
+
+PEFFERS, K.; TUUNANEN, T.; ROTHENBERGER, M. A.; CHATTERJEE, S. A design science research methodology for information systems research. *Journal of Management Information Systems*, v. 24, n. 3, p. 45–77, 2007.
+
+REASON, J. Human error: models and management. *BMJ*, v. 320, n. 7237, p. 768–770, 2000.
+
+ROSE, S.; BORCHERT, O.; MITCHELL, S.; CONNELLY, S. *Zero Trust Architecture*. NIST Special Publication 800-207. Gaithersburg: National Institute of Standards and Technology, 2020.
+
+SALTZER, J. H.; SCHROEDER, M. D. The protection of information in computer systems. *Proceedings of the IEEE*, v. 63, n. 9, p. 1278–1308, 1975.
+
+VENABLE, J.; PRIES-HEJE, J.; BASKERVILLE, R. FEDS: a framework for evaluation in design science research. *European Journal of Information Systems*, v. 25, n. 1, p. 77–89, 2016.
+
+VERIZON. *Data Breach Investigations Report*. [edição a completar]. — fonte do baseline de remediação manual (H1).
+
+WOHLIN, C.; RUNESON, P.; HÖST, M.; OHLSSON, M. C.; REGNELL, B.; WESSLÉN, A. *Experimentation in software engineering*. Berlin: Springer, 2012.

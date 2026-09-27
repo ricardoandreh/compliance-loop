@@ -262,8 +262,8 @@ artefatos de build ignorados pelo git — precisam existir localmente antes do
 
 | Camada | O que cobre | Onde | Quantidade |
 |---|---|---|---|
-| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, alarmes que viram issue, sincronização de exceções, reprocessamento do intake | `tests/unit`, `tests/property` | 136 |
-| Contrato | remediação × política (OPA); padrão do EventBridge (identidades e origem forjada) e estado `ResolveResource` avaliados pela própria AWS | `tests/contract` | 23 |
+| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, alarmes que viram issue, sincronização de exceções, reprocessamento do intake | `tests/unit`, `tests/property` | 142 |
+| Contrato | permissões de leitura da Analyze × leituras dos controles; remediação × política (OPA); padrão do EventBridge (identidades e origem forjada) e estado `ResolveResource` avaliados pela própria AWS | `tests/contract` | 26 |
 | Políticas Rego | casos conformes, violados e entradas enganosas, por controle | `controls/*/policy_test.rego` | 44 |
 | Integração | 16 cenários contra a conta real | `scripts/integration_test.py` | 16 |
 
@@ -312,7 +312,7 @@ repete a suíte, preserva o JSON bruto de cada rodada e agrega:
 lambdas/analyze/.venv/bin/python scripts/benchmark.py --runs 10 --out results/<série>
 
 # Reagrega o que já está em disco, sem tocar na AWS
-lambdas/analyze/.venv/bin/python scripts/benchmark.py --aggregate-only --out results/three-state
+lambdas/analyze/.venv/bin/python scripts/benchmark.py --aggregate-only --out results/optimized
 ```
 
 Reporta n, média, desvio amostral, mediana, amplitude e IC 95% por cenário e
@@ -322,23 +322,24 @@ de sucesso aparece ao lado. Métricas com n=1 são marcadas como observação
 
 ## Cenários validados
 
-Todos aprovados em **10 de 10** execuções da suíte (160/160, `results/final/`).
-Valores: média ± desvio, **separados em regime quente e frio** por evidência de
-`Init Duration` na invocação da Lambda (`scripts/classify_cold_starts.py`).
+Todos aprovados em **10 de 10** execuções da suíte (160/160, `results/optimized/`).
+Valores: média ± desvio. Nenhuma amostra foi fria nesta série (classificação por
+`Init Duration` na invocação da Lambda, `scripts/classify_cold_starts.py`); as médias
+de remediação juntam os dois patamares de ambiente — separados, estão em *Performance*.
 
-| Cenário | Descrição | Resultado | Quente | Frio |
-|---|---|---|---|---|
-| C1 | Violação simples via console | Remedia e verifica S_nominal | `t_remediation` 6,35s ± 0,46 (n=9) | 11,69s |
-| C2 | Violação com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,50s ± 0,07 | nenhuma |
-| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 6,46s ± 0,39 | nenhuma |
-| C4 | Falha do sistema (bucket inexistente) | Sem estado; escala via GitHub Issue | `t_escalation` 0,46s ± 0,03 | nenhuma |
-| C5 | Violação originada por IaC externo | Detecta, remedia e verifica | `t_remediation` 6,53s ± 0,19 (n=9) | 10,43s |
-| C6 | Recurso já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,48s ± 0,04 (n=9) | 1,22s |
-| C7 | Novo controle → EventBridge atualizado | DynamoDB Stream dispara controls-sync | 15,63s ± 0,04 | — |
-| C8 | Remediação negada por IAM | S_violation preservado, escala com o erro | `t_escalation` 6,04s ± 0,51 | nenhuma |
-| C9 | Violação reincidente | Disjuntor escala sem remediar de novo | `t_escalation` 0,73s ± 0,05 | nenhuma |
-| C10 | Sessão de remediação escopada | Template adulterado barrado por IAM | 10/10 | — |
-| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4, C8, C9 e CTRL-06 | — | — |
+| Cenário | Descrição | Resultado | Métrica (n=10) |
+|---|---|---|---|
+| C1 | Acesso público do S3 desligado pelo console | Remedia e verifica S_nominal | `t_remediation` 5,87s ± 0,81 |
+| C2 | Acesso público com exceção ativa | Não remedia, registra S_exception | `t_classification` 0,49s ± 0,04 |
+| C3 | Exceção expira → remediação | Scheduler dispara, remedia e verifica | `t_remediation` 6,09s ± 0,77 |
+| C4 | Falha do sistema (bucket inexistente) | Sem estado; escala via GitHub Issue | `t_escalation` 0,45s ± 0,04 |
+| C5 | Acesso público desligado por IaC externo | Detecta, remedia e verifica | `t_remediation` 5,68s ± 0,71 |
+| C6 | Bucket já conforme | Confirma S_nominal, sem Execute | `t_classification` 0,49s ± 0,04 |
+| C7 | Controle publicado e removido | DynamoDB Stream dispara controls-sync | `t_sync_insert` 15,62s ± 0,01 |
+| C8 | Remediação negada pelo IAM | S_violation preservado, escala com o erro | `t_escalation` 5,98s ± 0,77 |
+| C9 | Mesma violação repetida | Disjuntor escala na 4ª, sem remediar | `t_escalation` 0,73s ± 0,06 |
+| C10 | Template adulterado para outro bucket | Sessão escopada nega a escrita | 10/10 |
+| AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4, C8, C9 e CTRL-06 | 10/10 |
 
 O **disjuntor disparou na quarta violação em 10 de 10 rodadas**: com limiar 3, as três
 primeiras são remediadas e a quarta é a primeira a enxergar três remediações na janela.
@@ -347,12 +348,12 @@ primeiras são remediadas e a quarta é a primeira a enxergar três remediaçõe
 
 | Teste | Controle | Verificação | Resultado (n=10) |
 |---|---|---|---|
-| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | `t_total` 31,53s ± 3,12 |
-| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | `t_total` 26,95s ± 0,17 |
-| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | `t_total` 26,84s ± 0,22 |
-| CTRL-04 | ctrl-s3-encryption | SSEAlgorithm = AES256 | `t_total` 27,33s ± 1,22 |
-| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | `t_remediation` 6,07s ± 0,49 |
-| CTRL-06 | ctrl-ebs-volume-encrypted (detectivo) | Volume sem criptografia escala sem remediação | `t_escalation` 0,78s ± 0,05 |
+| CTRL-01 | ctrl-s3-public-block | All 4 settings = true | `t_total` 29,10s ± 1,82 |
+| CTRL-02 | ctrl-s3-ssl-only | DenyNonSSLRequests present | `t_total` 27,33s ± 1,35 |
+| CTRL-03 | ctrl-s3-versioning | Versioning = Enabled | `t_total` 27,12s ± 0,71 |
+| CTRL-04 | ctrl-s3-encryption | Classificado conforme (AES256 padrão) | `t_total` 26,97s ± 0,17 |
+| CTRL-05 | ctrl-ebs-encryption-default | EbsEncryptionByDefault = true | `t_remediation` 5,77s ± 0,79 |
+| CTRL-06 | ctrl-ebs-volume-encrypted (detectivo) | Volume sem criptografia escala sem remediação | `t_escalation` 0,86s ± 0,12 |
 
 O `t_total` das CTRL-* mede o **teste**: criação de bucket, esperas de CloudTrail e a
 espera pelas rodadas de verificação. Não é comparável ao `t_remediation`.
@@ -364,27 +365,26 @@ recurso (L14).
 
 ## Performance
 
-Agregado de **10 execuções completas da suíte** na configuração final
-(160/160 cenários aprovados, `results/final/`), via `scripts/benchmark.py`.
+Agregado de **10 execuções completas da suíte** na configuração atual
+(160/160 cenários aprovados, `results/optimized/`), via `scripts/benchmark.py`.
 Desvio amostral (n−1) e IC 95% pela distribuição t.
 
 Uma Lambda roda numa microVM que a AWS cria e reaproveita, e o hospedeiro varia: nesta
-série, 49 das 470 invocações do Execute ficaram num patamar ~1,2s mais rápido, todas no
+série, 123 das 470 invocações do Execute ficaram num patamar ~1,5s mais rápido, todas no
 mesmo ambiente de execução. Por isso as comparações entre séries são feitas no **patamar
-lento**, o único presente em todas (L12).
+lento**, o único presente em todas (L12). Nenhuma das 80 amostras foi fria.
 
-| Métrica | Quente (patamar lento) | Frio |
+| Métrica | Quente (patamar lento) | Patamar rápido |
 |---|---|---|
-| **H1 — t_remediation** (C1 · C3 · C5) | **6,54s** ± 0,14 · IC [6,48 · 6,60] · n=26 | 10,43s e 11,69s |
-| **H3 — t_exposure** (C1 · C5) | **14,56s** ± 1,74 · IC [13,67 · 15,46] · n=17 | 18,52s e 18,95s |
-| **t_verified** (convergência confirmada) | **14,87s** ± 1,75 · n=17 | — |
-| t_detection (evento → SFN start) | sem classe: 8,13s ± 1,68 · IC [7,34 · 8,92] · n=20 | |
+| **H1 — t_remediation** (C1 · C3 · C5) | **6,61s** ± 0,11 · IC [6,55 · 6,67] · n=15 | 5,15s ± 0,13 · n=15 |
+| **H3 — t_exposure** (C1 · C5) | **13,87s** ± 1,71 · IC [12,56 · 15,19] · n=9 | |
+| **t_verified** (convergência confirmada) | **14,19s** ± 1,70 · n=9 | |
+| t_detection (evento → SFN start) | sem classe: 7,90s ± 1,46 · IC [7,21 · 8,58] · n=20 | |
 
 **Toda a variação do MTTR entre as seis primeiras séries é atribuível, estado a estado:**
 6,03s no laço por eco → +0,18s do estado que agenda a verificação → +0,28s da autoridade
 por sessão = 6,54s. Leitura imediata, grafo de três estados, disjuntor, controle detectivo
-e endurecimento das identidades de serviço **não** mexeram no MTTR — o último foi medido
-em 6,54s ± 0,14 contra 6,54s ± 0,11 da série anterior.
+e endurecimento das identidades de serviço **não** mexeram no MTTR.
 
 **A atualização de versões custou mais que qualquer mudança de desenho, e a
 otimização do Execute a devolveu.** Com OPA 1.21.0, OpenTofu 1.12.6 e o provider AWS
@@ -392,33 +392,33 @@ otimização do Execute a devolveu.** Com OPA 1.21.0, OpenTofu 1.12.6 e o provid
 p < 0,0001), quase toda no Execute, que carrega um provider 19% maior a cada
 `apply`. O Python 3.14 não mudou nada (`results/py314/`, −0,01s, p = 0,83). Com o
 Execute a 3008 MB, o cache do provider em zstd baixado no init, os `skip_*` do provider
-e o cliente escopado sob demanda (`results/optimized/`, 160/160), voltou a
+e o cliente escopado sob demanda (`results/optimized/`), voltou a
 **6,61s ± 0,11** (−0,97s, p < 0,0001) — o nível da série final, com as versões novas.
-É o número que descreve o artefato implantado hoje. O Python do handler responde por
-3% do tempo do Execute; os outros 97% são o `tofu` (`results/perf/`).
+O Python do handler responde por 3% do tempo do Execute; os outros 97% são o `tofu`
+(`results/perf/`).
 
-**A exposição é dominada pela detecção:** desvio de 1,68s na detecção contra 0,14s na
+**A exposição é dominada pela detecção:** desvio de 1,46s na detecção contra 0,11s na
 remediação, com `t_detection + t_remediation = t_exposure` em todas as execuções. Reduzir
 a exposição exigiria trocar o Monitor, não otimizar o loop.
 
-**Leitura imediata na verificação, medida.** Somando as quatro séries sem espera fixa são
-**1.463 leituras de controle, todas conformes**, feitas ~0,35s depois da escrita (taxa de
-leitura desatualizada < ~0,2% com 95% de confiança). O `t_verified` fica **0,31s** acima da
-exposição, contra 15,4s quando havia a espera de 15s.
+**Leitura imediata na verificação, medida.** Somando as sete séries sem espera fixa são
+**2.760 leituras de controle, todas conformes**, feitas ~0,35s depois da escrita. O
+`t_verified` fica **0,32s** acima da exposição, contra 15,4s quando havia a espera de 15s.
 
-**Cold start** é raro e não custa sempre o mesmo: +4 a +5s quando o Execute sobe do zero e
-baixa o cache do provider, +1,9s quando só o Analyze está frio, +0,7s numa classificação
-sem remediação.
+**Cold start** é raro e não custa sempre o mesmo: ~10s de Execute frio a 3008 MB
+(~3,8s de init, que baixa e descompacta o cache, + ~6,1s de handler), contra 16–17s
+no upgrade, quando o cache ainda era baixado no handler.
 
-A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache (~156MB, provider 6.66.0), baixado e extraído em `/tmp` no cold start, compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
+A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S3 como cache
+(123 MB em zstd, 780 MB extraído, provider 6.66.0), baixado e extraído em `/tmp` no init
+e compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 
 Relatório com os gráficos interativos e a tabela completa: `results/report.html`.
-Cada série fica numa pasta própria — `results/echo/`, `results/two-round/`,
-`results/no-wait/` e `results/three-state/` (a atual) — com os `run-NN.json` brutos,
-e a página é regenerada a partir delas:
+Cada série fica numa pasta própria — de `results/echo/` a `results/optimized/` (a
+atual), nove ao todo — com os `run-NN.json` brutos, e a página é regenerada a partir delas:
 
 ```bash
-S=results/three-state
+S=results/optimized
 # Com acesso à conta (uma vez por série, enquanto o histórico existe):
 lambdas/analyze/.venv/bin/python scripts/classify_cold_starts.py --results $S
 lambdas/analyze/.venv/bin/python scripts/verification_consistency.py --results $S

@@ -12,14 +12,14 @@ Este documento é a especificação inicial do MVP e fica preservado como tal. O
 
 | Critério | Especificado | Construído | Justificativa |
 |---|---|---|---|
-| 1.1 | captura em até 5 s | 7,2–8,1 s em média; 4 de 120 amostras abaixo de 5 s | latência de entrega do CloudTrail, fora do sistema — *não atendido* |
+| 1.1 | captura em até 5 s | 7,2–8,1 s em média por série; 5 de 180 amostras (nove séries) abaixo de 5 s | latência de entrega do CloudTrail, fora do sistema — *não atendido* |
 | 1.6, 10.1 | apenas `ctrl-s3-public-block` | seis controles em dois serviços | extensibilidade: controles cadastrados em tabela (*Arquitetura de Extensibilidade*) |
 | 2.5 | encerrar após a remediação | agenda uma rodada de verificação antes de encerrar | fechamento explícito do laço (*Fechamento do laço em duas rodadas*) |
 | 3.2 | política `s3_public_access` | uma política Rego por controle | idem 1.6 |
 | 3.6, 5.3 | índice por `control_id` | índice `resource-control-index` | consulta pontual por recurso e controle, sem varredura |
 | 4.2–4.4 | política no pacote da Lambda | política no S3, versionada por `policy_version` | mudar política sem novo deploy da Lambda |
 | 6.1 | o Analyze grava a linha | o orquestrador grava; falha de avaliação não gera linha | Analyze sem efeitos colaterais; modelo de três estados |
-| 11.1 | detecção em até 10 s | 109 de 120 amostras (91%) | idem 1.1 — *parcialmente atendido* |
+| 11.1 | detecção em até 10 s | 164 de 180 amostras (91%), pior caso 12,08 s | idem 1.1 — *parcialmente atendido* |
 | 15.3, 15.7 | apenas `bucketName` | também volume e recurso de conta | controles de EC2 |
 | 15.6 | descartar evento incompleto | identificador sintético da conta | o EventBridge só admite eventos de controles cadastrados (L3) |
 | 17.1–17.3 | 15 / 45 / 60 s | 60 / 90 / 600 s | os valores originais não cobriam o pior caso (*Property 28*) |
