@@ -1356,11 +1356,11 @@ For any GitHub Issue created for a failed remediation, the issue number returned
 
 **Validates: Requirements 8.12, 19.1, 19.4**
 
-### Property 23: GitHub Issue ID Only on Escalated Violations
+### Property 23: GitHub Issue ID Null for Non-Escalated Violations
 
-For any violations_log entry, github_issue_id SHALL be present only if the entry was escalated — remediation_status = failed, or state = S_violation without remediation_status (PlanAction escalated it: breaker, manual or detective control, non-convergence). Entries in S_nominal, S_exception, or with remediation_status = success SHALL have no github_issue_id.
+For any violations_log entry where Execute was not invoked or Execute succeeded, the github_issue_id field SHALL be null.
 
-*Por que mudou*: o enunciado original ("nula quando o Execute não foi invocado ou teve sucesso") ficou falso quando entraram os controles detectivos, o disjuntor e a rodada de verificação — os três escalam **sem** invocar o Execute, e a linha ganha a issue corretamente.
+**Revisado**: o enunciado ficou falso quando entraram os controles detectivos, o disjuntor e a rodada de verificação — os três escalam **sem** invocar o Execute, e a linha ganha a issue corretamente. O que vale: `github_issue_id` só aparece numa linha escalada — `remediation_status = failed`, ou `state = S_violation` sem `remediation_status` (o `PlanAction` escalou: disjuntor, controle manual ou detectivo, não convergência). Linhas em `S_nominal`, em `S_exception` ou com `remediation_status = success` não têm issue.
 
 *Como é garantida*, por construção, em três pontos verificados estaticamente (`tests/unit/test_state_machine.py`):
 1. Só a Lambda de escalação escreve `github_issue_id`, e só por `UpdateItem` condicionado a `attribute_exists(violation_id)` — nunca cria linha
