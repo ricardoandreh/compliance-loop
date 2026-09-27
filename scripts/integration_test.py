@@ -1183,22 +1183,22 @@ def test_ctrl_ebs_volume_encrypted():
 
 
 TESTS = [
-    ("C1", "Violação simples → remediação automática", test_c1),
-    ("C2", "Exceção ativa → S_exception", test_c2),
-    ("C3", "Exceção expira → remediação", test_c3),
-    ("C4", "Falha do sistema (bucket inexistente) → escalação", test_c4),
-    ("C5", "Violação por IaC → remediação", test_c5),
-    ("C6", "Recurso já conforme → S_nominal", test_c6),
-    ("C7", "Controls-sync → EventBridge dinâmico", test_c7),
-    ("C8", "Remediação falha → escalação", test_c8),
-    ("C9", "Violação reincidente → disjuntor", test_c9),
-    ("C10", "Sessão de remediação escopada ao recurso", test_c10),
-    ("CTRL-01", "ctrl-s3-public-block", test_ctrl_s3_public_block),
-    ("CTRL-02", "ctrl-s3-ssl-only", test_ctrl_s3_ssl_only),
-    ("CTRL-03", "ctrl-s3-versioning", test_ctrl_s3_versioning),
-    ("CTRL-04", "ctrl-s3-encryption", test_ctrl_s3_encryption),
-    ("CTRL-05", "ctrl-ebs-encryption-default", test_ctrl_ebs_encryption_default),
-    ("CTRL-06", "ctrl-ebs-volume-encrypted (detectivo)", test_ctrl_ebs_volume_encrypted),
+    ("C1", "Acesso público do S3 desligado pelo console → remediação", test_c1),
+    ("C2", "Acesso público do S3 com exceção ativa → S_exception, sem remediar", test_c2),
+    ("C3", "Exceção de acesso público expira → reavaliação e remediação", test_c3),
+    ("C4", "Bucket inexistente → escalação por falha do sistema", test_c4),
+    ("C5", "Acesso público do S3 desligado por IaC externo → remediação", test_c5),
+    ("C6", "Bucket já conforme → S_nominal, sem remediar", test_c6),
+    ("C7", "Controle publicado e removido → regra do EventBridge atualizada", test_c7),
+    ("C8", "Remediação negada pelo IAM → escalação com estado preservado", test_c8),
+    ("C9", "Mesma violação repetida → disjuntor escala na 4ª", test_c9),
+    ("C10", "Template adulterado para outro bucket → sessão escopada nega", test_c10),
+    ("CTRL-01", "S3: acesso público bloqueado", test_ctrl_s3_public_block),
+    ("CTRL-02", "S3: TLS obrigatório na bucket policy", test_ctrl_s3_ssl_only),
+    ("CTRL-03", "S3: versioning ativo", test_ctrl_s3_versioning),
+    ("CTRL-04", "S3: encryption padrão", test_ctrl_s3_encryption),
+    ("CTRL-05", "EBS: criptografia padrão da conta", test_ctrl_ebs_encryption_default),
+    ("CTRL-06", "EBS: volume sem criptografia → escalação (detectivo)", test_ctrl_ebs_volume_encrypted),
 ]
 
 

@@ -15,6 +15,7 @@ import glob
 import json
 import os
 import statistics
+import sys
 
 # Which metric each scenario's headline number is, and what it means. Scenarios
 # absent here still appear in the table; they just have no featured chart.
@@ -36,24 +37,12 @@ PRIMARY = {
     "CTRL-06": "t_escalation",
 }
 
-LABELS = {
-    "C1": "Violação simples via console",
-    "C2": "Violação com exceção ativa",
-    "C3": "Exceção expira → remediação",
-    "C4": "Falha do sistema → escalação",
-    "C8": "Remediação falha → escalação",
-    "C9": "Violação reincidente → disjuntor",
-    "C5": "Violação originada por IaC",
-    "C6": "Recurso já conforme",
-    "C7": "Novo controle → EventBridge",
-    "CTRL-01": "ctrl-s3-public-block",
-    "CTRL-02": "ctrl-s3-ssl-only",
-    "CTRL-03": "ctrl-s3-versioning",
-    "CTRL-04": "ctrl-s3-encryption",
-    "CTRL-05": "ctrl-ebs-encryption-default",
-    "CTRL-06": "ctrl-ebs-volume-encrypted (detectivo)",
-    "AUDIT": "Ausência de falhas inesperadas",
-}
+# The scenario descriptions are the suite's own (scripts/integration_test.py,
+# TESTS): one list, so the page never names a scenario differently from the run.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from integration_test import TESTS  # noqa: E402
+
+LABELS = {sid: label for sid, label, _ in TESTS} | {"AUDIT": "Ausência de falhas inesperadas"}
 
 # Same table as scripts/benchmark.py. It used to stop at 20 degrees of freedom,
 # so every n > 21 silently fell back to the normal 1.960 instead of the t value
