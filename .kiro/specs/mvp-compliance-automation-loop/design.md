@@ -17,7 +17,7 @@ O sistema suporta múltiplos controles de compliance de forma extensível e mult
 ### MAPE-K Architecture Mapping
 
 - **Monitor**: CloudTrail + EventBridge Rule (event pattern gerenciado dinamicamente pela Lambda `controls-sync` via DynamoDB Stream na tabela `controls`)
-- **Analyze**: Lambda Python 3.14 (arm64, 512 MB) + OPA/Rego 1.21.0 (binário arm64 via Lambda Layer, políticas carregadas do S3 em runtime) + fetcher genérico via `fetch_config` (chamadas boto3 parametrizadas pela tabela `controls`) + consulta DynamoDB exceptions + ABAC nas permissões de leitura
+- **Analyze**: Lambda Python 3.14 (arm64, 512 MB) + OPA/Rego 1.21.0 (binário arm64 via Lambda Layer, políticas carregadas do S3 em runtime) + fetcher genérico via `fetch_config` (chamadas boto3 parametrizadas pela tabela `controls`) + consulta DynamoDB exceptions + role com só as leituras que os controles fazem
 - **Plan**: estado `PlanAction` do Step Functions — decide, para cada `S_violation`, entre remediar e escalar: escala a rodada de verificação (não convergência), a violação reincidente (disjuntor, a partir do histórico do `violations_log`) e o controle detectivo; remedia o resto. Antes dele, `QueryControls` resolve quais controles se aplicam ao `eventName` do CloudTrail via `cloudtrail_events` na tabela `controls`
 - **Execute**: Lambda Python 3.14 (arm64, 3008 MB) + OpenTofu 1.12.6 (binário via Lambda Layer) com state efêmero local. Templates HCL carregados do S3 em runtime. Provider AWS 6.66.0 pré-inicializado, armazenado no S3 como cache em zstd, baixado e extraído em `/tmp` na fase de init e compartilhado via symlink (elimina `tofu init` em runtime). Cada remediação roda com uma sessão assumida por violação (ver *Autoridade por incidente*)
 - **Knowledge**: DynamoDB (controls, exceptions, violations_log)
@@ -1260,11 +1260,18 @@ For any GitHub Issue created for a failed remediation, the issue number returned
 
 **Validates: Requirements 8.12, 19.1, 19.4**
 
-### Property 23: GitHub Issue ID Null for Non-Escalated Violations
+### Property 23: GitHub Issue ID Only on Escalated Violations
 
-For any violations_log entry where Execute was not invoked or Execute succeeded, the github_issue_id field SHALL be null.
+For any violations_log entry, github_issue_id SHALL be present only if the entry was escalated — remediation_status = failed, or state = S_violation without remediation_status (PlanAction escalated it: breaker, manual or detective control, non-convergence). Entries in S_nominal, S_exception, or with remediation_status = success SHALL have no github_issue_id.
 
-**Revisado**: depois dos controles detectivos, do disjuntor e da rodada de verificação, uma violação pode ser escalada **sem** o Execute ter sido invocado — e ganha uma issue. O enunciado que vale: `github_issue_id` só aparece em linhas escaladas (remediação falha ou não convergente, ou `S_violation` que o Plan decidiu escalar), nunca numa linha conforme, excetuada ou remediada com sucesso. Medido pela auditoria de completude em todas as linhas de cada série.
+*Por que mudou*: o enunciado original ("nula quando o Execute não foi invocado ou teve sucesso") ficou falso quando entraram os controles detectivos, o disjuntor e a rodada de verificação — os três escalam **sem** invocar o Execute, e a linha ganha a issue corretamente.
+
+*Como é garantida*, por construção, em três pontos verificados estaticamente (`tests/unit/test_state_machine.py`):
+1. Só a Lambda de escalação escreve `github_issue_id`, e só por `UpdateItem` condicionado a `attribute_exists(violation_id)` — nunca cria linha
+2. Na máquina de estados, `Escalate` só é alcançado a partir de `PlanAction` (depois de `RegisterViolation`, linha em `S_violation` sem status), de `UpdateLogFailed` (status `failed`) ou do ramo padrão de `ClassifyState` (nenhuma linha gravada); `RegisterNominal`, `RegisterException` e `UpdateLogSuccess` são estados finais
+3. As escalações fora do Map usam `violation_id` sintético (`analyze-failed-*`, `control-lookup-failed-*`, `control-not-found-*`, `unverifiable-remediation-*`), que não tem linha — a condição do item 1 impede o vínculo
+
+*E medida*: a auditoria de completude (`scripts/audit_log_completeness.py`) confere a propriedade em todas as linhas de cada série — 0 violações nas 1.160 linhas da série otimizada, 30 delas com issue.
 
 **Validates: Requirements 19.5**
 
@@ -1631,22 +1638,18 @@ Carregar scripts Python do S3 em runtime eliminaria o último acoplamento de dep
 
 O fetcher genérico via `fetch_config` é o meio-termo: parametriza a chamada boto3 sem executar código arbitrário. O `method` precisa existir no cliente boto3 e ser de leitura — não existe injeção de código, apenas chamadas de leitura a APIs AWS dentro do escopo das permissões IAM.
 
-### Modelo de Permissões: ABAC + IAM Estático
+### Modelo de Permissões: leitura exata + sessão por incidente
 
-As permissões de leitura do Analyze Lambda seguem um modelo híbrido:
+**Leitura (Analyze)**: exatamente as seis chamadas que os `fetch_config` dos controles fazem, nomeadas uma a uma em `local.resource_read_actions` (`infra/modules/analyze/main.tf`):
+- S3: `GetBucketPublicAccessBlock`, `GetBucketPolicy`, `GetEncryptionConfiguration`, `GetBucketVersioning` — em qualquer bucket, com `aws:ResourceAccount` igual à conta (um controle adulterado não lê bucket de outra conta)
+- EC2: `DescribeVolumes` e `GetEbsEncryptionByDefault` — sem escopo de recurso, porque essas APIs não o aceitam (ver a correção abaixo)
+- `s3:GetObject` só em `controls/*/policy.rego` do bucket de políticas, e `dynamodb:Query` só no índice `resource-control-index` da tabela de exceções
 
-**ABAC (Attribute-Based Access Control)** para APIs que aceitam condição de tag:
-- RDS: `rds:DescribeDBInstances` com `Condition: aws:ResourceTag/compliance-managed = true`
-- CloudTrail: `cloudtrail:GetTrailStatus` e `DescribeTrails` com a mesma condição
+**Escrita (Execute)**: a role de remediação é o teto, e cada remediação recebe uma sessão restrita ao recurso classificado e às ações do controle — ver *Autoridade por incidente*.
 
-**Session policy** para a **escrita** (remediação): a role de remediação é o teto, e cada remediação recebe uma sessão restrita ao recurso classificado e às ações do controle — ver *Autoridade por incidente*.
+**Permissões à frente dos controles foram removidas.** A role concedia leituras que nenhum dos seis controles usa — RDS (`DescribeDBInstances`) e CloudTrail (`GetTrailStatus`, `DescribeTrails`) com condição de tag, `iam:GetAccountPasswordPolicy`, `ec2:DescribeSecurityGroups`, `ec2:DescribeSecurityGroupRules` e `s3:GetBucketLogging` —, além de `Query` na tabela de exceções inteira e em todos os índices. Saíram todas. Um controle novo que leia outra coisa acrescenta a ação à lista junto com o controle, o mesmo critério da lista de remediação; o teste de contrato `tests/contract/test_analyze_permissions.py` compara as duas direções — falha se um controle lê algo que a role não concede e se a role concede algo que nenhum controle lê.
 
-**IAM estático** para APIs de leitura que não aceitam escopo por recurso nem por tag, com as ações nomeadas uma a uma:
-- S3: `GetBucketPublicAccessBlock`, `GetBucketPolicy`, `GetEncryptionConfiguration`, `GetBucketVersioning`, `GetBucketLogging` (as APIs de bucket não suportam tag conditions)
-- EC2: `DescribeVolumes`, `DescribeSecurityGroups`, `DescribeSecurityGroupRules` e `GetEbsEncryptionByDefault`
-- IAM: `iam:GetAccountPasswordPolicy` (account-level, sem recurso taggeável)
-
-**Permissões à frente dos controles.** As statements de RDS, CloudTrail e IAM, e as leituras de security groups e de logging do S3, não são usadas por nenhum dos seis controles atuais: foram concedidas para controles previstos. São só leituras de configuração, mas o menor privilégio estrito pediria concedê-las junto com o controle que as usa — o mesmo critério que a lista de ações de remediação já segue.
+**Por que não há ABAC.** O desenho previa controle de acesso por atributo — leituras condicionadas ao tag `compliance-managed = true`. Ele nunca decidiu uma leitura real: as únicas statements com condição de tag eram as de RDS e CloudTrail, que nenhum controle usa, e as APIs que os controles usam não a aceitam — nas do EC2 a condição nunca casa e nega em silêncio (correção abaixo), e as leituras de configuração de bucket do S3 ficaram fora dela desde o início. O escopo que o ABAC daria veio de outro lugar, e mais estreito: na leitura, a lista exata de ações e `aws:ResourceAccount`; na escrita, a sessão por incidente, que libera um ARN só, derivado da avaliação, em vez de todo recurso com um tag. Se um controle futuro ler um serviço que aceita condição de tag (RDS, CloudTrail), o ABAC pode voltar naquela leitura, junto com o controle.
 
 **Correção — `ec2:Describe*` nunca esteve coberto pelo ABAC.** As APIs `Describe*` do EC2 não suportam permissões por recurso nem as chaves de condição de tag: uma statement com `aws:ResourceTag` simplesmente nunca casa, e o efeito é negar, em silêncio, a leitura. O `ctrl-ebs-volume-encrypted` (CTRL-06) falhou exatamente assim na primeira execução — `UnauthorizedOperation` no `DescribeVolumes`, que o loop reportou como falha de sistema, sem estado, como deve. O `GetEbsEncryptionByDefault` só funcionava porque estava numa statement separada, sem condição. As ações passaram todas para essa statement; a pergunta "este volume interessa?" é da política Rego, não do IAM, e o preço é uma leitura sem escopo — apenas de leitura, e de metadados de configuração.
 
@@ -2622,7 +2625,7 @@ Material de indústria descreve a governança programática de nuvem como camada
 | Camada | O que este trabalho entrega | Lacuna declarada |
 |---|---|---|
 | Política como código no deploy | Políticas em Rego versionadas e portáveis; o teste de contrato (`tests/contract/test_remediation_contract.py`) já é um portão pré-deploy: deriva o estado que cada `remediation.tf` produz e o avalia com a mesma versão do OPA, recusando controle novo sem contrato | Não há avaliação do IaC de terceiros antes do `apply`, nem *admission control*. O artefato de política é o mesmo; falta o ponto de uso |
-| RBAC/ABAC | ABAC nas leituras cujas APIs aceitam condição de tag, IAM estático onde a API não aceita, e **autoridade por incidente** via session policy — escopo derivado da avaliação, expirando com a sessão (NIST SP 800-207; SALTZER; SCHROEDER, 1975) | Sem *permissions boundary* (L17); sem operação multi-conta (L6) |
+| RBAC/ABAC | Leitura restrita às chamadas que os controles fazem (conferida por teste de contrato), escopada à conta onde a API aceita, e **autoridade por incidente** via session policy — escopo derivado da avaliação, expirando com a sessão (NIST SP 800-207; SALTZER; SCHROEDER, 1975) | Sem *permissions boundary* (L17); sem operação multi-conta (L6) |
 | Controles nativos do provedor | O laço **opera** controles desse tipo: `EbsEncryptionByDefault` é uma configuração nativa gerida pelo loop, com verificação e auditoria | Não gere SCP, Organizations nem Control Tower — numa conta única essa camada é fraca por construção (L6) |
 | Remediação automática retrospectiva | É o núcleo: detecção por evento, classificação em três estados, remediação declarativa, **rodada de verificação**, exceções com reavaliação temporal, escalação rastreável, disjuntor de reincidência e controles detectivos | Reconciliação periódica não ativada: o laço só fecha para o que o CloudTrail entrega. Ativá-la é configuração de um agendamento, não mudança de modelo (L15) |
 

@@ -62,13 +62,26 @@ resource "aws_iam_role_policy" "logging" {
   })
 }
 
+# The configuration reads the controls make: each control's fetch_config names a
+# boto3 call, and the call's IAM action must be here. Only what a current
+# control uses — a new control that reads something else adds its action here
+# (tests/contract/test_analyze_permissions.py fails until it does). Reads for
+# controls not yet written (RDS, CloudTrail, IAM password policy, security
+# groups, S3 logging) were granted ahead of time and were removed.
+locals {
+  resource_read_actions = {
+    s3 = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy", "s3:GetEncryptionConfiguration",
+    "s3:GetBucketVersioning"]
+    ec2 = ["ec2:DescribeVolumes", "ec2:GetEbsEncryptionByDefault"]
+  }
+}
+
 resource "aws_iam_role_policy" "resource_read" {
-  name = "resource-read-abac"
+  name = "resource-read"
   role = aws_iam_role.analyze_lambda.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # S3 — bucket-level read (tags not supported on bucket APIs)
       {
         Sid    = "S3BucketRead"
         Effect = "Allow"
@@ -76,49 +89,24 @@ resource "aws_iam_role_policy" "resource_read" {
         # s3:GetEncryptionConfiguration — "s3:GetBucketEncryption" does not
         # exist and grants nothing (every ctrl-s3-encryption eval failed
         # AccessDenied until this was fixed).
-        Action   = ["s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicy", "s3:GetEncryptionConfiguration", "s3:GetBucketVersioning", "s3:GetBucketLogging"]
+        Action   = local.resource_read_actions.s3
         Resource = "arn:aws:s3:::*"
         # A control is data in a table and names the resource to read; this keeps
         # a tampered one from reaching a bucket in another account. Not applied to
-        # the EC2 Describe* calls: those carry no resource in the request context,
-        # so the condition would never match and would deny silently.
+        # the EC2 calls: those carry no resource in the request context, so the
+        # condition would never match and would deny silently.
         Condition = { StringEquals = { "aws:ResourceAccount" = var.account_id } }
       },
-      # EC2 — the Describe* APIs accept neither resource ARNs nor tag
-      # conditions: a statement scoped by aws:ResourceTag never matches and
-      # denies silently. ctrl-ebs-volume-encrypted failed exactly that way
-      # (UnauthorizedOperation on DescribeVolumes) until these actions moved
-      # out of the ABAC statement. They are read-only and answer for every
-      # resource of their type; scoping them is a matter for the policy that
-      # evaluates the answer, not for IAM.
+      # EC2 — DescribeVolumes and GetEbsEncryptionByDefault accept neither
+      # resource ARNs nor tag conditions: a statement scoped by aws:ResourceTag
+      # never matches and denies silently. ctrl-ebs-volume-encrypted failed
+      # exactly that way (UnauthorizedOperation on DescribeVolumes) until the
+      # actions left the ABAC statement. They are read-only and answer for every
+      # resource of their type; which volume matters is the policy's question.
       {
-        Sid    = "EC2DescribeNoResourceScope"
-        Effect = "Allow"
-        Action = ["ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups", "ec2:DescribeVolumes",
-        "ec2:GetEbsEncryptionByDefault"]
-        Resource = "*"
-      },
-      # RDS — describe with ABAC tag condition
-      {
-        Sid       = "RDSDescribeABAC"
-        Effect    = "Allow"
-        Action    = ["rds:DescribeDBInstances"]
-        Resource  = "arn:aws:rds:*:*:db:*"
-        Condition = { StringEquals = { "aws:ResourceTag/compliance-managed" = "true" } }
-      },
-      # CloudTrail — read with ABAC tag condition
-      {
-        Sid       = "CloudTrailReadABAC"
-        Effect    = "Allow"
-        Action    = ["cloudtrail:GetTrailStatus", "cloudtrail:DescribeTrails"]
-        Resource  = "arn:aws:cloudtrail:*:*:trail/*"
-        Condition = { StringEquals = { "aws:ResourceTag/compliance-managed" = "true" } }
-      },
-      # IAM — account-level (no ABAC possible)
-      {
-        Sid      = "IAMAccountRead"
+        Sid      = "EC2ReadNoResourceScope"
         Effect   = "Allow"
-        Action   = ["iam:GetAccountPasswordPolicy"]
+        Action   = local.resource_read_actions.ec2
         Resource = "*"
       },
       # S3 policy bucket — Rego policies
@@ -138,7 +126,8 @@ resource "aws_iam_role_policy" "dynamodb" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = [var.exceptions_table_arn, "${var.exceptions_table_arn}/index/*"] }
+      # The one index the handler queries; the table itself is never read.
+      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = ["${var.exceptions_table_arn}/index/resource-control-index"] }
     ]
   })
 }

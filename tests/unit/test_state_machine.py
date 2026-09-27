@@ -12,8 +12,10 @@ oscillation impossible (design.md, L11) now that remediation echoes are filtered
 out of the EventBridge rule.
 """
 
+import glob
 import json
 import os
+import re
 from collections import deque
 
 import pytest
@@ -228,3 +230,42 @@ def test_unverifiable_remediation_escalates(sm):
     catch = sm["States"]["ScheduleVerification"]["Catch"]
     assert [c["Next"] for c in catch] == ["UnverifiableRemediationEscalation"]
     assert sm["States"]["UnverifiableRemediationEscalation"]["Next"] == "ExecutionFailed"
+
+
+# --- P23: an issue lands only on a row that was escalated -------------------
+
+def predecessors(states, target):
+    return {src for src, dst in edges(states) if dst == target}
+
+
+def test_escalate_follows_only_an_escalated_row(sm):
+    """Escalate is reached after a violation row the Plan escalates, after a
+    failed remediation, or from the classifier's default, which writes no row.
+    Never after a nominal, excepted or successfully remediated row."""
+    states = map_states(sm)
+    assert predecessors(states, "Escalate") == {"ClassifyState", "PlanAction", "UpdateLogFailed"}
+    assert states["ClassifyState"]["Default"] == "Escalate"
+    assert all(c["Next"] != "Escalate" for c in states["ClassifyState"]["Choices"])
+    for final in ("RegisterNominal", "RegisterException", "UpdateLogSuccess"):
+        assert states[final].get("End") is True and "Catch" not in states[final]
+    assert states["UpdateLogFailed"]["Arguments"]["ExpressionAttributeValues"][":status"] == {"S": "failed"}
+
+
+def test_escalations_outside_the_map_use_synthetic_ids(sm):
+    """A synthetic violation_id has no log row, so the conditional update in
+    the escalation Lambda cannot attach its issue to anything."""
+    senders = {n: s for n, s in sm["States"].items() if s.get("Resource", "").endswith("sqs:sendMessage")}
+    assert senders
+    for name, st in senders.items():
+        body = st["Arguments"]["MessageBody"]
+        assert re.search(r"'violation_id': '[a-z-]+-' &", body), name
+
+
+def test_only_the_escalation_lambda_writes_the_issue():
+    root = os.path.join(os.path.dirname(__file__), "..", "..")
+    writers = [p for p in glob.glob(os.path.join(root, "lambdas", "*", "handler.py"))
+               if "github_issue_id =" in open(p).read()]
+    assert [os.path.basename(os.path.dirname(p)) for p in writers] == ["escalation"]
+    assert "github_issue_id" not in open(DEFINITION).read()
+    src = open(os.path.join(root, "lambdas", "escalation", "handler.py")).read()
+    assert "ConditionExpression='attribute_exists(violation_id)'" in src

@@ -115,7 +115,11 @@ próprias permissões.
 
 O script faz upload para S3 e insert na tabela DynamoDB. O `controls-sync` atualiza o EventBridge automaticamente.
 
-Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão IAM no Terraform (`tofu apply`).
+Se o controle lê a configuração por uma chamada que a Analyze ainda não faz
+(`fetch_config`), acrescente a ação IAM a `local.resource_read_actions` em
+`infra/modules/analyze/main.tf` e rode o `apply`. A role concede só as leituras
+que os controles atuais fazem, e `tests/contract/test_analyze_permissions.py`
+falha enquanto as duas coisas não baterem.
 
 ## Estrutura do projeto
 
@@ -139,7 +143,7 @@ Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão I
 │       ├── knowledge/              # DynamoDB (controls, exceptions, violations_log)
 │       ├── monitoring/             # CloudTrail + S3 para logs
 │       ├── orchestration/          # Step Functions + EventBridge Rule
-│       ├── analyze/                # Lambda Analyze + IAM (ABAC)
+│       ├── analyze/                # Lambda Analyze + IAM (só as leituras dos controles)
 │       ├── execute/                # Lambda Execute + IAM
 │       ├── escalation_queue/       # SQS FIFO + DLQ
 │       ├── escalation_lambda/      # Lambda Escalation + IAM

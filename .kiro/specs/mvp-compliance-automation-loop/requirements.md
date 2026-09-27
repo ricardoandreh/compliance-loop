@@ -301,4 +301,4 @@ Este documento é a especificação inicial do MVP e fica preservado como tal. O
 2. THE github_issue_id SHALL be saved to the violations_log entry corresponding to the violation
 3. THE violations_log entry SHALL link the violation event to the operational resolution workflow
 4. WHEN querying violations_log by violation_id, THE result SHALL include github_issue_id if escalation occurred
-5. THE github_issue_id field SHALL be null for violations that did not require escalation
+5. THE github_issue_id field SHALL be absent from every violations_log entry that was not escalated (S_nominal, S_exception, or remediation_status = success)
