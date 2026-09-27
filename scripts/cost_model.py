@@ -48,8 +48,10 @@ PRICES = {
     "dashboard_month": 3.00,
     "pitr_gb_month": 0.20,
 }
-MEMORY_GB = {"analyze": 0.5, "execute": 2.0, "escalation": 0.25,
-             "controls-sync": 0.125, "exception-scheduler-sync": 0.125}
+# The functions whose billed time is priced. Memory is read from each REPORT
+# line ("Memory Size"), not assumed: a fixed table priced the Execute at 2 GB
+# after it moved to 3008 MB, understating the optimized series.
+FUNCTIONS = ("analyze", "execute", "escalation", "controls-sync", "exception-scheduler-sync")
 SM = "compliance-loop-compliance-loop-dev"
 
 
@@ -68,7 +70,7 @@ def history(sfn, arn):
 
 def billed(logs, function, since_ms, until_ms):
     """(invocations, billed GB-seconds) from the REPORT lines."""
-    n, seconds, token = 0, 0.0, None
+    n, gb_seconds, token = 0, 0.0, None
     while True:
         kw = {"logGroupName": f"/aws/lambda/compliance-loop-{function}-dev", "filterPattern": "REPORT",
               "startTime": since_ms, "endTime": until_ms}
@@ -77,18 +79,32 @@ def billed(logs, function, since_ms, until_ms):
         page = logs.filter_log_events(**kw)
         for ev in page["events"]:
             m = re.search(r"Billed Duration: (\d+) ms", ev["message"])
-            if m:
+            mem = re.search(r"Memory Size: (\d+) MB", ev["message"])
+            if m and mem:
                 n += 1
-                seconds += int(m.group(1)) / 1000
+                gb_seconds += int(m.group(1)) / 1000 * int(mem.group(1)) / 1024
         token = page.get("nextToken")
         if not token:
-            return n, seconds * MEMORY_GB[function]
+            return n, gb_seconds
+
+
+def metric_period(start):
+    """The finest period CloudWatch still keeps for data this old.
+
+    A daily period summed the whole day, so two series run on the same day were
+    each charged the other's logs (the upgrade series read 174 MB instead of 57).
+    """
+    age = datetime.datetime.now(datetime.timezone.utc) - start
+    if age < datetime.timedelta(days=15):
+        return 60
+    return 300 if age < datetime.timedelta(days=63) else 3600
 
 
 def ingested_bytes(cw, group, start, end):
     r = cw.get_metric_statistics(Namespace="AWS/Logs", MetricName="IncomingBytes",
                                  Dimensions=[{"Name": "LogGroupName", "Value": group}],
-                                 StartTime=start, EndTime=end, Period=86400, Statistics=["Sum"])
+                                 StartTime=start, EndTime=end, Period=metric_period(start),
+                                 Statistics=["Sum"])
     return sum(p["Sum"] for p in r["Datapoints"])
 
 
@@ -120,9 +136,9 @@ def main():
         if mode == "detect" and "ScheduleVerification" in entered:
             remediating_detections += 1
 
-    functions = {f: billed(logs, f, int(since * 1000), int(until * 1000)) for f in MEMORY_GB}
+    functions = {f: billed(logs, f, int(since * 1000), int(until * 1000)) for f in FUNCTIONS}
     groups = {"step-functions": f"/aws/vendedlogs/states/{SM}",
-              **{f: f"/aws/lambda/compliance-loop-{f}-dev" for f in MEMORY_GB}}
+              **{f: f"/aws/lambda/compliance-loop-{f}-dev" for f in FUNCTIONS}}
     log_bytes = {k: ingested_bytes(cw, g, start, end) for k, g in groups.items()}
 
     transitions = sum(k["transitions"] for k in kinds.values())

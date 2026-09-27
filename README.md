@@ -476,10 +476,11 @@ Não está ativada; desenho e custo (~US$ 0,0005 por recurso por varredura) no
 
 ## Custo
 
-Medido na série final (`scripts/cost_model.py`), com preços de lista de
-us-east-1: **~US$ 0,0013 por incidente remediado** (US$ 1,30 a cada mil). A
-maior parcela são as transições do Step Functions Standard (71%), seguidas pelo
-processamento das Lambdas (21%) e pela ingestão de logs (8%). A camada de
+Medido na série atual (`scripts/cost_model.py`, `results/optimized/`), com
+preços de lista de us-east-1: **~US$ 0,0014 por incidente remediado** (US$ 1,40
+a cada mil). A maior parcela são as transições do Step Functions Standard (66%),
+seguidas pelo processamento das Lambdas (27%, quase todo do Execute a 3008 MB) e
+pela ingestão de logs (8%). A camada de
 operação custa ~US$ 1,30/mês em alarmes, mais US$ 3,00/mês do painel acima dos
 três gratuitos.
 

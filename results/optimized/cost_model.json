@@ -34,7 +34,7 @@
     },
     "execute": {
       "invocations": 470,
-      "gb_seconds": 5071.5
+      "gb_seconds": 7448.8
     },
     "escalation": {
       "invocations": 40,
@@ -59,22 +59,22 @@
   },
   "series_cost_usd": {
     "step_functions": 0.248,
-    "lambda_compute": 0.0686,
+    "lambda_compute": 0.1003,
     "lambda_requests": 0.0002,
     "logs_ingestion": 0.0296,
-    "total": 0.3465
+    "total": 0.3782
   },
   "per_remediated_incident_usd": {
     "step_functions": 0.000919,
-    "lambda_compute": 0.000254,
+    "lambda_compute": 0.000371,
     "lambda_requests": 1e-06,
     "logs_ingestion": 0.00011,
-    "total": 0.001283
+    "total": 0.001401
   },
   "share_of_variable_cost": {
-    "step_functions": 0.716,
-    "lambda_compute": 0.198,
+    "step_functions": 0.656,
+    "lambda_compute": 0.265,
     "lambda_requests": 0.001,
-    "logs_ingestion": 0.086
+    "logs_ingestion": 0.078
   }
 }
