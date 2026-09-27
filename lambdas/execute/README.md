@@ -6,18 +6,19 @@ Remedia recursos em violação usando OpenTofu com templates HCL declarativos.
 
 - **Runtime**: Python 3.14 (arm64)
 - **Layer**: OpenTofu 1.12.6 (`/opt/bin/tofu`, ~29MB), gerada por `scripts/build_execute.sh`
-- **Provider cache**: S3 (`provider-cache/tf-dot-terraform.tar.gz`, ~156MB, provider AWS 6.66.0), baixado no cold start
+- **Provider cache**: S3 (`provider-cache/tf-dot-terraform.tar.zst`, ~123MB, provider AWS 6.66.0), baixado e descompactado na fase de init
 - **Deployment**: `execute.zip` (~4KB)
 - **Ephemeral storage**: 2048MB — o provider extraído tem 780MB, e durante a extração o arquivo de 156MB ainda está no `/tmp`
-- **Memory**: 2048MB
+- **Memory**: 3008MB — medido: carregar o provider é CPU, e a CPU acompanha a memória (design.md, *Otimização do Execute*)
 
 ## Fluxo
 
-1. Cold start: baixa e extrai provider cache do S3 para `/tmp`
-2. Baixa `remediation.tf` do S3 (cacheado em `/tmp` entre invocações)
-3. Cria symlink para provider pré-inicializado
-4. Executa `tofu apply -refresh=false -auto-approve`
-5. Retorna `{remediation_status, output/error}`
+1. Init (cold start): baixa e descompacta o cache do provider (zstd) em `/tmp`, com a CPU cheia da fase de init
+2. Assume a role de remediação com a session policy da violação
+3. Baixa o `remediation.tf` do S3 e cria o symlink para o provider pré-inicializado
+4. Só no ssl-only: lê a policy existente com um cliente assinado pelas credenciais da violação
+5. Executa `tofu apply -refresh=false -auto-approve` (os `skip_*` do provider evitam as chamadas ao STS)
+6. Retorna `{remediation_status, output/error}` e registra o tempo de cada fase numa linha JSON
 
 ## Build e Deploy
 
@@ -51,8 +52,14 @@ mkdir -p $D/linux_arm64 && : > $D/linux_arm64.lock
 unzip -q mirror/registry.opentofu.org/hashicorp/aws/terraform-provider-aws_${V}_linux_arm64.zip -d $D/linux_arm64
 echo '["/opt/providers"]' > build/tf-dot-terraform/plugin_path
 cp .terraform.lock.hcl build/tf-lock.hcl
-(cd build && tar czf ../tf-dot-terraform.tar.gz tf-dot-terraform tf-lock.hcl)
-aws s3 cp tf-dot-terraform.tar.gz s3://compliance-mvp-terraform-state/provider-cache/
+python3.14 - <<'PY'
+import tarfile
+from compression import zstd
+with zstd.open("tf-dot-terraform.tar.zst", "wb", level=3) as z, tarfile.open(fileobj=z, mode="w|") as tar:
+    for name in ("tf-dot-terraform", "tf-lock.hcl"):
+        tar.add(f"build/{name}", arcname=name)
+PY
+aws s3 cp tf-dot-terraform.tar.zst s3://compliance-mvp-terraform-state/provider-cache/
 ```
 
 A restrição do lock (`~> 6.0`) precisa aceitar a dos `controls/*/remediation.tf`.

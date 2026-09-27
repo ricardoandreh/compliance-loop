@@ -27,8 +27,12 @@ resource "aws_lambda_function" "execute" {
   runtime          = "python3.14"
   architectures    = ["arm64"]
   timeout          = 90
-  memory_size      = 2048
-  layers           = [var.tofu_layer_arn]
+  # 3008 MB is this account's ceiling. Measured (scripts/perf_experiment.py):
+  # the warm remediation went from 6.24 s at 2048 MB to 5.64 s, and 1769 MB was
+  # slower - loading the 780 MB provider on every apply is CPU-bound, and on
+  # Lambda CPU scales with memory. 32% more GB-s, about US$0.00005 per remediation.
+  memory_size = 3008
+  layers      = [var.tofu_layer_arn]
 
   # The AWS provider 6.66.0 binary is 780 MB unpacked, extracted to /tmp on a
   # cold start while its 156 MB archive is still there: 936 MB would leave
@@ -38,8 +42,9 @@ resource "aws_lambda_function" "execute" {
   environment {
     variables = {
       REMEDIATION_BUCKET   = var.remediation_bucket
-      PROVIDER_CACHE_KEY   = "provider-cache/tf-dot-terraform.tar.gz"
+      PROVIDER_CACHE_KEY   = "provider-cache/tf-dot-terraform.tar.zst"
       REMEDIATION_ROLE_ARN = aws_iam_role.remediation.arn
+      ALLOWED_ACTIONS      = jsonencode(sort(flatten(values(local.remediation_actions))))
     }
   }
 
@@ -104,23 +109,38 @@ resource "aws_iam_role" "remediation" {
   tags                 = { Name = "${var.project_name}-remediation", Environment = var.environment }
 }
 
+locals {
+  # The only write actions any control may ask for, per service. One list feeds
+  # both the remediation role (the ceiling IAM enforces) and the Execute's own
+  # check (which refuses a control asking for anything else before assuming the
+  # role, with a clear error). A control that needs an API outside it is an
+  # infrastructure change by design: a control is data in a table, and data
+  # must not be able to grant itself privileges. A control that uses APIs
+  # already here needs no change at all.
+  remediation_actions = {
+    s3 = [
+      "s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock",
+      "s3:PutBucketPolicy", "s3:GetBucketPolicy",
+      "s3:PutBucketVersioning", "s3:GetBucketVersioning",
+      "s3:PutEncryptionConfiguration", "s3:GetEncryptionConfiguration",
+    ]
+    ec2 = ["ec2:EnableEbsEncryptionByDefault", "ec2:GetEbsEncryptionByDefault"]
+  }
+}
+
 resource "aws_iam_role_policy" "remediation" {
   name = "resource-remediation"
   role = aws_iam_role.remediation.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Sid = "S3ConfigurationWrite", Effect = "Allow", Action = [
-        "s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock",
-        "s3:PutBucketPolicy", "s3:GetBucketPolicy",
-        "s3:PutBucketVersioning", "s3:GetBucketVersioning",
-        "s3:PutEncryptionConfiguration", "s3:GetEncryptionConfiguration"
-        ], Resource = "arn:aws:s3:::*",
+      { Sid      = "S3ConfigurationWrite", Effect = "Allow", Action = local.remediation_actions.s3,
+        Resource = "arn:aws:s3:::*",
       Condition = { StringEquals = { "aws:ResourceAccount" = var.account_id } } },
       { Sid = "NeverRewriteOwnEvidence", Effect = "Deny", Action = "s3:*",
       Resource = concat(var.protected_bucket_arns, [for arn in var.protected_bucket_arns : "${arn}/*"]) },
       { Sid = "EbsAccountSetting", Effect = "Allow",
-      Action = ["ec2:EnableEbsEncryptionByDefault", "ec2:GetEbsEncryptionByDefault"], Resource = "*" }
+      Action = local.remediation_actions.ec2, Resource = "*" }
     ]
   })
 }

@@ -242,7 +242,32 @@ def extract_resource_id(resource_arn: str) -> str:
 
 # --- Handler ---
 
+_cold = True
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """Classify, and log how long each phase took (one JSON line per call)."""
+    global _cold
+    timings = {'fetch': 0.0, 'opa': 0.0, 'exception': 0.0}
+    start = time.perf_counter()
+    try:
+        return _analyze(event, context, timings)
+    finally:
+        timings['total'] = time.perf_counter() - start
+        print(json.dumps({"timings": {k: round(v, 4) for k, v in timings.items()},
+                          "controls": len(event.get('controls', [])), "cold": _cold}))
+        _cold = False
+
+
+def _timed(timings, name, fn, *args, **kwargs):
+    t = time.perf_counter()
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        timings[name] += time.perf_counter() - t
+
+
+def _analyze(event: Dict[str, Any], context: Any, timings: Dict[str, float]) -> Dict[str, Any]:
     print(f"Received event: {json.dumps(event)}")
 
     resource_arn = event['resource_arn']
@@ -268,12 +293,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             if not fetch_config:
                 raise ValueError(f"No fetch_config for: {control_id}")
 
-            resource_config = fetch_resource_config(fetch_config, resource_id)
+            resource_config = _timed(timings, 'fetch', fetch_resource_config, fetch_config, resource_id)
             # Recomputed per control: the budget shrinks as the loop advances,
             # so a slow early control cannot starve the Lambda of the time it
             # needs to report the remaining ones.
             budget = opa_budget(context)
-            is_compliant = evaluate_policy_with_opa(
+            is_compliant = _timed(
+                timings, 'opa', evaluate_policy_with_opa,
                 rego_package, resource_config,
                 control.get('rego_s3_key'), control.get('policy_version', 'v1.0'),
                 context={
@@ -290,7 +316,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # resource: the resource may well be S_exception.
             exception = None
             if not is_compliant:
-                exception = query_exception(control_id, resource_arn)
+                exception = _timed(timings, 'exception', query_exception, control_id, resource_arn)
             state = classify_state(is_compliant, exception)
 
             results.append({

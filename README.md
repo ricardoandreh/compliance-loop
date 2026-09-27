@@ -107,6 +107,12 @@ Adicionar um novo controle para um serviço já suportado **não requer rebuild 
 1. Criar `controls/<control-id>/policy.rego`, `remediation.tf` e `control.json`
 2. Executar: `./scripts/deploy_control.sh <control-id>`
 
+Se o controle usa APIs de remediação que a role ainda não concede, acrescente-as
+a `local.remediation_actions` em `infra/modules/execute/main.tf` e rode o `apply`:
+a mesma lista dá a permissão à role e alimenta a checagem do Execute, sem mudar
+código. Um controle é um dado numa tabela, e por isso não pode ampliar sozinho as
+próprias permissões.
+
 O script faz upload para S3 e insert na tabela DynamoDB. O `controls-sync` atualiza o EventBridge automaticamente.
 
 Para um serviço AWS **novo** (ex: RDS), é necessário adicionar a permissão IAM no Terraform (`tofu apply`).

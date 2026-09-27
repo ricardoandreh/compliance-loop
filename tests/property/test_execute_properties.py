@@ -93,10 +93,8 @@ CREDENTIALS = {'Credentials': {'AccessKeyId': 'AKIA-SCOPED',
 @pytest.fixture(autouse=True)
 def scoped_session():
     """Each remediation runs under credentials scoped to its own violation."""
-    session = MagicMock()
-    session.client.side_effect = lambda *a, **k: handler.s3
     with patch.object(handler.sts, 'assume_role', return_value=CREDENTIALS), \
-         patch.object(handler.boto3, 'Session', return_value=session):
+         patch.object(handler, 'scoped_s3', side_effect=lambda creds, region: handler.s3):
         yield
 
 

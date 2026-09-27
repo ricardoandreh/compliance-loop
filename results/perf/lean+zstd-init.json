@@ -1,0 +1,141 @@
+{
+  "variant": "lean+zstd-init",
+  "config": {
+    "memory": 2048,
+    "scoped": "lazy",
+    "init": "1",
+    "cache": "provider-cache/tf-dot-terraform.tar.zst",
+    "skip": true,
+    "analyze": 512
+  },
+  "c1_t_remediation": [
+    14.6,
+    7.42,
+    7.22,
+    12.75,
+    7.23,
+    8.06,
+    11.66,
+    7.2
+  ],
+  "execute": {
+    "warm": {
+      "assume_role": {
+        "n": 26,
+        "mean": 0.017,
+        "median": 0.016,
+        "sd": 0.003
+      },
+      "policy_read": {
+        "n": 5,
+        "mean": 0.041,
+        "median": 0.041,
+        "sd": 0.003
+      },
+      "provider_cache": {
+        "n": 26,
+        "mean": 0.0,
+        "median": 0.0,
+        "sd": 0.0
+      },
+      "setup": {
+        "n": 26,
+        "mean": 0.067,
+        "median": 0.068,
+        "sd": 0.008
+      },
+      "tofu": {
+        "n": 26,
+        "mean": 6.377,
+        "median": 6.184,
+        "sd": 0.684
+      },
+      "total": {
+        "n": 26,
+        "mean": 6.468,
+        "median": 6.292,
+        "sd": 0.681
+      }
+    },
+    "cold": {
+      "assume_role": {
+        "n": 6,
+        "mean": 0.042,
+        "median": 0.042,
+        "sd": 0.003
+      },
+      "policy_read": {
+        "n": 3,
+        "mean": 0.048,
+        "median": 0.042,
+        "sd": 0.011
+      },
+      "provider_cache": {
+        "n": 6,
+        "mean": 0.0,
+        "median": 0.0,
+        "sd": 0.0
+      },
+      "setup": {
+        "n": 6,
+        "mean": 0.042,
+        "median": 0.042,
+        "sd": 0.002
+      },
+      "tofu": {
+        "n": 6,
+        "mean": 6.509,
+        "median": 6.733,
+        "sd": 0.559
+      },
+      "total": {
+        "n": 6,
+        "mean": 6.617,
+        "median": 6.833,
+        "sd": 0.574
+      }
+    },
+    "cold_init_s": {
+      "n": 6,
+      "mean": 3.872,
+      "median": 4.015,
+      "sd": 0.647
+    },
+    "warm_billed_gb_s": {
+      "n": 26,
+      "mean": 12.942,
+      "median": 12.59,
+      "sd": 1.362
+    },
+    "max_mem_mb": 1451
+  },
+  "analyze": {
+    "warm": {
+      "fetch": {
+        "n": 26,
+        "mean": 0.067,
+        "median": 0.063,
+        "sd": 0.025
+      },
+      "opa": {
+        "n": 26,
+        "mean": 0.127,
+        "median": 0.101,
+        "sd": 0.095
+      },
+      "exception": {
+        "n": 26,
+        "mean": 0.01,
+        "median": 0.0,
+        "sd": 0.016
+      },
+      "total": {
+        "n": 26,
+        "mean": 0.204,
+        "median": 0.178,
+        "sd": 0.118
+      }
+    },
+    "max_mem_mb": 154
+  }
+}

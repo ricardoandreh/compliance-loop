@@ -71,10 +71,8 @@ def scoped_session():
     handler.s3, so the assertions about the bucket policy read still hold —
     what changes is which credentials make the call.
     """
-    session = MagicMock()
-    session.client.side_effect = lambda *a, **k: handler.s3
     with patch.object(handler.sts, 'assume_role', return_value=CREDENTIALS) as assume, \
-         patch.object(handler.boto3, 'Session', return_value=session):
+         patch.object(handler, 'scoped_s3', side_effect=lambda creds, region: handler.s3):
         yield assume
 
 
@@ -354,3 +352,40 @@ class TestSessionPolicy:
         assert result['remediation_status'] == 'failed'
         assert 'allowlist' in result['error']
         run.assert_not_called()
+
+
+def test_the_allowlist_has_one_source():
+    """The remediation role and the Execute's check read the same Terraform
+    local. An action spelled out anywhere else in the module is a second copy
+    that can drift — the duplication this list replaced."""
+    import re
+    tf = open(os.path.join(os.path.dirname(__file__), "..", "..",
+                           "infra", "modules", "execute", "main.tf")).read()
+    local = re.search(r"remediation_actions = \{(.*?)\n  \}", tf, re.S)
+    outside = tf[:local.start()] + tf[local.end():]
+    listed = re.findall(r'"((?:s3|ec2):[A-Za-z]+)"', local.group(1))
+    assert listed, "the local is empty or was renamed"
+    assert not [a for a in listed if f'"{a}"' in outside]
+    assert "local.remediation_actions" in outside
+
+
+class TestScopedClient:
+    """The policy read signs with the violation's session credentials, and the
+    client exists only for the one control that reads before writing."""
+
+    # The autouse fixture stands in for scoped_s3; this is the real one.
+    real = staticmethod(handler.scoped_s3)
+
+    def test_signs_with_the_session_credentials(self):
+        with patch.object(handler.boto3, 'client') as client:
+            self.real({'AWS_ACCESS_KEY_ID': 'AKIA-SCOPED', 'AWS_SECRET_ACCESS_KEY': 's',
+                               'AWS_SESSION_TOKEN': 't'}, 'sa-east-1')
+        _, kwargs = client.call_args
+        assert (kwargs['aws_access_key_id'], kwargs['aws_session_token'], kwargs['region_name']) == \
+            ('AKIA-SCOPED', 't', 'sa-east-1')
+
+    def test_not_built_for_controls_that_do_not_read(self, patched_setup):
+        with patch.object(handler, 'scoped_s3') as scoped, \
+             patch.object(handler.subprocess, 'run', return_value=completed(0)):
+            lambda_handler(base_event(), None)
+        scoped.assert_not_called()

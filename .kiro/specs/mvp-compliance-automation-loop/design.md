@@ -1838,7 +1838,7 @@ Até esta versão, a Lambda Execute carregava autoridade permanente: `s3:PutBuck
 Agora a autoridade é derivada da avaliação e dura uma remediação:
 
 1. A Lambda Execute **não tem permissão de escrita**. A sua role só baixa os artefatos (`s3:GetObject` no template e no cache do provider) e faz `sts:AssumeRole` numa role dedicada, `compliance-loop-remediation-<env>`.
-2. Antes de rodar o `tofu`, a Execute assume essa role passando uma **session policy** com duas coisas: as ações que *aquele controle* declarou (`remediation_actions`, validadas contra uma allowlist no código) e o **recurso que o Analyze classificou** — nunca o que o controle disser. O `RoleSessionName` é o `violation_id`.
+2. Antes de rodar o `tofu`, a Execute assume essa role passando uma **session policy** com duas coisas: as ações que *aquele controle* declarou (`remediation_actions`, validadas contra uma allowlist que vem do mesmo `local.remediation_actions` do Terraform que concede as ações à role — uma lista só; uma API nova é uma mudança de infraestrutura, nunca de código, e nunca de um controle sozinho) e o **recurso que o Analyze classificou** — nunca o que o controle disser. O `RoleSessionName` é o `violation_id`.
 3. O `tofu` roda com essas credenciais temporárias, e a leitura prévia da bucket policy do ssl-only também.
 
 A garantia vem da forma como o IAM combina as duas políticas: **a session policy só intersecta a da role, nunca amplia**. O pior caso de um controle adulterado na tabela é pedir menos do que a role já tem.
@@ -2442,7 +2442,7 @@ Nesta série os **dois patamares de ambiente de execução** reapareceram: 49 da
 
 \*C3: janelas pós-expiração, não comparáveis às demais — incluem o buffer de 30 s do Scheduler mais o seu atraso de entrega (19,3 s em média nesta série, faixa 1,1–42,1 s), que é a fonte do desvio de ~15,6 s.
 
-**As sete séries**, todas com 10 execuções da suíte, no patamar lento de ambiente de execução:
+**As oito séries**, todas com 10 execuções da suíte, no patamar lento de ambiente de execução:
 
 | Série | `t_remediation` quente | O que mudou nela |
 |---|---|---|
@@ -2453,6 +2453,7 @@ Nesta série os **dois patamares de ambiente de execução** reapareceram: 49 da
 | `results/session-policy/` | 6,54 s ± 0,11 | disjuntor, controle detectivo e **autoridade por sessão** |
 | **`results/final/`** | **6,54 s ± 0,14** | **identidades de serviço endurecidas** |
 | `results/upgrade/` | 7,41 s ± 0,48 | versões: OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0 (ver *Atualização de versões*) |
+| `results/py314/` | 7,13 s ± 0,58 | runtime Python 3.13 → 3.14 |
 
 ### Validação por Controle
 
@@ -2550,6 +2551,7 @@ Cada afirmação de "esta mudança custou X" ou "esta mudança não mexeu no MTT
 | três estados → sessão escopada | autoridade de remediação por sessão | **+0,280 s** | 9,93 (56,0) | **< 0,0001** | 2,57 |
 | sessão escopada → final | identidades de serviço endurecidas | −0,001 s | −0,03 (45,7) | 0,98 | −0,01 |
 | final → atualização | OPA 1.21.0, OpenTofu 1.12.6, provider AWS 6.66.0 | **+0,871 s** | 9,14 (32,1) | **< 0,0001** | 2,38 |
+| atualização → Python 3.14 | runtime das Lambdas | −0,276 s | −1,98 (55,3) | 0,056 | −0,51 |
 
 As três mudanças que o texto atribui são as únicas significativas, com efeito grande (g > 1,6) — a maior delas é a atualização de versões, e não uma mudança de desenho; as três que o texto diz não terem mexido no MTTR não são distinguíveis de zero. O teste de permutação não assume forma para a distribuição, e concorda com o de Welch em todas as linhas.
 
@@ -2564,6 +2566,7 @@ As três mudanças que o texto atribui são as únicas significativas, com efeit
 | sessão escopada | 6,538 ± 0,040 (n = 29) | 6,536 ± 0,050 | 1,23 |
 | final | 6,537 ± 0,058 (n = 26) | 6,540 ± 0,049 | 0,85 |
 | atualização | 7,409 ± 0,187 (n = 28) | 7,396 ± 0,261 | 1,40 |
+| Python 3.14 | 7,133 ± 0,216 (n = 30) | 7,133 ± 0,165 | 0,77 |
 
 Os intervalos por amostra subestimam a incerteza em até 1,5×, o que é esperado com amostras correlacionadas. Nenhuma conclusão muda: os degraus significativos estão a mais de 6 erros-padrão, e os não significativos continuam longe de sê-lo.
 
@@ -2580,6 +2583,30 @@ Depois da série final, as dependências do caminho medido foram atualizadas par
 - **O patamar rápido de ambiente de execução (L12) não apareceu**: 0 de 470 invocações, contra 49 na série final — a comparação é entre patamares lentos nas duas séries.
 
 A hipótese H1 continua sustentada — segundos contra dias —, mas o número que descreve o artefato implantado passa a ser o desta série. Manter as versões antigas economizaria ~0,9 s por remediação ao preço de ficar atrás em correções de segurança do provider e do OPA; a atualização foi mantida.
+
+### Python 3.14 (série `results/py314/`)
+
+As cinco funções e as duas layers passaram para `python3.14`. Funcionalmente nada mudou (160/160; auditoria e verificação completas). A remediação quente saiu 0,276 s mais rápida, mas com p = 0,056: **não é distinguível de zero a 5%**, e é registrada como ausência de efeito demonstrável, não como ganho. O dimensionamento ficou igual ao da série anterior (`results/py314/lambda_sizing.json`).
+
+### Otimização do Execute (experimento)
+
+A instrumentação dos handlers (cada invocação registra o tempo de cada fase) e um experimento com variantes (`scripts/perf_experiment.py`, resultados em `results/perf/`) responderam onde o tempo do Execute está e o que o reduz. Cada variante rodou o C1 nove vezes (uma de aquecimento), com ambientes frios forçados em três delas; os tempos vêm das linhas que os próprios handlers gravam. Medianas:
+
+| Variante | Execute quente | Execute frio (init + handler) | GB-s quente |
+|---|---|---|---|
+| base (2048 MB) | 6,53 s | 0,52 + 12,10 = 12,6 s | 13,1 |
+| + cliente escopado sob demanda e `skip_*` no provider | **6,24 s** | 0,51 + 11,89 = 12,4 s | 12,5 |
+| + cache em zstd baixado no init | 6,29 s | **4,02 + 6,83 = 10,9 s** | 12,6 |
+| idem, 1769 MB (1 vCPU) | 7,06 s | 4,13 + 7,55 = 11,7 s | 12,2 |
+| **idem, 3008 MB** (teto da conta) | **5,64 s** | **3,81 + 6,07 = 9,9 s** | 16,6 |
+
+- **O Python não é gargalo.** No Execute quente, o `tofu` leva 6,32 dos 6,53 s (97%); o que é Python e SDK soma 0,21 s — assume role 0,015, cliente escopado 0,091, preparo do diretório 0,069, leitura da policy 0,038. Reescrever os handlers em outra linguagem mexeria nesses 3%.
+- **`skip_*` e cliente sob demanda: −0,29 s.** Sem as validações de credencial do provider, o `tofu` perde 0,17 s; e o cliente escopado, que só o ssl-only usa, deixa de ser criado nas outras remediações (0,09 s). O cliente sai da sessão padrão com as credenciais da violação: a session policy vem nas credenciais, não na sessão, e o C10 continua barrando o alvo adulterado.
+- **zstd no init: −1,7 s no frio.** O cache de 780 MB descompactado passa do handler (5,1 s com gzip) para a fase de init, que tem CPU cheia seja qual for a memória, e o zstd descompacta mais rápido (arquivo 21% menor).
+- **Memória compra CPU.** 1769 MB é mais lento; 3008 MB tira mais 0,6 s. Carregar o provider a cada `apply` é trabalho de CPU. O custo sobe 32% em GB-s — cerca de US$ 0,00005 por remediação.
+- **O Analyze fica em 512 MB.** A 256 MB ele passa de 0,18 para 0,43 s, com o OPA de 0,10 para 0,24 s: menos memória, menos CPU.
+
+As três primeiras mudanças e os 3008 MB foram adotados, e as chaves do experimento saíram do código — há um caminho só. A série de confirmação é `results/optimized/`. O cache em gzip continua no bucket só para que as variantes de base do experimento possam ser repetidas.
 
 ### Dimensionamento das Lambdas
 
