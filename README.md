@@ -381,10 +381,10 @@ lento**, o único presente em todas (L12). Nenhuma das 80 amostras foi fria.
 
 | Métrica | Quente (patamar lento) | Patamar rápido |
 |---|---|---|
-| **H1 — t_remediation** (C1 · C3 · C5) | **6,61s** ± 0,11 · IC [6,55 · 6,67] · n=15 | 5,15s ± 0,13 · n=15 |
-| **H3 — t_exposure** (C1 · C5) | **13,87s** ± 1,71 · IC [12,56 · 15,19] · n=9 | |
-| **t_verified** (convergência confirmada) | **14,19s** ± 1,70 · n=9 | |
-| t_detection (evento → SFN start) | sem classe: 7,90s ± 1,46 · IC [7,21 · 8,58] · n=20 | |
+| **H1 — t_exposure** (C1 · C5) | **13,87s** ± 1,71 · IC [12,56 · 15,19] · n=9 | |
+| MTTR — t_remediation, componente de H1 (C1 · C3 · C5) | **6,61s** ± 0,11 · IC [6,55 · 6,67] · n=15 | 5,15s ± 0,13 · n=15 |
+| **H3 — t_verified** (convergência confirmada) | **14,19s** ± 1,70 · n=9 | |
+| t_detection (evento → SFN start), componente de H1 | sem classe: 7,90s ± 1,46 · IC [7,21 · 8,58] · n=20 | |
 
 **Toda a variação do MTTR entre as seis primeiras séries é atribuível, estado a estado:**
 6,03s no laço por eco → +0,18s do estado que agenda a verificação → +0,28s da autoridade

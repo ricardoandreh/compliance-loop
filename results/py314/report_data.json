@@ -3593,7 +3593,7 @@
     }
   ],
   "hypotheses": {
-    "H1": {
+    "mttr": {
       "metric": "t_remediation",
       "scenarios": [
         "C1",
@@ -3665,7 +3665,7 @@
       "cold": null,
       "cold_samples": []
     },
-    "H3": {
+    "exposure": {
       "metric": "t_exposure",
       "scenarios": [
         "C1",

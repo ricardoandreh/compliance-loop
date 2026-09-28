@@ -3649,7 +3649,7 @@
     }
   ],
   "hypotheses": {
-    "H1": {
+    "mttr": {
       "metric": "t_remediation",
       "scenarios": [
         "C1",
@@ -3743,7 +3743,7 @@
         }
       ]
     },
-    "H3": {
+    "exposure": {
       "metric": "t_exposure",
       "scenarios": [
         "C1",

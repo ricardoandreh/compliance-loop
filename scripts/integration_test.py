@@ -2,7 +2,8 @@
 """
 Integration test runner for MAPE-K Compliance Automation Loop.
 Executes scenarios C1-C7 against the live AWS environment.
-Collects timing metrics per hypothesis (H1: MTTR, H2: rastreabilidade, H3: tempo de exposição).
+Collects timing metrics per hypothesis (H1: tempo de exposição, with the MTTR as its
+component; H2: rastreabilidade; H3: convergência do laço).
 
 Usage:
   python3 scripts/integration_test.py                  # all tests
@@ -173,7 +174,7 @@ def get_public_access(name):
 # 1. Metrics. t_detection and t_exposure subtract a LOCAL timestamp from an AWS
 #    one (Step Functions startDate/stopDate). Any offset lands directly in the
 #    result — a local clock running ahead makes the system look faster than it
-#    is, which would bias H1/H3 in our own favour.
+#    is, which would bias H1 in our own favour.
 # 2. Correctness of the search. wait_for_executions keeps executions whose
 #    startDate is later than a locally-taken reference. If the local clock runs
 #    ahead, an execution AWS stamped moments after the reference is silently
@@ -253,7 +254,7 @@ def pick_execution(execs, event_name=None, trigger=None, longest=False):
       and 13.2s on others for the same scenario, with nothing wrong.
     - C3: after the scheduler-triggered remediation (~5.9s), that remediation's
       own CloudTrail event used to cause one more evaluation (~0.5s). Picking
-      the latter reported t_remediation as 0.47s and dragged H1's interval
+      the latter reported t_remediation as 0.47s and dragged the MTTR interval
       negative. The EventBridge rule now filters the Execute role, so that echo
       no longer exists; the selection stays as a guard in case the filter ever
       regresses, and assert_no_remediation_echo() is what detects that.
@@ -401,7 +402,7 @@ def test_c1():
         # switched off by the time the event is evaluated (both events arrive
         # together). The violation under test remediates one control in ~6s, so
         # max() reported the setup's fan-out as this scenario's MTTR — inflating
-        # H1 by roughly 3x and attributing the fan-out's spread to it.
+        # the MTTR by roughly 3x and attributing the fan-out's spread to it.
         chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock", longest=True)
         remediation = (chosen, get_execution_timing(chosen["arn"]))
         t_sfn_start = remediation[1]["start"]
@@ -607,7 +608,7 @@ def test_c5():
         # switched off by the time the event is evaluated (both events arrive
         # together). The violation under test remediates one control in ~6s, so
         # max() reported the setup's fan-out as this scenario's MTTR — inflating
-        # H1 by roughly 3x and attributing the fan-out's spread to it.
+        # the MTTR by roughly 3x and attributing the fan-out's spread to it.
         chosen = pick_execution(execs, event_name="PutBucketPublicAccessBlock", longest=True)
         remediation = (chosen, get_execution_timing(chosen["arn"]))
 
@@ -1252,22 +1253,22 @@ def main():
         print(f"  {icon} {name}: {result}  {timing_str}")
 
     # Hypothesis summary
-    # Same pooling as benchmark.py: H1/H3 are about the S3 violation scenarios.
-    h1_tests = {k: v for k, v in all_metrics.items() if "t_remediation" in v and k in ("C1", "C3", "C5")}
-    h3_tests = {k: v for k, v in all_metrics.items() if "t_exposure" in v and k in ("C1", "C5")}
+    # Same pooling as benchmark.py: the timed claims are about the S3 violation scenarios.
+    exposure_tests = {k: v for k, v in all_metrics.items() if "t_exposure" in v and k in ("C1", "C5")}
+    mttr_tests = {k: v for k, v in all_metrics.items() if "t_remediation" in v and k in ("C1", "C3", "C5")}
 
-    if h1_tests:
-        print(f"\n  H1 (MTTR):")
-        for k, v in h1_tests.items():
-            print(f"    {k}: t_remediation = {v['t_remediation']}s")
-        avg = round(sum(v["t_remediation"] for v in h1_tests.values()) / len(h1_tests), 2)
+    if exposure_tests:
+        print(f"\n  H1 (tempo de exposição):")
+        for k, v in exposure_tests.items():
+            print(f"    {k}: t_exposure = {v['t_exposure']}s")
+        avg = round(sum(v["t_exposure"] for v in exposure_tests.values()) / len(exposure_tests), 2)
         print(f"    avg = {avg}s")
 
-    if h3_tests:
-        print(f"\n  H3 (Tempo de exposição):")
-        for k, v in h3_tests.items():
-            print(f"    {k}: t_exposure = {v['t_exposure']}s")
-        avg = round(sum(v["t_exposure"] for v in h3_tests.values()) / len(h3_tests), 2)
+    if mttr_tests:
+        print(f"\n  H1 · MTTR, componente (t_remediation):")
+        for k, v in mttr_tests.items():
+            print(f"    {k}: t_remediation = {v['t_remediation']}s")
+        avg = round(sum(v["t_remediation"] for v in mttr_tests.values()) / len(mttr_tests), 2)
         print(f"    avg = {avg}s")
 
     failed = sum(1 for r in results.values() if r == "FAIL")

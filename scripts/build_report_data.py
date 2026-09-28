@@ -166,8 +166,8 @@ def build(results_dir):
         return out
 
     pooled = {
-        "H1": split("t_remediation", ("C1", "C3", "C5")),
-        "H3": split("t_exposure", ("C1", "C5")),
+        "mttr": split("t_remediation", ("C1", "C3", "C5")),
+        "exposure": split("t_exposure", ("C1", "C5")),
         "verified": split("t_verified", ("C1", "C5")),
         "detection": {"metric": "t_detection", "scenarios": ["C1", "C5"],
                       "all": summarize([x["value"] for x in samples

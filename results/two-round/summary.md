@@ -1,15 +1,15 @@
 # Resultados agregados
 
-Execuções da suíte: **10** — gerado em 2026-09-13 04:57 UTC.
+Execuções da suíte: **10** — gerado em 2026-09-28 03:04 UTC.
 Latências consideram apenas execuções em que o cenário passou; a taxa de sucesso é reportada separadamente. IC 95% pela distribuição t de Student (desvio amostral, n-1).
 
 ## Por hipótese
 
 | Hipótese | Métrica | n | Média (s) | Desvio (s) | Mediana (s) | Mín | Máx | IC 95% |
 |---|---|---:|---:|---:|---:|---:|---:|---|
-| H1 (MTTR) | `t_remediation` | 30 | 6.49 | 1.57 | 6.20 | 5.93 | 14.78 | [5.90, 7.07] |
-| H3 (tempo de exposição) | `t_exposure` | 20 | 14.21 | 2.28 | 14.00 | 9.89 | 20.06 | [13.14, 15.28] |
-| Convergência verificada | `t_verified` | 20 | 29.57 | 2.29 | 29.49 | 25.20 | 35.42 | [28.49, 30.64] |
+| H1 (tempo de exposição) | `t_exposure` | 20 | 14.21 | 2.28 | 14.00 | 9.89 | 20.06 | [13.14, 15.28] |
+| H1 · MTTR, componente | `t_remediation` | 30 | 6.49 | 1.57 | 6.20 | 5.93 | 14.78 | [5.90, 7.07] |
+| H3 (convergência verificada) | `t_verified` | 20 | 29.57 | 2.29 | 29.49 | 25.20 | 35.42 | [28.49, 30.64] |
 
 ## Por cenário
 

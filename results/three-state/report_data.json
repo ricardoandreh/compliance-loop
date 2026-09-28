@@ -622,7 +622,7 @@
     },
     {
       "id": "C1",
-      "label": "Violação simples via console",
+      "label": "Acesso público do S3 desligado pelo console → remediação",
       "pass": 10,
       "total": 10,
       "primary": "t_remediation",
@@ -727,7 +727,7 @@
     },
     {
       "id": "C2",
-      "label": "Violação com exceção ativa",
+      "label": "Acesso público do S3 com exceção ativa → S_exception, sem remediar",
       "pass": 10,
       "total": 10,
       "primary": "t_classification",
@@ -760,7 +760,7 @@
     },
     {
       "id": "C3",
-      "label": "Exceção expira → remediação",
+      "label": "Exceção de acesso público expira → reavaliação e remediação",
       "pass": 10,
       "total": 10,
       "primary": "t_remediation",
@@ -865,7 +865,7 @@
     },
     {
       "id": "C4",
-      "label": "Falha do sistema → escalação",
+      "label": "Bucket inexistente → escalação por falha do sistema",
       "pass": 10,
       "total": 10,
       "primary": "t_escalation",
@@ -898,7 +898,7 @@
     },
     {
       "id": "C5",
-      "label": "Violação originada por IaC",
+      "label": "Acesso público do S3 desligado por IaC externo → remediação",
       "pass": 10,
       "total": 10,
       "primary": "t_remediation",
@@ -1003,7 +1003,7 @@
     },
     {
       "id": "C6",
-      "label": "Recurso já conforme",
+      "label": "Bucket já conforme → S_nominal, sem remediar",
       "pass": 10,
       "total": 10,
       "primary": "t_classification",
@@ -1036,7 +1036,7 @@
     },
     {
       "id": "C7",
-      "label": "Novo controle → EventBridge",
+      "label": "Controle publicado e removido → regra do EventBridge atualizada",
       "pass": 10,
       "total": 10,
       "primary": "t_sync_insert",
@@ -1093,7 +1093,7 @@
     },
     {
       "id": "C8",
-      "label": "Remediação falha → escalação",
+      "label": "Remediação negada pelo IAM → escalação com estado preservado",
       "pass": 10,
       "total": 10,
       "primary": "t_escalation",
@@ -1126,7 +1126,7 @@
     },
     {
       "id": "CTRL-01",
-      "label": "ctrl-s3-public-block",
+      "label": "S3: acesso público bloqueado",
       "pass": 10,
       "total": 10,
       "primary": "t_total",
@@ -1159,7 +1159,7 @@
     },
     {
       "id": "CTRL-02",
-      "label": "ctrl-s3-ssl-only",
+      "label": "S3: TLS obrigatório na bucket policy",
       "pass": 10,
       "total": 10,
       "primary": "t_total",
@@ -1192,7 +1192,7 @@
     },
     {
       "id": "CTRL-03",
-      "label": "ctrl-s3-versioning",
+      "label": "S3: versioning ativo",
       "pass": 10,
       "total": 10,
       "primary": "t_total",
@@ -1225,7 +1225,7 @@
     },
     {
       "id": "CTRL-04",
-      "label": "ctrl-s3-encryption",
+      "label": "S3: encryption padrão",
       "pass": 10,
       "total": 10,
       "primary": "t_total",
@@ -1258,7 +1258,7 @@
     },
     {
       "id": "CTRL-05",
-      "label": "ctrl-ebs-encryption-default",
+      "label": "EBS: criptografia padrão da conta",
       "pass": 10,
       "total": 10,
       "primary": "t_total",
@@ -3263,7 +3263,7 @@
     }
   ],
   "hypotheses": {
-    "H1": {
+    "mttr": {
       "metric": "t_remediation",
       "scenarios": [
         "C1",
@@ -3349,7 +3349,7 @@
         }
       ]
     },
-    "H3": {
+    "exposure": {
       "metric": "t_exposure",
       "scenarios": [
         "C1",

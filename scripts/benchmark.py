@@ -35,17 +35,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 INTEGRATION_TEST = os.path.join(HERE, "integration_test.py")
 
 # Which metric answers which hypothesis. Metrics are collected per scenario and
-# then pooled per hypothesis, because H1/H3 are claims about the system, not
-# about any one scenario.
+# then pooled per hypothesis, because the hypotheses are claims about the
+# system, not about any one scenario. H1 is the exposure; the MTTR is its part
+# that the system controls, reported alongside. H3's timed evidence is the
+# verified convergence.
 HYPOTHESES = {
     # (metrics, scenarios). Pooled over the S3 violation scenarios only: CTRL-05
     # also reports t_remediation, but for an account-level EC2 setting with its
     # own Terraform resource, and mixing it in would describe neither.
-    "H1 (MTTR)": (["t_remediation"], ("C1", "C3", "C5")),
-    "H3 (tempo de exposição)": (["t_exposure"], ("C1", "C5")),
+    "H1 (tempo de exposição)": (["t_exposure"], ("C1", "C5")),
+    "H1 · MTTR, componente": (["t_remediation"], ("C1", "C3", "C5")),
     # Event -> the verification round confirms S_nominal, read straight after
     # the remediation (no consistency wait since results/no-wait/).
-    "Convergência verificada": (["t_verified"], ("C1", "C5")),
+    "H3 (convergência verificada)": (["t_verified"], ("C1", "C5")),
 }
 
 # Two-tailed t critical values at 95%, indexed by degrees of freedom (n-1).

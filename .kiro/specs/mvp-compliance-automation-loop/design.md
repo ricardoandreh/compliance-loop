@@ -65,7 +65,7 @@ Na matriz de Gregor e Hevner (2013), a contribuição é de **melhoria**: soluç
 | Atividade (PEFFERS et al., 2007) | Neste trabalho |
 |---|---|
 | 1. Identificar o problema | Exposição longa e sem trilha de auditoria na remediação manual — ponto de entrada da pesquisa |
-| 2. Definir os objetivos | *Objetivos de Design* e três hipóteses: **H1** — o laço reduz o MTTR de dias para segundos; **H2** — toda avaliação e toda ação deixam registro completo e encadeado; **H3** — o tempo de exposição cai na mesma proporção |
+| 2. Definir os objetivos | *Objetivos de Design* e três hipóteses: **H1** — o laço reduz a exposição de uma violação não autorizada para a ordem de segundos, sem alterar recurso sob exceção vigente e devolvendo a proteção quando a exceção expira; **H2** — toda avaliação e toda ação deixam registro completo e encadeado; **H3** — toda remediação é confirmada por releitura, e o laço, com o disjuntor, não entra em ciclo |
 | 3. Projetar e desenvolver | `requirements.md` e este documento, com 30 propriedades de corretude (*Propriedades de Corretude*) |
 | 4. Demonstrar | 16 cenários na conta real (C1–C10, CTRL-01–06) e traces de execução (*Evidências Experimentais*) |
 | 5. Avaliar | *Estratégia de avaliação*, abaixo |
@@ -109,9 +109,9 @@ Cada série mediu o sistema como estava, e o resultado orientou a iteração seg
 
 | Hipótese | Resultado (série `results/optimized/`) |
 |---|---|
-| **H1** | **6,61 s** ± 0,11 de remediação, contra dias a semanas do processo manual |
-| **H2** | 1.160 linhas de auditoria, todas completas; 430 remediações, cada uma com exatamente uma verificação; cada escrita no CloudTrail leva o `violation_id` como nome da sessão |
-| **H3** | **13,87 s** ± 1,71 de exposição, dos quais 7,90 s são a entrega do CloudTrail, fora do sistema |
+| **H1** | **13,87 s** ± 1,71 de exposição (7,90 s de entrega do CloudTrail, fora do sistema, mais **6,61 s** ± 0,11 de remediação), contra dias a semanas do processo manual; nenhum recurso sob exceção alterado (C2, 10/10); proteção restabelecida na expiração (C3, 10/10) |
+| **H2** | 1.160 linhas de auditoria, todas completas; cada remediação ligada à sua verificação; cada escrita no CloudTrail leva o `violation_id` como nome da sessão |
+| **H3** | 430 remediações, todas confirmadas por releitura (2.760 leituras em sete séries, nenhuma divergente); no máximo duas execuções por incidente, por construção do grafo; disjuntor na 4ª violação reincidente (C9, 10/10) |
 
 O detalhe, com intervalos e testes, está em *Síntese por Hipótese*; as ameaças à validade, em *Ameaças à validade*.
 
@@ -1971,7 +1971,7 @@ O trace demonstra empiricamente que o sistema satisfaz a propriedade de converg�
 **Data**: 2026-04-12 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c1-1776025390`
 **Controle**: `ctrl-s3-public-block`
-**Hipóteses validadas**: H1 (MTTR), H3 (tempo de exposição)
+**Hipótese validada**: H1 (exposição; o MTTR é um componente)
 
 Este teste demonstra o cenário mais básico: um bucket tem seu public access block
 desabilitado (simulando ação via console), o sistema detecta, classifica como
@@ -1994,15 +1994,15 @@ desabilitado (simulando ação via console), o sistema detecta, classifica como
 
 | Métrica | Valor | Hipótese |
 |---|---|---|
-| t_detection (evento → SFN start) | ~6s | H3 |
+| t_detection (evento → SFN start) | ~6s | H1 |
 | t_remediation (SFN start → success) | **18s** | H1 |
-| t_exposure (evento → remediação confirmada) | **24s** | H3 |
+| t_exposure (evento → remediação confirmada) | **24s** | H1 |
 
 > **Ressalva de medição**: valores de uma execução única, mantidos como trace. O
 > `t_remediation` de 18s aqui é compatível com uma invocação de container frio
 > (~10s de Execute frio contra ~5s quente). Os valores reportáveis são o agregado
 > de 10 execuções, separados em regime quente e frio, na *Síntese por Hipótese*. Nenhuma cifra
-> desta seção deve ser citada como o valor de H1 ou H3.
+> desta seção deve ser citada como o valor de H1.
 
 #### Rastreabilidade (H2)
 
@@ -2059,7 +2059,7 @@ Bucket configurado com todos os public access settings em `false`.
 **Data**: 2026-04-13 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c3-1776025390`
 **Controle**: `ctrl-s3-public-block`
-**Hipóteses validadas**: H2 (rastreabilidade), H3 (tempo de exposição)
+**Hipóteses validadas**: H1 (a exceção expira e a proteção volta), H2 (rastreabilidade)
 
 Este é o teste mais completo do sistema. Demonstra o ciclo de vida inteiro de uma
 exceção em escala de dezenas de segundos, usando o novo mecanismo de EventBridge
@@ -2127,10 +2127,10 @@ confirmação. É o argumento empírico central de H2 (rastreabilidade/completud
 
 | Métrica | Valor | Hipótese |
 |---|---|---|
-| Precisão do Scheduler | valid_until + 30s (exato) | H3 |
+| Precisão do Scheduler | valid_until + 30s (exato) | H1 |
 | t_remediation (Scheduler fire → success) | **~8s** | H1 |
-| Janela de risco pós-expiração | **~66s** (30s buffer + 36s execução) | H3 |
-| Ciclo completo S_exception → S_nominal | **~4 min** (controlado pelo buffer do Scheduler + execução) | H3 |
+| Janela de risco pós-expiração | **~66s** (30s buffer + 36s execução) | H1 |
+| Ciclo completo S_exception → S_nominal | **~4 min** (controlado pelo buffer do Scheduler + execução) | H1 |
 
 #### Verificações
 
@@ -2204,7 +2204,7 @@ O Execute nunca é invocado, eliminando o loop.
 **Data**: 2026-04-13 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c5-1776025390`
 **Controle**: `ctrl-s3-public-block`
-**Hipóteses validadas**: H1 (MTTR), H2 (rastreabilidade)
+**Hipóteses validadas**: H1 (exposição), H2 (rastreabilidade)
 
 Este teste demonstra que o sistema funciona como guardrail independente da origem da
 mudança. A violação foi criada por um `tofu apply` externo (simulando um time de
@@ -2261,7 +2261,7 @@ O Teste C5 demonstra apenas um ciclo: apply externo → detecção → remediaç
 **Data**: 2026-04-13 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c6-1776025390`
 **Controle**: `ctrl-s3-public-block`
-**Hipótese validada**: H1 (MTTR)
+**Hipótese validada**: H1 (recurso conforme não é tocado)
 
 Cenário mais simples: bucket já conforme recebe `PutBucketPublicAccessBlock` com todos
 os settings em `true`. O sistema detecta, avalia, confirma conformidade e encerra.
@@ -2377,24 +2377,24 @@ Nesta série os **dois patamares de ambiente de execução** aparecem: 123 das 4
 | Cenário | Descrição | Estado final | Métrica | Quente | Hipóteses |
 |---|---|---|---|---|---|
 | C1 | Acesso público do S3 desligado pelo console → remediação | S_nominal | `t_remediation` | **5,87 s** ± 0,81 | H1 |
-| | | | `t_exposure` | **13,71 s** ± 1,45 | H3 |
+| | | | `t_exposure` | **13,71 s** ± 1,45 | H1 |
 | | | | `t_verified` | **14,01 s** ± 1,46 | H3 |
-| | | | `t_detection` | sem classe: 7,84 s ± 1,50 | H3 |
-| C2 | Acesso público do S3 com exceção ativa → S_exception, sem remediar | S_exception | `t_classification` | **0,49 s** ± 0,04 | H2 |
+| | | | `t_detection` | sem classe: 7,84 s ± 1,50 | H1 |
+| C2 | Acesso público do S3 com exceção ativa → S_exception, sem remediar | S_exception | `t_classification` | **0,49 s** ± 0,04 | H1 |
 | C3 | Exceção de acesso público expira → reavaliação e remediação | S_nominal | `t_remediation` | **6,09 s** ± 0,77 | H1 |
-| | | | `t_remediation_post_expiry`\* | 63,38 s ± 13,51 | H2, H3 |
+| | | | `t_remediation_post_expiry`\* | 63,38 s ± 13,51 | H1 |
 | | | | `t_verified_post_expiry`\* | 63,66 s ± 13,54 | H3 |
-| | | | `t_scheduler_fire` | sem classe: 57,29 s ± 13,31 | H3 |
+| | | | `t_scheduler_fire` | sem classe: 57,29 s ± 13,31 | H1 |
 | C4 | Bucket inexistente → escalação por falha do sistema | Sem estado, escalado | `t_escalation` | **0,45 s** ± 0,04 | H2 |
 | C5 | Acesso público do S3 desligado por IaC externo → remediação | S_nominal | `t_remediation` | **5,68 s** ± 0,71 | H1 |
-| | | | `t_exposure` | **13,64 s** ± 1,32 | H3 |
+| | | | `t_exposure` | **13,64 s** ± 1,32 | H1 |
 | | | | `t_verified` | **13,91 s** ± 1,31 | H3 |
-| | | | `t_detection` | sem classe: 7,95 s ± 1,51 | H3 |
+| | | | `t_detection` | sem classe: 7,95 s ± 1,51 | H1 |
 | C6 | Bucket já conforme → S_nominal, sem remediar | S_nominal | `t_classification` | **0,49 s** ± 0,04 | H1 |
 | C7 | Controle publicado e removido → regra do EventBridge atualizada | — | `t_sync_insert` | não classificado: 15,62 s ± 0,01 | Extensibilidade |
 | C8 | Remediação negada pelo IAM → escalação com estado preservado | S_violation, escalado | `t_escalation` | **5,98 s** ± 0,77 | H2 |
-| C9 | Mesma violação repetida → disjuntor escala na 4ª | S_violation, escalado sem remediar | `t_escalation` | **0,73 s** ± 0,06 | H2 |
-| | | | `violations_until_break` | **4,00** ± 0,00 | H2 |
+| C9 | Mesma violação repetida → disjuntor escala na 4ª | S_violation, escalado sem remediar | `t_escalation` | **0,73 s** ± 0,06 | H3 |
+| | | | `violations_until_break` | **4,00** ± 0,00 | H3 |
 | C10 | Template adulterado para outro bucket → sessão escopada nega | — (invoca o Execute diretamente) | — | template adulterado barrado por IAM em 10/10 | H2 |
 
 n = 10 em todas as linhas. **O disjuntor disparou na quarta violação em 10 de 10 rodadas**, como em todas as séries desde que foi introduzido: com limiar 3, as três primeiras violações do mesmo par são remediadas e a quarta é a primeira a enxergar três remediações na janela.
@@ -2447,7 +2447,7 @@ As métricas de cada cenário são extraídas do histórico de execuções do St
 | `t_escalation` | início da execução → mensagem na fila de escalação |
 | `t_verified` | evento CloudTrail → fim da rodada de verificação que confirma `S_nominal`. É quando a convergência foi *confirmada*; o recurso já tinha convergido no fim da remediação (`t_exposure`). A rodada lê imediatamente, sem espera (ver *Consistência de leitura*) |
 
-**Alinhamento de relógio**: `t_detection` e `t_exposure` subtraem um timestamp do runner de um timestamp da AWS (`startDate`/`stopDate` do Step Functions). Os dois relógios são independentes, e qualquer desvio entra direto no resultado — um runner adiantado faz o sistema parecer mais rápido do que é, enviesando H1/H3 a favor da própria hipótese. Medição real neste ambiente (WSL2): **+0,9s adiantado**, o que subestimaria `t_detection` em ~11%.
+**Alinhamento de relógio**: `t_detection` e `t_exposure` subtraem um timestamp do runner de um timestamp da AWS (`startDate`/`stopDate` do Step Functions). Os dois relógios são independentes, e qualquer desvio entra direto no resultado — um runner adiantado faz o sistema parecer mais rápido do que é, enviesando a H1 a favor da própria hipótese. Medição real neste ambiente (WSL2): **+0,9s adiantado**, o que subestimaria `t_detection` em ~11%.
 
 O runner mede o desvio contra o header `Date` das respostas da AWS no início da suíte e o compensa (`aws_now()`). Como esse header tem resolução de 1 segundo e é truncado, `(local − header)` cai sempre em `[desvio, desvio + 1)`; o mínimo entre amostras é o estimador correto, aproximando o valor real por cima. Resta portanto uma **incerteza sistemática sub-segundo que a repetição não elimina** — relevante ao interpretar `t_detection`, cuja ordem de grandeza é de poucos segundos, e irrelevante para `t_exposure` e `t_remediation`, medidos entre dois instantes da própria AWS.
 
@@ -2593,7 +2593,28 @@ As três funções fora do caminho medido estão no piso ou perto dele, com time
 >
 > **Quente também não é um regime só**: na série otimizada, 123 das 470 invocações do Execute caíram no patamar rápido, todas em 1 dos 4 ambientes de execução. O corte entre patamares não é fixo: é o maior intervalo (> 0,5 s) entre as durações quentes do Execute das duas séries comparadas (`fast_threshold()` em `scripts/report/collect_series_facts.py`). Um corte fixo de 4,8 s, usado antes, deixou de separar os patamares quando o upgrade deslocou os dois para cima e misturou amostras — a diferença final → upgrade saía +0,87 s em vez de +1,06 s. **As séries são comparadas no patamar lento**, o único presente em todas (L12).
 
-**H1 — Redução do MTTR** (`t_remediation`; C1 · C3 · C5)
+**H1 — Exposição em segundos, com a exceção respeitada**: o laço reduz o tempo de exposição de uma violação não autorizada para a ordem de segundos, contra dias a semanas do processo manual, não altera recurso sob exceção vigente e devolve a proteção quando a exceção expira
+
+*Tempo de exposição* (`t_exposure`; C1 · C5):
+
+| série | quente · ambiente lento | frio |
+|---|---|---|
+| **otimizada (atual)** | **13,87 s** ± 1,71 · IC 95% [12,56 · 15,19] · n = 9 | nenhuma |
+| Python 3.14 | 15,66 s ± 1,98 · n = 12 | nenhuma |
+| upgrade | 15,37 s ± 1,63 · n = 16 | 21,72 e 25,11 s |
+| final | 14,56 s ± 1,74 · IC 95% [13,67 · 15,46] · n = 17 | 18,52 e 18,95 s |
+| sessão escopada | 14,24 s ± 1,63 · IC 95% [13,46 · 15,02] · n = 19 | 15,90 s |
+| três estados | 13,31 s ± 1,77 · n = 19 | 23,50 s |
+| leitura imediata | 14,16 s ± 0,73 · n = 9 | 20,98 s |
+| espera de 15 s | 13,90 s ± 1,87 · n = 19 | 20,06 s |
+| eco | 14,15 s ± 1,48 · n = 20 | nenhuma |
+
+- Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual. Redução de **ordens de grandeza** (segundos contra dias), em qualquer regime e em qualquer série. É uma comparação de ordem de grandeza: o baseline não foi medido, e nenhum teste estatístico o envolve
+- **A hipótese não é um limite fixo**: na série otimizada, 2 das 20 amostras de exposição passaram de 15 s (faixa 11,72–17,10 s), e o IC 95% da média no patamar lento vai até 15,19 s. O que os dados sustentam é a ordem de grandeza, não um teto
+- **Detecção** (`t_detection`, sem classe — termina antes de qualquer Lambda): atual **7,90 s** ± 1,46 · IC 95% [7,21 · 8,58]; as oito séries anteriores ficam entre 7,16 s e 8,13 s (upgrade 7,79, Python 3.14 7,81), com intervalos sobrepostos. É latência de entrega do CloudTrail, fora do sistema
+- **A exposição é dominada pela detecção**: desvio de 1,46 s na detecção contra 0,11 s na remediação. Por isso a queda de 0,97 s no MTTR aparece na exposição (15,66 → 13,87 s) com intervalo largo: n = 9 e o ruído da detecção. A decomposição fecha exatamente — `t_detection + t_remediation = t_exposure` em todas as execuções. Reduzir `t_exposure` de forma significativa exigiria trocar o Monitor, não otimizar Analyze ou Execute
+
+*Componente: tempo de remediação — MTTR* (`t_remediation`; C1 · C3 · C5), a parte da exposição que depende do sistema:
 
 | série | quente · ambiente lento | quente · ambiente rápido | frio |
 |---|---|---|---|
@@ -2621,40 +2642,34 @@ As três funções fora do caminho medido estão no piso ou perto dele, com time
 
   A amplitude entre caminhos (0,05–0,22 s) é da mesma ordem que a variação do **mesmo** caminho entre séries (até 0,16 s no CTRL-05), então nenhuma diferença entre rotas ou entre serviços é sustentada pelos dados. O que os dados sustentam é o contrário do intuitivo: remediar uma configuração de conta do EC2 custa o mesmo que remediar um bucket, porque o custo é a inicialização do `tofu` e do provider, não o serviço
 - **Custo de ambiente frio** (série final; o upgrade teve dois frios, de 16,2 e 17,2 s, +9 s sobre o quente, antes do cache ir para o init; a otimizada, nenhum): +4 a +5 s quando o Execute sobe do zero e baixa o cache de provider; +1,9 s quando só o Analyze está frio; +0,7 s numa classificação sem remediação (C6)
-- Baseline comparativo (Verizon DBIR): dias a semanas para remediação manual. Redução de **ordens de grandeza** (segundos vs. dias), em qualquer regime
 
-**H2 — Rastreabilidade**
+*A exceção é respeitada e expira* (C2, C3, C6, CTRL-06):
+
+- **Nenhuma remediação sob exceção vigente**: o C2 classificou `S_exception` e manteve o bucket inalterado em 10 de 10 rodadas (`t_classification` **0,49 s** ± 0,04), com `exception_id` e `approved_by` na linha do log
+- **Recurso conforme não é tocado**: o C6 confirmou `S_nominal` sem invocar o Execute em 10 de 10 (**0,49 s** ± 0,04)
+- **Controle detectivo não altera o recurso** (CTRL-06): escalado sem remediar em **0,86 s** ± 0,12
+- **A proteção volta na expiração, sem novo evento**: o C3 reavaliou e remediou o bucket em 10 de 10, disparado pelo EventBridge Scheduler
+- Janela de risco pós-expiração de exceção (C3): **63,38 s** ± 13,51 — buffer de 30 s do Scheduler, mais o atraso de entrega dele, mais a execução
+- **Atraso de entrega do Scheduler** (sem classe): **27,3 s** em média nesta série (faixa 8,1–44,1 s); 19,3 s na final, 21,8 s no upgrade, 25,2 s no Python 3.14; entre 17,9 s e 29,5 s nas nove séries, com extremos de 0,1 s e 48,1 s. É ele, não o laço, que move a janela de risco. A média muda mais entre séries do que qualquer alteração do sistema — o mecanismo é **limitado**, não determinístico
+
+**H2 — Rastreabilidade e corretude das transições**: toda avaliação que produz estado e toda ação do laço deixam um registro completo, encadeado à ação que o motivou
+
 - 100% dos cenários com todos os campos obrigatórios no `violations_log`
 - Ciclo completo de exceção documentado com 3 registros consecutivos (C3): S_exception → S_violation → S_nominal
 - Escalação com `github_issue_url` persistido na linha da violação (C8, 10 de 10)
 - `state=S_violation` preservado após falha de remediação, com `remediation_status=failed` e o erro (C8): `t_escalation` **5,98 s** ± 0,77 (os dois patamares juntos: a falha acontece no `apply`, depois da inicialização do `tofu`)
-- Violação reincidente escalada **sem remediar** (C9): **0,73 s** ± 0,06, com o disjuntor disparando na quarta violação em 10 de 10 rodadas
-- Controle detectivo escalado sem tocar no recurso (CTRL-06): **0,86 s** ± 0,12
 - Falha do sistema escalada sem registro de estado (C4): **0,45 s** ± 0,04
 - **A cadeia fecha pelos dois lados**: cada escrita de remediação aparece no CloudTrail como `assumed-role/compliance-loop-remediation-dev/<violation_id>`, e esse identificador é a chave da linha correspondente no `violations_log` — ver *Autoridade por incidente*
-- Nenhuma rodada de verificação escalou: **2.760 leituras de controle imediatas em 7 séries, todas `verified`**; na otimizada, 430 leituras em 270 rodadas, lidas 0,35 s (0,24–0,49 s) depois da escrita
 - **Completude medida sobre a série inteira, não inferida dos cenários** (`scripts/audit_log_completeness.py`, `results/optimized/log_audit.json`): as **1.160 linhas** gravadas durante a série otimizada (650 `S_nominal`, 460 `S_violation`, 50 `S_exception`; 430 remediações bem-sucedidas, 10 falhas, 30 linhas com issue) estão todas completas — campos obrigatórios, timestamp no formato canônico, estado dentro do modelo, exceção com aprovador, falha com erro, verificação com vínculo —, com `violation_id` único e **nenhuma issue em linha que não foi escalada** (P23)
-- **A cadeia remediação → verificação é uma bijeção**: as 430 remediações bem-sucedidas da série têm, cada uma, exatamente uma linha de verificação que aponta para ela (`verifies_violation_id`), nenhuma verificação aponta para algo que não foi remediado, e as 430 confirmaram `S_nominal`
 
-**H3 — Tempo de exposição** (`t_exposure`; C1 · C5)
+**H3 — Convergência do laço**: toda remediação é confirmada por uma releitura do recurso, um incidente custa no máximo duas execuções e o disjuntor impede ciclos de remediação quando algo reverte o recurso
 
-| série | quente · ambiente lento | frio |
-|---|---|---|
-| **otimizada (atual)** | **13,87 s** ± 1,71 · IC 95% [12,56 · 15,19] · n = 9 | nenhuma |
-| Python 3.14 | 15,66 s ± 1,98 · n = 12 | nenhuma |
-| upgrade | 15,37 s ± 1,63 · n = 16 | 21,72 e 25,11 s |
-| final | 14,56 s ± 1,74 · IC 95% [13,67 · 15,46] · n = 17 | 18,52 e 18,95 s |
-| sessão escopada | 14,24 s ± 1,63 · IC 95% [13,46 · 15,02] · n = 19 | 15,90 s |
-| três estados | 13,31 s ± 1,77 · n = 19 | 23,50 s |
-| leitura imediata | 14,16 s ± 0,73 · n = 9 | 20,98 s |
-| espera de 15 s | 13,90 s ± 1,87 · n = 19 | 20,06 s |
-| eco | 14,15 s ± 1,48 · n = 20 | nenhuma |
-
-- **Detecção** (`t_detection`, sem classe — termina antes de qualquer Lambda): atual **7,90 s** ± 1,46 · IC 95% [7,21 · 8,58]; as oito séries anteriores ficam entre 7,16 s e 8,13 s (upgrade 7,79, Python 3.14 7,81), com intervalos sobrepostos. É latência de entrega do CloudTrail, fora do sistema
-- **A exposição é dominada pela detecção**: desvio de 1,46 s na detecção contra 0,11 s na remediação. Por isso a queda de 0,97 s no MTTR aparece na exposição (15,66 → 13,87 s) com intervalo largo: n = 9 e o ruído da detecção. A decomposição fecha exatamente — `t_detection + t_remediation = t_exposure` em todas as execuções. Reduzir `t_exposure` de forma significativa exigiria trocar o Monitor, não otimizar Analyze ou Execute
 - **Convergência verificada** (`t_verified`): **14,19 s** ± 1,70 no patamar lento (n = 9), **0,32 s** acima da exposição — o custo da própria rodada de verificação. Com a espera fixa de 15 s eram 29,26 s, 15,4 s acima da exposição
-- Janela de risco pós-expiração de exceção (C3): **63,38 s** ± 13,51 — buffer de 30 s do Scheduler, mais o atraso de entrega dele, mais a execução
-- **Atraso de entrega do Scheduler** (sem classe): **27,3 s** em média nesta série (faixa 8,1–44,1 s); 19,3 s na final, 21,8 s no upgrade, 25,2 s no Python 3.14; entre 17,9 s e 29,5 s nas nove séries, com extremos de 0,1 s e 48,1 s. É ele, não o laço, que move a janela de risco. A média muda mais entre séries do que qualquer alteração do sistema — o mecanismo é **limitado**, não determinístico
+- Nenhuma rodada de verificação escalou: **2.760 leituras de controle imediatas em 7 séries, todas `verified`**; na otimizada, 430 leituras em 270 rodadas, lidas 0,35 s (0,24–0,49 s) depois da escrita
+- **Toda remediação foi verificada, uma vez só**: as 430 remediações bem-sucedidas da série têm, cada uma, exatamente uma linha de verificação que aponta para ela (`verifies_violation_id`), nenhuma verificação aponta para algo que não foi remediado, e as 430 confirmaram `S_nominal`
+- **No máximo duas execuções por incidente, por construção**: a rodada de verificação nunca alcança o Execute e só uma rodada de detecção agenda verificação — propriedades do grafo verificadas estaticamente (`tests/unit/test_state_machine.py`), e não só observadas
+- **O disjuntor interrompe o ciclo** (C9): a violação reincidente é escalada **sem remediar** em **0,73 s** ± 0,06, com o disjuntor disparando na quarta violação em 10 de 10 rodadas
+- **Nenhuma não convergência** nas séries sem espera: nenhuma rodada de verificação encontrou o recurso ainda violado, então o motivo `non_convergence` nunca foi acionado fora dos testes estruturais
 
 **Custo em dinheiro, medido** (`scripts/cost_model.py`, `results/optimized/cost_model.json`): todas as grandezas variáveis foram medidas na conta durante a série otimizada — 7.170 transições em 350 execuções de detecção (20,5 por execução) e 2.750 em 270 de verificação (10,2), o tempo faturado de cada Lambda pelas linhas REPORT e o volume de log ingerido —, e convertidas com preços de lista de us-east-1, sem descontar camadas gratuitas:
 

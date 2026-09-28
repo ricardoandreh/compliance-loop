@@ -338,7 +338,30 @@
     }
   },
   "hypotheses": {
-    "H1 (MTTR)": {
+    "H1 (tempo de exposi\u00e7\u00e3o)": {
+      "metric": "t_exposure",
+      "scenarios": [
+        "C1",
+        "C5"
+      ],
+      "n": 20,
+      "mean": 14.2075,
+      "sd": 2.2835680184169775,
+      "median": 14.0,
+      "min": 9.89,
+      "max": 20.06,
+      "ci95": [
+        13.138769552035077,
+        15.276230447964922
+      ],
+      "per_scenario_means": {
+        "C1": 15.361,
+        "C5": 13.054
+      },
+      "widest_within_scenario_sd": 2.0442681385332553,
+      "heterogeneous": false
+    },
+    "H1 \u00b7 MTTR, componente": {
       "metric": "t_remediation",
       "scenarios": [
         "C1",
@@ -363,30 +386,7 @@
       "widest_within_scenario_sd": 2.7177981283875123,
       "heterogeneous": false
     },
-    "H3 (tempo de exposi\u00e7\u00e3o)": {
-      "metric": "t_exposure",
-      "scenarios": [
-        "C1",
-        "C5"
-      ],
-      "n": 20,
-      "mean": 14.2075,
-      "sd": 2.2835680184169775,
-      "median": 14.0,
-      "min": 9.89,
-      "max": 20.06,
-      "ci95": [
-        13.138769552035077,
-        15.276230447964922
-      ],
-      "per_scenario_means": {
-        "C1": 15.361,
-        "C5": 13.054
-      },
-      "widest_within_scenario_sd": 2.0442681385332553,
-      "heterogeneous": false
-    },
-    "Converg\u00eancia verificada": {
+    "H3 (converg\u00eancia verificada)": {
       "metric": "t_verified",
       "scenarios": [
         "C1",
