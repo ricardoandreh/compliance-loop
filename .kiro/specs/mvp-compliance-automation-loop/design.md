@@ -2907,6 +2907,16 @@ O caminho por eventos continua o principal — é ele que dá a exposição de s
 
 **Como fechar**: incluir os `params` serializados na chave do cache. Não feito pelo mesmo motivo do L18: mudança no Analyze, fora do conjunto medido pela série atual.
 
+### L20. Sem ferramenta de gestão de exceções
+
+**O que**: o sistema consome exceções, mas não oferece um meio de registrá-las. Uma exceção é uma escrita direta na tabela `exceptions` — como fazem a suíte de integração e a injeção de falhas —, e o `exception_id` é o que quem escreve escolher: o sistema não gera o identificador, não valida o formato (o requisito 5.2 pedia um UUID) nem confere se `justification`, `approved_by` e `created_at` estão presentes.
+
+**Por que fica fora**: registrar uma exceção pressupõe uma ferramenta de gestão — quem pode pedir, quem pode aprovar, por quanto tempo, com que evidência — integrada à identidade da organização. É engenharia de plataforma, não parte do laço de conformidade, e o escopo deste trabalho é o que acontece depois que a exceção existe: a classificação em `S_exception`, a cópia de `exception_id` e `approved_by` para o `violations_log` e a reavaliação na expiração (requisito 24).
+
+**Consequência**: o `approved_by` gravado no log é o que foi escrito na tabela, sem prova de que aquela pessoa aprovou. A trilha de auditoria registra a exceção, mas a autenticidade da aprovação depende de quem controla a escrita na tabela — hoje, qualquer principal com `dynamodb:PutItem` nela.
+
+**Como fechar**: uma interface de cadastro (API, formulário ou fluxo de pull request sobre um repositório de exceções) que gere o identificador, exija os campos, valide a duração máxima e grave a identidade autenticada do aprovador; com ela, a escrita direta na tabela deixa de ser concedida a pessoas.
+
 ## Referências
 
 GARTNER. *[título a completar]*. 2025. — citado em *Posicionamento*; a referência completa está na bibliografia do TCC.

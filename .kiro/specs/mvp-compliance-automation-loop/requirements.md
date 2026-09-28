@@ -1,12 +1,14 @@
-# Requirements Document
+# Documento de Requisitos
 
-## Introduction
+## Introdução
 
 O MVP Compliance Automation Loop é um sistema de automação de conformidade baseado no padrão MAPE-K (Monitor, Analyze, Plan, Execute, Knowledge) que detecta desvios de conformidade em recursos cloud, classifica o estado do recurso, e executa ações corretivas automaticamente ou escala para operadores humanos quando necessário.
 
 O sistema monitora eventos de mutação em recursos AWS via CloudTrail, avalia conformidade usando políticas Rego executadas pelo Open Policy Agent (OPA), e remedia violações usando OpenTofu. O MVP implementa controle para bloqueio de acesso público em buckets S3.
 
 > **Escopo construído.** O texto acima e os requisitos 1–19 são a especificação inicial, preservada. O sistema construído implementa seis controles em dois serviços (S3 e EC2), verifica a convergência de cada remediação numa segunda rodada, escala por cinco motivos (não só falha de remediação), remedia com uma autoridade restrita a cada incidente e tem uma camada de operação. O que mudou em relação aos requisitos 1–19 está em *Revisões dos requisitos*; o que foi acrescentado sem estar previsto está em *Requisitos acrescentados durante o desenvolvimento* (20–27).
+
+**Forma dos critérios.** Os critérios de aceitação seguem o padrão EARS (*Easy Approach to Requirements Syntax*), com as palavras-chave em maiúsculas: **QUANDO** (gatilho), **SE … ENTÃO** (situação indesejada), **DEVE** e **NÃO DEVE** (obrigação); um critério sem gatilho vale sempre. Os critérios 1–19 foram escritos originalmente em inglês e traduzidos sem mudança de conteúdo. Nomes de componentes (Monitor, Analyze, Plan, Execute, Orchestrator), de campos e de estados ficam como no código.
 
 ## Revisões dos requisitos
 
@@ -20,7 +22,7 @@ Este documento é a especificação inicial do MVP e fica preservado como tal. O
 | 3.2 | política `s3_public_access` | uma política Rego por controle | idem 1.6 |
 | 3.6, 5.3 | índice por `control_id` | índice `resource-control-index` | consulta pontual por recurso e controle, sem varredura |
 | 4.2–4.4 | política no pacote da Lambda | política no S3, versionada por `policy_version` | mudar política sem novo deploy da Lambda |
-| 5.2 | `exception_id` UUID | identificador de texto escolhido por quem registra; o sistema não gera nem valida o formato | não há fluxo de cadastro de exceções: o registro é uma escrita direta na tabela (o fluxo de aprovação está fora do escopo) |
+| 5.2 | `exception_id` UUID | identificador de texto escolhido por quem registra; o sistema não gera nem valida o formato | o registro de exceções pressupõe uma ferramenta de gestão (aprovação, geração do identificador, validação), que é engenharia de plataforma e fica fora do escopo — *limitação L20* |
 | 6.1 | o Analyze grava a linha | o orquestrador grava; falha de avaliação não gera linha | Analyze sem efeitos colaterais; modelo de três estados |
 | 8.1, 19.1 | escalar quando o Execute falha | escalar por cinco motivos: remediação falha, não convergência, reincidência (disjuntor), controle detectivo e falha do sistema | os requisitos 20–22 criaram caminhos de escalação sem Execute |
 | 8.6 | timestamp da violação | instante em que a escalação foi decidida (a avaliação fica na linha do log, ligada pelo `violation_id`) | a mensagem descreve a escalação; a violação já tem registro próprio |
@@ -34,394 +36,394 @@ Este documento é a especificação inicial do MVP e fica preservado como tal. O
 | 17.4 | registrar o timeout e encerrar | timeout do Analyze ou do Execute é escalado; timeout da execução inteira dispara um alarme | encerrar em silêncio deixaria o recurso sem dono |
 | 19.5 | issue nula quando não houve escalação, lida como "o Execute não rodou ou teve sucesso" (*Property 23*) | issue só em linha escalada: remediação falha ou `S_violation` escalada pelo `PlanAction` | controles detectivos, disjuntor e verificação escalam sem invocar o Execute |
 
-## Glossary
+## Glossário
 
 - **Compliance_Loop**: O sistema completo de automação de conformidade baseado no padrão MAPE-K
 - **Monitor**: Componente que detecta eventos de mutação em recursos cloud via CloudTrail e EventBridge
 - **Analyze**: Componente Lambda que classifica o estado de conformidade do recurso usando OPA/Rego
 - **Execute**: Componente Lambda que executa remediação automática usando OpenTofu
 - **Knowledge_Base**: Banco de dados DynamoDB que armazena políticas, exceções aprovadas e log de violações *(revisado: a tabela `controls` guarda os metadados de cada controle e a chave da política; o texto Rego fica no S3 — ver 4.2)*
-- **Orchestrator**: Step Functions Standard que coordena as transições entre componentes do loop
+- **Orchestrator**: Step Functions Standard que coordena as transições entre componentes do laço
 - **S_nominal**: Estado formal indicando que o recurso está conforme com a política vigente
 - **S_exception**: Estado formal indicando que o recurso possui exceção aprovada e vigente
 - **S_violation**: Estado formal indicando que o recurso está em violação sem exceção válida
-- **Control**: Conjunto de política Rego, evento CloudTrail e recurso alvo que define uma regra de conformidade *(revisado: também a remediação em OpenTofu, a chamada de leitura da configuração — `fetch_config` — e o modo de remediação, automático ou manual)*
-- **Exception**: Autorização temporária que permite desvio de conformidade para recurso específico
+- **Controle**: Conjunto de política Rego, evento CloudTrail e recurso alvo que define uma regra de conformidade *(revisado: também a remediação em OpenTofu, a chamada de leitura da configuração — `fetch_config` — e o modo de remediação, automático ou manual)*
+- **Exceção**: Autorização temporária que permite desvio de conformidade para recurso específico
 - **violations_log**: Registro persistente de todas as avaliações de conformidade no Knowledge_Base
 - **Escalation_Queue**: Fila SQS FIFO que armazena violações não remediadas para notificação ao operador *(revisado: também falhas do sistema — ver 8.1)*
-- **Remediation**: Ação automatizada que corrige configuração de recurso para estado conforme
+- **Remediação**: Ação automatizada que corrige configuração de recurso para estado conforme
 
 Termos acrescentados com os requisitos 20–27:
 
 - **Plan**: A etapa do MAPE-K que decide, para um recurso em S_violation, entre remediar e escalar. Não era um componente na especificação inicial (a decisão era implícita no Orchestrator); no sistema construído é o estado `PlanAction`
-- **Detection_Round**: A execução disparada por um evento de mutação; pode remediar
-- **Verification_Round**: A execução agendada por uma Detection_Round que remediou; relê os controles remediados e nunca remedia
-- **Circuit_Breaker**: A regra do Plan que escala, sem remediar, um par (recurso, controle) já remediado repetidas vezes numa janela curta
-- **Detective_Control**: Controle cuja correção é disruptiva demais para ser automática (remediação `manual`): o sistema classifica e escala, sem tocar no recurso
-- **Remediation_Session**: Credencial temporária da role de remediação, emitida por violação e restrita, por session policy, ao recurso classificado e às ações do controle
-- **Exception_Scheduler**: Agendamento do EventBridge Scheduler que reavalia o recurso quando a exceção expira
+- **Rodada_de_Detecção**: A execução disparada por um evento de mutação; pode remediar
+- **Rodada_de_Verificação**: A execução agendada por uma Rodada_de_Detecção que remediou; relê os controles remediados e nunca remedia
+- **Disjuntor**: A regra do Plan que escala, sem remediar, um par (recurso, controle) já remediado repetidas vezes numa janela curta
+- **Controle_Detectivo**: Controle cuja correção é disruptiva demais para ser automática (remediação `manual`): o sistema classifica e escala, sem tocar no recurso
+- **Sessão_de_Remediação**: Credencial temporária da role de remediação, emitida por violação e restrita, por session policy, ao recurso classificado e às ações do controle
+- **Agendamento_de_Exceção**: Agendamento do EventBridge Scheduler que reavalia o recurso quando a exceção expira
 
-## Requirements
+## Requisitos
 
-### Requirement 1: Detectar Eventos de Mutação em Recursos Monitorados
+### Requisito 1: Detectar Eventos de Mutação em Recursos Monitorados
 
-**User Story:** Como operador de segurança, quero que o sistema detecte automaticamente mudanças em recursos cloud, para que nenhuma alteração de configuração passe despercebida.
+**História de usuário:** Como operador de segurança, quero que o sistema detecte automaticamente mudanças em recursos cloud, para que nenhuma alteração de configuração passe despercebida.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN a PutBucketPublicAccessBlock event occurs in CloudTrail, THE Monitor SHALL capture the event within 5 seconds *(não atendido — ver Revisões)*
-2. THE Monitor SHALL extract the bucket ARN from the event detail
-3. THE Monitor SHALL extract the AWS account ID from the event detail
-4. THE Monitor SHALL extract the AWS region from the event detail
-5. THE Monitor SHALL trigger the Orchestrator with the extracted event metadata
-6. THE Monitor SHALL process only events matching the control_id "ctrl-s3-public-block" *(revisado)*
+1. QUANDO ocorrer um evento `PutBucketPublicAccessBlock` no CloudTrail, o Monitor DEVE capturar o evento em até 5 segundos *(não atendido — ver Revisões)*
+2. O Monitor DEVE extrair o ARN do bucket do detalhe do evento
+3. O Monitor DEVE extrair o ID da conta AWS do detalhe do evento
+4. O Monitor DEVE extrair a região AWS do detalhe do evento
+5. O Monitor DEVE acionar o Orchestrator com os metadados extraídos do evento
+6. O Monitor DEVE processar apenas eventos correspondentes ao control_id "ctrl-s3-public-block" *(revisado)*
 
-### Requirement 2: Orquestrar Transições de Estado do Loop MAPE-K
+### Requisito 2: Orquestrar as Transições de Estado do Laço MAPE-K
 
-**User Story:** Como arquiteto de sistema, quero que o loop MAPE-K seja orquestrado de forma determinística, para que cada evento siga o fluxo correto de análise e execução.
+**História de usuário:** Como arquiteto de sistema, quero que o laço MAPE-K seja orquestrado de forma determinística, para que cada evento siga o fluxo correto de análise e execução.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN the Monitor triggers the Orchestrator, THE Orchestrator SHALL invoke the Analyze component with event metadata
-2. WHEN Analyze returns S_nominal, THE Orchestrator SHALL terminate the workflow without invoking Execute
-3. WHEN Analyze returns S_exception, THE Orchestrator SHALL terminate the workflow without invoking Execute
-4. WHEN Analyze returns S_violation, THE Orchestrator SHALL invoke the Execute component
-5. WHEN Execute succeeds, THE Orchestrator SHALL terminate the workflow *(revisado)*
-6. IF Execute fails, THEN THE Orchestrator SHALL invoke the escalation mechanism
-7. THE Orchestrator SHALL complete the entire loop within 60 seconds
-
-### Requirement 3: Classificar Estado de Conformidade do Recurso
-
-**User Story:** Como analista de conformidade, quero que o sistema classifique precisamente o estado de cada recurso, para que decisões de remediação sejam baseadas em avaliação correta.
+1. QUANDO o Monitor acionar o Orchestrator, o Orchestrator DEVE invocar o Analyze com os metadados do evento
+2. QUANDO o Analyze retornar S_nominal, o Orchestrator DEVE encerrar o fluxo sem invocar o Execute
+3. QUANDO o Analyze retornar S_exception, o Orchestrator DEVE encerrar o fluxo sem invocar o Execute
+4. QUANDO o Analyze retornar S_violation, o Orchestrator DEVE invocar o Execute
+5. QUANDO o Execute tiver sucesso, o Orchestrator DEVE encerrar o fluxo *(revisado)*
+6. SE o Execute falhar, ENTÃO o Orchestrator DEVE acionar o mecanismo de escalação
+7. O Orchestrator DEVE concluir o laço inteiro em até 60 segundos
+
+### Requisito 3: Classificar o Estado de Conformidade do Recurso
+
+**História de usuário:** Como analista de conformidade, quero que o sistema classifique com precisão o estado de cada recurso, para que as decisões de remediação se baseiem numa avaliação correta.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN Analyze receives event metadata, THE Analyze SHALL retrieve the current resource configuration from AWS
-2. THE Analyze SHALL evaluate the resource configuration against the s3_public_access Rego policy using OPA *(revisado)*
-3. WHEN the resource is compliant with the policy, THE Analyze SHALL return S_nominal
-4. WHEN the resource is non-compliant and has a valid exception, THE Analyze SHALL return S_exception
-5. WHEN the resource is non-compliant without valid exception, THE Analyze SHALL return S_violation
-6. THE Analyze SHALL query the Knowledge_Base exceptions table via control_id index, filtering by resource_arn match and valid_until greater than current timestamp *(revisado)*
-7. WHEN an exception exists with valid_until in the future, THE Analyze SHALL consider the exception valid
-8. WHEN an exception exists with valid_until in the past, THE Analyze SHALL consider the exception expired
-9. THE Analyze SHALL produce deterministic classification for identical inputs
+1. QUANDO o Analyze receber os metadados do evento, o Analyze DEVE obter da AWS a configuração atual do recurso
+2. O Analyze DEVE avaliar a configuração do recurso contra a política Rego `s3_public_access` usando o OPA *(revisado)*
+3. QUANDO o recurso estiver conforme a política, o Analyze DEVE retornar S_nominal
+4. QUANDO o recurso não estiver conforme e tiver uma exceção válida, o Analyze DEVE retornar S_exception
+5. QUANDO o recurso não estiver conforme e não tiver exceção válida, o Analyze DEVE retornar S_violation
+6. O Analyze DEVE consultar a tabela de exceções do Knowledge_Base pelo índice de control_id, filtrando por resource_arn e por valid_until maior que o instante atual *(revisado)*
+7. QUANDO existir uma exceção com valid_until no futuro, o Analyze DEVE considerá-la válida
+8. QUANDO existir uma exceção com valid_until no passado, o Analyze DEVE considerá-la expirada
+9. O Analyze DEVE produzir classificação determinística para entradas idênticas
 
-### Requirement 4: Versionar Políticas Rego em Repositório Git
+### Requisito 4: Versionar as Políticas Rego em Repositório Git
 
-**User Story:** Como administrador de políticas, quero que políticas Rego sejam versionadas em Git, para que mudanças sejam auditáveis via histórico de commits e revisadas via pull requests.
+**História de usuário:** Como administrador de políticas, quero que as políticas Rego sejam versionadas em Git, para que as mudanças sejam auditáveis pelo histórico de commits e revisadas por pull requests.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE Compliance_Loop SHALL version Rego policies in a Git repository
-2. THE Analyze Lambda SHALL load Rego policies from the deployment package at runtime *(revisado)*
-3. THE Rego policy file SHALL be included in the Lambda deployment artifact *(revisado)*
-4. WHEN a policy changes, THE change SHALL require redeployment of the Analyze Lambda *(revisado)*
-5. THE Knowledge_Base controls table SHALL reference the policy package name, not store policy text
-6. THE Git repository SHALL serve as the single source of truth for policy definitions
+1. O Compliance_Loop DEVE versionar as políticas Rego num repositório Git
+2. A Lambda Analyze DEVE carregar as políticas Rego do pacote de implantação em tempo de execução *(revisado)*
+3. O arquivo da política Rego DEVE estar incluído no artefato de implantação da Lambda *(revisado)*
+4. QUANDO uma política mudar, a mudança DEVE exigir nova implantação da Lambda Analyze *(revisado)*
+5. A tabela `controls` do Knowledge_Base DEVE referenciar o nome do pacote da política, e NÃO DEVE armazenar o texto da política
+6. O repositório Git DEVE ser a fonte única da verdade das definições de política
 
-### Requirement 5: Gerenciar Exceções Aprovadas com TTL Nativo
+### Requisito 5: Gerenciar Exceções Aprovadas com TTL Nativo
 
-**User Story:** Como gestor de conformidade, quero registrar exceções temporárias para recursos específicos, para que desvios autorizados não disparem remediação automática.
+**História de usuário:** Como gestor de conformidade, quero registrar exceções temporárias para recursos específicos, para que desvios autorizados não disparem remediação automática.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE Knowledge_Base SHALL store exceptions in the exceptions table
-2. THE Knowledge_Base SHALL use exception_id (UUID) as partition key *(revisado)*
-3. THE Knowledge_Base SHALL index exceptions by control_id via Global Secondary Index *(revisado)*
-4. THE Knowledge_Base SHALL store resource_arn for each exception
-5. THE Knowledge_Base SHALL store control_id for each exception
-6. THE Knowledge_Base SHALL store valid_until as Unix timestamp
-7. THE valid_until field SHALL be configured as TTL attribute in DynamoDB
-8. THE Analyze SHALL filter exceptions by valid_until > now() in queries
-9. THE TTL mechanism SHALL eventually delete expired items (within 48h), but behavior SHALL NOT depend on physical deletion
-10. THE Knowledge_Base SHALL store justification text for each exception
-11. THE Knowledge_Base SHALL store approver identity for each exception
-12. THE Knowledge_Base SHALL store exception creation timestamp
+1. O Knowledge_Base DEVE armazenar as exceções na tabela de exceções
+2. O Knowledge_Base DEVE usar exception_id (UUID) como chave de partição *(revisado — limitação L20)*
+3. O Knowledge_Base DEVE indexar as exceções por control_id num índice secundário global *(revisado)*
+4. O Knowledge_Base DEVE armazenar o resource_arn de cada exceção
+5. O Knowledge_Base DEVE armazenar o control_id de cada exceção
+6. O Knowledge_Base DEVE armazenar valid_until como timestamp Unix
+7. O campo valid_until DEVE ser configurado como atributo de TTL no DynamoDB
+8. O Analyze DEVE filtrar as exceções por valid_until > agora nas consultas
+9. O mecanismo de TTL DEVE apagar os itens expirados eventualmente (em até 48 h), mas o comportamento do sistema NÃO DEVE depender da deleção física
+10. O Knowledge_Base DEVE armazenar o texto de justificativa de cada exceção
+11. O Knowledge_Base DEVE armazenar a identidade de quem aprovou cada exceção
+12. O Knowledge_Base DEVE armazenar o instante de criação de cada exceção
 
-### Requirement 6: Registrar Log de Violações
+### Requisito 6: Registrar o Log de Violações
 
-**User Story:** Como auditor, quero que todas as avaliações de conformidade sejam registradas permanentemente, para que eu possa rastrear histórico completo de violações e remediações.
+**História de usuário:** Como auditor, quero que todas as avaliações de conformidade sejam registradas permanentemente, para que eu possa rastrear o histórico completo de violações e remediações.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE Analyze SHALL create exactly one entry in the violations_log table for each evaluation *(revisado)*
-2. THE violations_log entry SHALL use violation_id (UUID) as partition key
-3. THE violations_log entry SHALL include resource_arn as indexed attribute
-4. THE violations_log entry SHALL include control_id
-5. THE violations_log entry SHALL include classification state (S_nominal, S_exception, or S_violation)
-6. THE violations_log entry SHALL include evaluation timestamp in ISO 8601 format
-7. THE violations_log entry SHALL include policy_version used for evaluation
-8. WHEN classification is S_exception, THE violations_log entry SHALL include exception_id reference
-9. WHEN Execute is invoked, THE violations_log entry SHALL include remediation_status field
-10. THE remediation_status field SHALL contain value "success" when Execute succeeds
-11. THE remediation_status field SHALL contain value "failed" when Execute fails
+1. O Analyze DEVE criar exatamente uma entrada na tabela violations_log para cada avaliação *(revisado)*
+2. A entrada do violations_log DEVE usar violation_id (UUID) como chave de partição
+3. A entrada do violations_log DEVE incluir resource_arn como atributo indexado
+4. A entrada do violations_log DEVE incluir o control_id
+5. A entrada do violations_log DEVE incluir o estado da classificação (S_nominal, S_exception ou S_violation)
+6. A entrada do violations_log DEVE incluir o instante da avaliação em formato ISO 8601
+7. A entrada do violations_log DEVE incluir a policy_version usada na avaliação
+8. QUANDO a classificação for S_exception, a entrada do violations_log DEVE incluir a referência ao exception_id
+9. QUANDO o Execute for invocado, a entrada do violations_log DEVE incluir o campo remediation_status
+10. O campo remediation_status DEVE conter o valor "success" quando o Execute tiver sucesso
+11. O campo remediation_status DEVE conter o valor "failed" quando o Execute falhar
 
-### Requirement 7: Remediar Recursos em Violação
+### Requisito 7: Remediar Recursos em Violação
 
-**User Story:** Como engenheiro de segurança, quero que recursos em violação sejam corrigidos automaticamente, para que a superfície de ataque seja reduzida sem intervenção manual.
+**História de usuário:** Como engenheiro de segurança, quero que recursos em violação sejam corrigidos automaticamente, para que a superfície de ataque seja reduzida sem intervenção manual.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN Execute receives S_violation from Orchestrator, THE Execute SHALL apply OpenTofu configuration to the resource
-2. THE Execute SHALL use the resource_id from the Orchestrator to identify the target resource
-3. THE Execute SHALL apply OpenTofu configuration with -refresh=false flag
-4. THE OpenTofu configuration SHALL describe the compliant state for the resource
-5. WHEN OpenTofu apply succeeds, THE Execute SHALL return success status to Orchestrator
-6. IF OpenTofu apply fails, THEN THE Execute SHALL return failure status with error details
-7. THE Execute SHALL operate idempotently on the same resource
-8. THE Execute SHALL complete remediation within 45 seconds
-9. THE Execute SHALL enforce BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, and RestrictPublicBuckets for S3 buckets
+1. QUANDO o Execute receber S_violation do Orchestrator, o Execute DEVE aplicar a configuração OpenTofu ao recurso
+2. O Execute DEVE usar o resource_id recebido do Orchestrator para identificar o recurso-alvo
+3. O Execute DEVE aplicar a configuração OpenTofu com a opção `-refresh=false`
+4. A configuração OpenTofu DEVE descrever o estado conforme do recurso
+5. QUANDO o `tofu apply` tiver sucesso, o Execute DEVE retornar status de sucesso ao Orchestrator
+6. SE o `tofu apply` falhar, ENTÃO o Execute DEVE retornar status de falha com os detalhes do erro
+7. O Execute DEVE operar de forma idempotente sobre o mesmo recurso
+8. O Execute DEVE concluir a remediação em até 45 segundos
+9. O Execute DEVE impor BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy e RestrictPublicBuckets em buckets S3
 
-### Requirement 8: Escalar Violações Não Remediadas
+### Requisito 8: Escalar Violações Não Remediadas
 
-**User Story:** Como operador de segurança, quero ser notificado quando remediação automática falha, para que eu possa intervir manualmente em casos complexos.
+**História de usuário:** Como operador de segurança, quero ser notificado quando a remediação automática falhar, para que eu possa intervir manualmente em casos complexos.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN Execute returns failure status, THE Orchestrator SHALL send a message to the Escalation_Queue *(revisado: ampliado)*
-2. THE Escalation_Queue SHALL be a SQS FIFO queue
-3. THE escalation message SHALL include resource_arn
-4. THE escalation message SHALL include control_id
-5. THE escalation message SHALL include error details from Execute
-6. THE escalation message SHALL include violation timestamp *(revisado)*
-7. THE escalation message SHALL include violation_id reference
-8. THE escalation message SHALL include step_functions_execution_url for navigation to execution details *(revisado)*
-9. WHEN a message is added to Escalation_Queue, THE Compliance_Loop SHALL create a GitHub Issue
-10. THE GitHub Issue SHALL include all escalation message details
-11. THE GitHub Issue SHALL be labeled with "compliance-violation" and "auto-escalation"
-12. THE github_issue_id returned by GitHub API SHALL be saved to the violations_log entry
+1. QUANDO o Execute retornar status de falha, o Orchestrator DEVE enviar uma mensagem à Escalation_Queue *(revisado: ampliado)*
+2. A Escalation_Queue DEVE ser uma fila SQS FIFO
+3. A mensagem de escalação DEVE incluir o resource_arn
+4. A mensagem de escalação DEVE incluir o control_id
+5. A mensagem de escalação DEVE incluir os detalhes do erro vindos do Execute
+6. A mensagem de escalação DEVE incluir o instante da violação *(revisado)*
+7. A mensagem de escalação DEVE incluir a referência ao violation_id
+8. A mensagem de escalação DEVE incluir a step_functions_execution_url, para navegar até os detalhes da execução *(revisado)*
+9. QUANDO uma mensagem entrar na Escalation_Queue, o Compliance_Loop DEVE criar uma issue no GitHub
+10. A issue do GitHub DEVE incluir todos os detalhes da mensagem de escalação
+11. A issue do GitHub DEVE receber os rótulos "compliance-violation" e "auto-escalation"
+12. O github_issue_id devolvido pela API do GitHub DEVE ser gravado na entrada do violations_log
 
-### Requirement 9: Garantir Idempotência na Remediação
+### Requisito 9: Garantir Idempotência na Remediação
 
-**User Story:** Como desenvolvedor do sistema, quero que remediação seja idempotente, para que execuções repetidas não causem efeitos colaterais indesejados.
+**História de usuário:** Como desenvolvedor do sistema, quero que a remediação seja idempotente, para que execuções repetidas não causem efeitos colaterais indesejados.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN Execute is invoked multiple times for the same resource in S_violation, THE Execute SHALL produce the same final resource state
-2. THE Execute SHALL use OpenTofu declarative configuration to ensure idempotency
-3. WHEN the resource is already in compliant state, THE OpenTofu apply SHALL succeed without causing configuration drift
-4. THE Execute SHALL use local ephemeral state backend (/tmp/remediation.tfstate) *(revisado)*
+1. QUANDO o Execute for invocado várias vezes para o mesmo recurso em S_violation, o Execute DEVE produzir o mesmo estado final do recurso
+2. O Execute DEVE usar configuração declarativa do OpenTofu para garantir a idempotência
+3. QUANDO o recurso já estiver em estado conforme, o `tofu apply` DEVE ter sucesso sem causar desvio de configuração
+4. O Execute DEVE usar um backend de estado local e efêmero (`/tmp/remediation.tfstate`) *(revisado)*
 
-### Requirement 10: Implementar Controle S3 Public Block
+### Requisito 10: Implementar o Controle S3 Public Block
 
-**User Story:** Como especialista em segurança S3, quero que o MVP implemente controle de bloqueio de acesso público, para que buckets não sejam expostos inadvertidamente.
+**História de usuário:** Como especialista em segurança de S3, quero que o MVP implemente o controle de bloqueio de acesso público, para que buckets não sejam expostos inadvertidamente.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE Compliance_Loop SHALL implement control_id "ctrl-s3-public-block" *(revisado: ampliado)*
-2. THE s3_public_access policy SHALL evaluate BlockPublicAcls setting
-3. THE s3_public_access policy SHALL evaluate IgnorePublicAcls setting
-4. THE s3_public_access policy SHALL evaluate BlockPublicPolicy setting
-5. THE s3_public_access policy SHALL evaluate RestrictPublicBuckets setting
-6. WHEN any of the four settings is false, THE s3_public_access policy SHALL return violation
-7. WHEN all four settings are true, THE s3_public_access policy SHALL return compliant
+1. O Compliance_Loop DEVE implementar o control_id "ctrl-s3-public-block" *(revisado: ampliado)*
+2. A política `s3_public_access` DEVE avaliar a configuração BlockPublicAcls
+3. A política `s3_public_access` DEVE avaliar a configuração IgnorePublicAcls
+4. A política `s3_public_access` DEVE avaliar a configuração BlockPublicPolicy
+5. A política `s3_public_access` DEVE avaliar a configuração RestrictPublicBuckets
+6. QUANDO qualquer uma das quatro configurações for falsa, a política `s3_public_access` DEVE retornar violação
+7. QUANDO as quatro configurações forem verdadeiras, a política `s3_public_access` DEVE retornar conformidade
 
-### Requirement 11: Validar Cenário de Remediação Automática
+### Requisito 11: Validar o Cenário de Remediação Automática
 
-**User Story:** Como testador do sistema, quero validar que remediação automática funciona end-to-end, para que eu possa confiar no comportamento do MVP.
+**História de usuário:** Como testador do sistema, quero validar que a remediação automática funciona de ponta a ponta, para que eu possa confiar no comportamento do MVP.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN a bucket is created with public access enabled, THE Compliance_Loop SHALL detect the violation within 10 seconds *(parcialmente atendido — ver Revisões)*
-2. THE Analyze SHALL classify the resource as S_violation
-3. THE Execute SHALL remediate the bucket to compliant state
-4. THE violations_log SHALL contain entry with remediation_status "success"
-5. WHEN the bucket configuration is queried after remediation, THE bucket SHALL have all four public access blocks enabled
+1. QUANDO um bucket for criado com acesso público habilitado, o Compliance_Loop DEVE detectar a violação em até 10 segundos *(parcialmente atendido — ver Revisões)*
+2. O Analyze DEVE classificar o recurso como S_violation
+3. O Execute DEVE remediar o bucket para o estado conforme
+4. O violations_log DEVE conter uma entrada com remediation_status "success"
+5. QUANDO a configuração do bucket for consultada após a remediação, o bucket DEVE ter os quatro bloqueios de acesso público ativos
 
-### Requirement 12: Validar Cenário de Exceção Válida
+### Requisito 12: Validar o Cenário de Exceção Válida
 
-**User Story:** Como testador do sistema, quero validar que exceções aprovadas impedem remediação, para que recursos autorizados não sejam modificados incorretamente.
+**História de usuário:** Como testador do sistema, quero validar que exceções aprovadas impedem a remediação, para que recursos autorizados não sejam modificados indevidamente.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN a bucket has public access enabled and a valid exception exists, THE Analyze SHALL classify the resource as S_exception
-2. THE Orchestrator SHALL terminate without invoking Execute
-3. THE violations_log SHALL contain entry with classification S_exception
-4. THE violations_log entry SHALL reference the exception_id
-5. THE bucket configuration SHALL remain unchanged
+1. QUANDO um bucket tiver acesso público habilitado e existir uma exceção válida, o Analyze DEVE classificar o recurso como S_exception
+2. O Orchestrator DEVE encerrar sem invocar o Execute
+3. O violations_log DEVE conter uma entrada com a classificação S_exception
+4. A entrada do violations_log DEVE referenciar o exception_id
+5. A configuração do bucket DEVE permanecer inalterada
 
-### Requirement 13: Validar Cenário de Exceção Expirada
+### Requisito 13: Validar o Cenário de Exceção Expirada
 
-**User Story:** Como testador do sistema, quero validar que exceções expiradas não impedem remediação, para que proteções temporárias não se tornem permanentes.
+**História de usuário:** Como testador do sistema, quero validar que exceções expiradas não impedem a remediação, para que proteções temporárias não se tornem permanentes.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN a bucket has public access enabled and an expired exception exists, THE Analyze SHALL classify the resource as S_violation
-2. THE Analyze SHALL ignore the expired exception during classification
-3. THE Execute SHALL remediate the bucket to compliant state
-4. THE violations_log SHALL contain entry with classification S_violation and remediation_status "success"
+1. QUANDO um bucket tiver acesso público habilitado e existir uma exceção expirada, o Analyze DEVE classificar o recurso como S_violation
+2. O Analyze DEVE ignorar a exceção expirada durante a classificação
+3. O Execute DEVE remediar o bucket para o estado conforme
+4. O violations_log DEVE conter uma entrada com a classificação S_violation e remediation_status "success"
 
-### Requirement 14: Validar Cenário de Falha na Remediação
+### Requisito 14: Validar o Cenário de Falha na Remediação
 
-**User Story:** Como testador do sistema, quero validar que falhas de remediação são escaladas corretamente, para que operadores sejam notificados de problemas.
+**História de usuário:** Como testador do sistema, quero validar que falhas de remediação são escaladas corretamente, para que os operadores sejam notificados dos problemas.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN Execute fails to remediate a resource, THE Orchestrator SHALL send message to Escalation_Queue
-2. THE Escalation_Queue SHALL contain message with error details
-3. THE Compliance_Loop SHALL create GitHub Issue with violation details
-4. THE violations_log SHALL contain entry with state S_violation and remediation_status "failed"
-5. THE bucket configuration SHALL remain in non-compliant state
+1. QUANDO o Execute não conseguir remediar um recurso, o Orchestrator DEVE enviar uma mensagem à Escalation_Queue
+2. A Escalation_Queue DEVE conter uma mensagem com os detalhes do erro
+3. O Compliance_Loop DEVE criar uma issue no GitHub com os detalhes da violação
+4. O violations_log DEVE conter uma entrada com o estado S_violation e remediation_status "failed"
+5. A configuração do bucket DEVE permanecer em estado não conforme
 
-### Requirement 15: Implementar Parser de Eventos CloudTrail
+### Requisito 15: Implementar o Parser de Eventos do CloudTrail
 
-**User Story:** Como desenvolvedor, quero parsear eventos CloudTrail de forma confiável, para que metadados de recursos sejam extraídos corretamente.
+**História de usuário:** Como desenvolvedor, quero interpretar os eventos do CloudTrail de forma confiável, para que os metadados dos recursos sejam extraídos corretamente.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN Monitor receives a CloudTrail event, THE Monitor SHALL parse the event JSON structure
-2. THE Monitor SHALL extract detail.eventName field
-3. THE Monitor SHALL extract detail.requestParameters.bucketName field *(revisado: ampliado)*
-4. THE Monitor SHALL extract detail.userIdentity.accountId field
-5. THE Monitor SHALL extract detail.awsRegion field
-6. IF any required field is missing, THEN THE Monitor SHALL log error and discard event *(revisado)*
-7. THE Monitor SHALL construct resource ARN in format "arn:aws:s3:::bucket-name" *(revisado: ampliado)*
+1. QUANDO o Monitor receber um evento do CloudTrail, o Monitor DEVE interpretar a estrutura JSON do evento
+2. O Monitor DEVE extrair o campo `detail.eventName`
+3. O Monitor DEVE extrair o campo `detail.requestParameters.bucketName` *(revisado: ampliado)*
+4. O Monitor DEVE extrair o campo `detail.userIdentity.accountId`
+5. O Monitor DEVE extrair o campo `detail.awsRegion`
+6. SE algum campo obrigatório estiver ausente, ENTÃO o Monitor DEVE registrar o erro e descartar o evento *(revisado)*
+7. O Monitor DEVE construir o ARN do recurso no formato "arn:aws:s3:::nome-do-bucket" *(revisado: ampliado)*
 
-### Requirement 16: Garantir Determinismo na Avaliação de Políticas
+### Requisito 16: Garantir Determinismo na Avaliação de Políticas
 
-**User Story:** Como desenvolvedor de políticas, quero que avaliação de políticas seja determinística, para que o mesmo recurso sempre produza a mesma classificação.
+**História de usuário:** Como desenvolvedor de políticas, quero que a avaliação das políticas seja determinística, para que o mesmo recurso produza sempre a mesma classificação.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN Analyze evaluates the same resource configuration multiple times, THE Analyze SHALL return the same classification
-2. THE Analyze SHALL not depend on external state beyond Knowledge_Base *(revisado)*
-3. THE Analyze SHALL use consistent timestamp for exception expiration checks within single evaluation
-4. THE OPA evaluation SHALL not use non-deterministic built-in functions
+1. QUANDO o Analyze avaliar a mesma configuração de recurso várias vezes, o Analyze DEVE retornar a mesma classificação
+2. O Analyze NÃO DEVE depender de estado externo além do Knowledge_Base *(revisado)*
+3. O Analyze DEVE usar um instante consistente nas verificações de expiração de exceções dentro de uma mesma avaliação
+4. A avaliação do OPA NÃO DEVE usar funções embutidas não determinísticas
 
-### Requirement 17: Implementar Timeout para Componentes
+### Requisito 17: Implementar Timeout nos Componentes
 
-**User Story:** Como engenheiro de confiabilidade, quero que componentes tenham timeout configurado, para que operações lentas não bloqueiem o loop indefinidamente.
+**História de usuário:** Como engenheiro de confiabilidade, quero que os componentes tenham timeout configurado, para que operações lentas não bloqueiem o laço indefinidamente.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE Analyze SHALL timeout after 15 seconds *(revisado)*
-2. THE Execute SHALL timeout after 45 seconds *(revisado)*
-3. THE Orchestrator SHALL timeout the entire workflow after 60 seconds *(revisado)*
-4. WHEN a component times out, THE Orchestrator SHALL log timeout error and terminate workflow *(revisado)*
+1. O Analyze DEVE expirar após 15 segundos *(revisado)*
+2. O Execute DEVE expirar após 45 segundos *(revisado)*
+3. O Orchestrator DEVE expirar o fluxo inteiro após 60 segundos *(revisado)*
+4. QUANDO um componente expirar, o Orchestrator DEVE registrar o erro de timeout e encerrar o fluxo *(revisado)*
 
-### Requirement 18: Persistir Estado S_violation Após Falha de Remediação
+### Requisito 18: Persistir o Estado S_violation Após Falha de Remediação
 
-**User Story:** Como auditor, quero que o estado de violação persista quando a remediação falha, para que o registro reflita a realidade do recurso e não do processo.
+**História de usuário:** Como auditor, quero que o estado de violação persista quando a remediação falha, para que o registro reflita a realidade do recurso, e não a do processo.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN Execute fails to remediate a resource, THE violations_log entry SHALL maintain state as S_violation
-2. THE violations_log entry SHALL NOT create a new state S_remediation_failed
-3. THE remediation_status field SHALL indicate the failure, not the state field
-4. THE state field SHALL represent the actual compliance state of the resource
-5. WHEN Execute fails, THE violations_log SHALL contain exactly one entry with state S_violation and remediation_status "failed"
+1. QUANDO o Execute não conseguir remediar um recurso, a entrada do violations_log DEVE manter o estado S_violation
+2. A entrada do violations_log NÃO DEVE criar um novo estado S_remediation_failed
+3. O campo remediation_status DEVE indicar a falha, e não o campo de estado
+4. O campo de estado DEVE representar o estado real de conformidade do recurso
+5. QUANDO o Execute falhar, o violations_log DEVE conter exatamente uma entrada com o estado S_violation e remediation_status "failed"
 
-### Requirement 19: Rastrear Escalonamento via GitHub Issue ID
+### Requisito 19: Rastrear a Escalação pelo ID da Issue no GitHub
 
-**User Story:** Como operador, quero que violações escaladas sejam rastreáveis até a issue de resolução, para que eu possa auditar o ciclo completo de detecção até fechamento.
+**História de usuário:** Como operador, quero que as violações escaladas sejam rastreáveis até a issue de resolução, para que eu possa auditar o ciclo completo, da detecção ao encerramento.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN a GitHub Issue is created for a failed remediation, THE Compliance_Loop SHALL capture the issue number returned by GitHub API *(revisado: ampliado)*
-2. THE github_issue_id SHALL be saved to the violations_log entry corresponding to the violation
-3. THE violations_log entry SHALL link the violation event to the operational resolution workflow
-4. WHEN querying violations_log by violation_id, THE result SHALL include github_issue_id if escalation occurred
-5. THE github_issue_id field SHALL be null for violations that did not require escalation *(revisado)*
+1. QUANDO uma issue do GitHub for criada para uma remediação falha, o Compliance_Loop DEVE capturar o número da issue devolvido pela API do GitHub *(revisado: ampliado)*
+2. O github_issue_id DEVE ser gravado na entrada do violations_log correspondente à violação
+3. A entrada do violations_log DEVE ligar o evento de violação ao fluxo operacional de resolução
+4. QUANDO o violations_log for consultado por violation_id, o resultado DEVE incluir o github_issue_id se houve escalação
+5. O campo github_issue_id DEVE ser nulo para violações que não exigiram escalação *(revisado)*
 
 ## Requisitos acrescentados durante o desenvolvimento
 
 Os requisitos abaixo não estavam na especificação inicial. Cada um nasceu de um problema encontrado ao construir ou medir o sistema, e está registrado com a mesma forma dos anteriores (história de usuário e critérios EARS) para que a matriz de rastreabilidade os cubra do mesmo modo. A motivação de cada um está na seção do `design.md` indicada.
 
-### Requirement 20: Verificar a Convergência da Remediação
+### Requisito 20: Verificar a Convergência da Remediação
 
-**User Story:** Como auditor, quero que cada remediação seja confirmada por uma nova leitura do recurso, para que o registro diga que o recurso convergiu, e não apenas que o comando de remediação terminou sem erro.
+**História de usuário:** Como auditor, quero que cada remediação seja confirmada por uma nova leitura do recurso, para que o registro diga que o recurso convergiu, e não apenas que o comando de remediação terminou sem erro.
 
 *Motivação: a primeira versão confirmava a convergência pelo eco da própria remediação no CloudTrail, um evento que o sistema provoca (design.md, Fechamento do laço em duas rodadas).*
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN a Detection_Round remediates at least one control successfully, THE Orchestrator SHALL schedule exactly one Verification_Round for that resource
-2. THE Verification_Round SHALL re-evaluate only the controls that were remediated, reading the resource configuration without a fixed wait
-3. THE Verification_Round SHALL NOT invoke Execute and SHALL NOT schedule another Verification_Round
-4. WHEN the Verification_Round classifies a remediated control as S_violation, THE Orchestrator SHALL escalate it with reason "non_convergence"
-5. WHEN the Verification_Round cannot be scheduled or cannot evaluate the remediated controls, THE Orchestrator SHALL escalate the incident
-6. THE violations_log entry of a Verification_Round SHALL reference the origin execution and the violation_id it verifies
-7. THE Orchestrator SHALL run at most two executions per incident, whatever the number of remediated controls
+1. QUANDO uma Rodada_de_Detecção remediar com sucesso ao menos um controle, o Orchestrator DEVE agendar exatamente uma Rodada_de_Verificação para aquele recurso
+2. A Rodada_de_Verificação DEVE reavaliar apenas os controles remediados, lendo a configuração do recurso sem espera fixa
+3. A Rodada_de_Verificação NÃO DEVE invocar o Execute e NÃO DEVE agendar outra Rodada_de_Verificação
+4. QUANDO a Rodada_de_Verificação classificar um controle remediado como S_violation, o Orchestrator DEVE escalá-lo com o motivo "non_convergence"
+5. SE a Rodada_de_Verificação não puder ser agendada ou não puder avaliar os controles remediados, ENTÃO o Orchestrator DEVE escalar o incidente
+6. A entrada do violations_log de uma Rodada_de_Verificação DEVE referenciar a execução de origem e o violation_id que ela verifica
+7. O Orchestrator DEVE executar no máximo duas vezes por incidente, qualquer que seja o número de controles remediados
 
-### Requirement 21: Interromper Remediações Reincidentes
+### Requisito 21: Interromper Remediações Reincidentes
 
-**User Story:** Como engenheiro de confiabilidade, quero que o sistema pare de remediar um recurso que algo continua revertendo, para que dois automatismos não disputem o mesmo recurso indefinidamente.
+**História de usuário:** Como engenheiro de confiabilidade, quero que o sistema pare de remediar um recurso que algo continua revertendo, para que dois automatismos não disputem o mesmo recurso indefinidamente.
 
 *Motivação: sem limite, uma remediação revertida por outro processo (ou recusada pela própria política) se repete a cada evento (design.md, L11).*
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN a Detection_Round classifies a control with automatic remediation as S_violation, THE Plan SHALL count the successful remediations of the same (resource, control) pair within a configurable window (default 10 minutes) before invoking Execute
-2. WHEN the count reaches a configurable threshold (default 3), THE Plan SHALL escalate with reason "recurrent_violation" instead of invoking Execute
-3. IF the count cannot be read, THEN THE Plan SHALL proceed as if no recent remediation existed and the decision SHALL remain recorded in the execution history
+1. QUANDO uma Rodada_de_Detecção classificar como S_violation um controle de remediação automática, o Plan DEVE contar, antes de invocar o Execute, as remediações bem-sucedidas do mesmo par (recurso, controle) numa janela configurável (padrão de 10 minutos)
+2. QUANDO a contagem atingir um limiar configurável (padrão 3), o Plan DEVE escalar com o motivo "recurrent_violation" em vez de invocar o Execute
+3. SE a contagem não puder ser lida, ENTÃO o Plan DEVE prosseguir como se não houvesse remediação recente, e a decisão DEVE ficar registrada no histórico da execução
 
-### Requirement 22: Suportar Controles Detectivos
+### Requisito 22: Suportar Controles Detectivos
 
-**User Story:** Como engenheiro de segurança, quero registrar controles que apenas detectam e escalam, para que violações cuja correção é disruptiva (como criptografar um volume em uso) sejam tratadas por uma pessoa.
+**História de usuário:** Como engenheiro de segurança, quero registrar controles que apenas detectam e escalam, para que violações cuja correção é disruptiva (como criptografar um volume em uso) sejam tratadas por uma pessoa.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE controls table SHALL allow a control to declare its remediation as "automatic" or "manual"
-2. WHEN a control with manual remediation is classified as S_violation, THE Plan SHALL escalate with reason "manual_remediation_required" and SHALL NOT invoke Execute
-3. THE resource under a Detective_Control SHALL remain unchanged by the system
+1. A tabela `controls` DEVE permitir que um controle declare sua remediação como "automatic" ou "manual"
+2. QUANDO um controle de remediação manual for classificado como S_violation, o Plan DEVE escalar com o motivo "manual_remediation_required" e NÃO DEVE invocar o Execute
+3. O recurso sob um Controle_Detectivo DEVE permanecer inalterado pelo sistema
 
-### Requirement 23: Limitar a Autoridade do Sistema ao Mínimo Necessário
+### Requisito 23: Limitar a Autoridade do Sistema ao Mínimo Necessário
 
-**User Story:** Como responsável pela segurança da conta, quero que o sistema de conformidade só consiga ler e alterar o que cada incidente exige, para que ele próprio não se torne o maior risco da conta.
+**História de usuário:** Como responsável pela segurança da conta, quero que o sistema de conformidade só consiga ler e alterar o que cada incidente exige, para que ele próprio não se torne o maior risco da conta.
 
 *Motivação: um controle é um dado numa tabela; sem limite, um controle adulterado dirigiria a remediação para qualquer recurso (design.md, Autoridade por incidente; Modelo de Permissões).*
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE Execute SHALL remediate using a Remediation_Session issued per violation, whose session name is the violation_id
-2. THE Remediation_Session SHALL be restricted to the classified resource ARN and to the actions of the control being remediated
-3. IF a control requests an action outside the remediation allowlist, THEN THE Execute SHALL refuse it without running OpenTofu
-4. THE remediation allowlist SHALL have a single definition, shared by the remediation role and by the Execute check
-5. THE Analyze role SHALL grant exactly the read actions that the registered controls use, and no other
-6. WHEN a remediation template targets a resource other than the classified one, THE write SHALL be denied by IAM
+1. O Execute DEVE remediar usando uma Sessão_de_Remediação emitida por violação, cujo nome de sessão é o violation_id
+2. A Sessão_de_Remediação DEVE ser restrita ao ARN do recurso classificado e às ações do controle que está sendo remediado
+3. SE um controle pedir uma ação fora da lista de ações de remediação permitidas, ENTÃO o Execute DEVE recusá-la sem executar o OpenTofu
+4. A lista de ações de remediação permitidas DEVE ter uma definição única, compartilhada pela role de remediação e pela checagem do Execute
+5. A role do Analyze DEVE conceder exatamente as ações de leitura que os controles cadastrados usam, e nenhuma outra
+6. QUANDO um template de remediação visar um recurso diferente do classificado, a escrita DEVE ser negada pelo IAM
 
-### Requirement 24: Reavaliar o Recurso na Expiração da Exceção
+### Requisito 24: Reavaliar o Recurso na Expiração da Exceção
 
-**User Story:** Como gestor de conformidade, quero que o recurso seja reavaliado quando a exceção expira, para que a proteção volte sem depender de um novo evento no recurso.
+**História de usuário:** Como gestor de conformidade, quero que o recurso seja reavaliado quando a exceção expira, para que a proteção volte sem depender de um novo evento no recurso.
 
-*Motivação: 3.8 só garante que uma exceção expirada é ignorada na próxima avaliação, que pode nunca acontecer; o TTL do DynamoDB leva até 48 h e não dispara avaliação (design.md, reavaliação por Scheduler).*
+*Motivação: o critério 3.8 só garante que uma exceção expirada é ignorada na próxima avaliação, que pode nunca acontecer; o TTL do DynamoDB leva até 48 h e não dispara avaliação (design.md, reavaliação por Scheduler).*
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN an exception is created or modified, THE Compliance_Loop SHALL create an Exception_Scheduler for valid_until plus 30 seconds
-2. WHEN the Exception_Scheduler fires, THE Orchestrator SHALL evaluate the resource for the exception's control
-3. WHEN an exception is deleted, THE Compliance_Loop SHALL delete its Exception_Scheduler
-4. THE Exception_Scheduler SHALL NOT depend on the physical deletion of the exception by TTL
+1. QUANDO uma exceção for criada ou modificada, o Compliance_Loop DEVE criar um Agendamento_de_Exceção para valid_until mais 30 segundos
+2. QUANDO o Agendamento_de_Exceção disparar, o Orchestrator DEVE avaliar o recurso para o controle da exceção
+3. QUANDO uma exceção for apagada, o Compliance_Loop DEVE apagar o seu Agendamento_de_Exceção
+4. O Agendamento_de_Exceção NÃO DEVE depender da deleção física da exceção pelo TTL
 
-### Requirement 25: Atualizar os Controles sem Novo Deploy
+### Requisito 25: Atualizar os Controles sem Nova Implantação
 
-**User Story:** Como administrador de políticas, quero publicar ou remover um controle sem reimplantar funções, para que a cobertura de conformidade evolua na velocidade das políticas.
+**História de usuário:** Como administrador de políticas, quero publicar ou remover um controle sem reimplantar funções, para que a cobertura de conformidade evolua na velocidade das políticas.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. WHEN a control is inserted, modified or removed in the controls table, THE Compliance_Loop SHALL regenerate the EventBridge rule from the union of the registered controls' events
-2. THE Analyze SHALL read the resource configuration through the call declared by the control (fetch_config), restricted to read operations
-3. WHEN a new control uses only read and remediation actions already granted, THE Compliance_Loop SHALL start evaluating it without a Lambda code deployment
+1. QUANDO um controle for inserido, modificado ou removido na tabela `controls`, o Compliance_Loop DEVE regenerar a regra do EventBridge a partir da união dos eventos dos controles cadastrados
+2. O Analyze DEVE ler a configuração do recurso pela chamada declarada no controle (`fetch_config`), restrita a operações de leitura
+3. QUANDO um controle novo usar apenas ações de leitura e de remediação já concedidas, o Compliance_Loop DEVE passar a avaliá-lo sem nova implantação de código das Lambdas
 
-### Requirement 26: Aceitar Apenas Eventos Legítimos
+### Requisito 26: Aceitar Apenas Eventos Legítimos
 
-**User Story:** Como responsável pela segurança da conta, quero que o Monitor só aceite eventos emitidos pela AWS, para que ninguém dispare o laço com um evento forjado nem o sistema reaja às próprias remediações.
+**História de usuário:** Como responsável pela segurança da conta, quero que o Monitor só aceite eventos emitidos pela AWS, para que ninguém dispare o laço com um evento forjado nem o sistema reaja às próprias remediações.
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE Monitor SHALL match only events whose source is emitted by AWS (prefix "aws.")
-2. THE Monitor SHALL NOT match events whose identity is the remediation role, so that a remediation does not trigger a new Detection_Round
+1. O Monitor DEVE aceitar apenas eventos cuja origem seja emitida pela AWS (prefixo "aws.")
+2. O Monitor NÃO DEVE aceitar eventos cuja identidade seja a role de remediação, para que uma remediação não dispare uma nova Rodada_de_Detecção
 
-### Requirement 27: Tornar Visíveis as Falhas Silenciosas
+### Requisito 27: Tornar Visíveis as Falhas Silenciosas
 
-**User Story:** Como operador, quero ser avisado das falhas que não geram escalação, para que o laço parado não pareça o laço funcionando.
+**História de usuário:** Como operador, quero ser avisado das falhas que não geram escalação, para que o laço parado não pareça o laço funcionando.
 
 *Motivação: uma detecção que o EventBridge não entrega, um agendamento que falha ou uma Lambda que cai não produzem linha nem issue (design.md, Operação: alarmes e runbook).*
 
-#### Acceptance Criteria
+#### Critérios de aceitação
 
-1. THE Compliance_Loop SHALL raise an alarm for each failure mode that produces no escalation: undelivered detection, failed exception scheduling, Lambda crash or timeout, execution timeout, throttling and messages in dead-letter queues
-2. WHEN an alarm enters ALARM, THE Compliance_Loop SHALL open a GitHub issue labeled "operations-alarm", or comment on the open issue of the same alarm
-3. WHEN an alarm returns to OK, THE Compliance_Loop SHALL comment on its open issue without closing it
-4. IF the Monitor cannot start the Orchestrator, THEN THE Monitor SHALL keep the detection in a dead-letter queue from which it can be replayed
-5. THE Knowledge_Base SHALL keep point-in-time recovery on the violations_log and exceptions tables, and THE Compliance_Loop SHALL set a retention period on the functions' logs
+1. O Compliance_Loop DEVE emitir um alarme para cada modo de falha que não produz escalação: detecção não entregue, falha no agendamento de exceção, queda ou timeout de Lambda, timeout de execução, limitação de taxa (*throttling*) e mensagens em filas de mensagens mortas
+2. QUANDO um alarme entrar em ALARM, o Compliance_Loop DEVE abrir uma issue no GitHub com o rótulo "operations-alarm", ou comentar na issue aberta do mesmo alarme
+3. QUANDO um alarme voltar a OK, o Compliance_Loop DEVE comentar na issue aberta, sem fechá-la
+4. SE o Monitor não conseguir iniciar o Orchestrator, ENTÃO o Monitor DEVE guardar a detecção numa fila de mensagens mortas, da qual ela possa ser reprocessada
+5. O Knowledge_Base DEVE manter recuperação pontual (PITR) nas tabelas violations_log e de exceções, e o Compliance_Loop DEVE definir um período de retenção para os logs das funções
