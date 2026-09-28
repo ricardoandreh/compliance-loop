@@ -32,9 +32,9 @@ Este documento é a especificação inicial do MVP e fica preservado como tal. O
 | 15.3, 15.7 | apenas `bucketName` | também volume e recurso de conta | controles de EC2 |
 | 15.6 | descartar evento incompleto | identificador sintético da conta | o EventBridge só admite eventos de controles cadastrados (L3) |
 | 16.2 | nenhum estado externo além do Knowledge_Base | também a configuração do recurso (3.1) e a política no S3 (4.2 revisado) | o critério contradizia o 3.1; o que vale é que a classificação depende só dessas entradas, lidas uma vez por avaliação |
-| 17.1–17.3 | 15 / 45 / 60 s | 60 / 90 / 600 s | os valores originais não cobriam o pior caso (*Property 28*) |
+| 17.1–17.3 | 15 / 45 / 60 s | 60 / 90 / 600 s | os valores originais não cobriam o pior caso (*Propriedade 28*) |
 | 17.4 | registrar o timeout e encerrar | timeout do Analyze ou do Execute é escalado; timeout da execução inteira dispara um alarme | encerrar em silêncio deixaria o recurso sem dono |
-| 19.5 | issue nula quando não houve escalação, lida como "o Execute não rodou ou teve sucesso" (*Property 23*) | issue só em linha escalada: remediação falha ou `S_violation` escalada pelo `PlanAction` | controles detectivos, disjuntor e verificação escalam sem invocar o Execute |
+| 19.5 | issue nula quando não houve escalação, lida como "o Execute não rodou ou teve sucesso" (*Propriedade 23*) | issue só em linha escalada: remediação falha ou `S_violation` escalada pelo `PlanAction` | controles detectivos, disjuntor e verificação escalam sem invocar o Execute |
 
 ## Glossário
 

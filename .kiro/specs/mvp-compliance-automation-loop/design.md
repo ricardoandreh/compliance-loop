@@ -1,12 +1,12 @@
-# Design Document: MVP Compliance Automation Loop
+# Documento de Design: MVP Compliance Automation Loop
 
-## Overview
+## Visão Geral
 
 O MVP Compliance Automation Loop implementa um sistema de automação de conformidade baseado no padrão arquitetural MAPE-K (Monitor, Analyze, Plan, Execute, Knowledge). O sistema detecta desvios de conformidade em recursos AWS, classifica o estado do recurso, executa remediação automática quando apropriado, e escala violações não resolvidas para operadores humanos.
 
 O sistema suporta múltiplos controles de compliance de forma extensível e multi-serviço. Seis controles estão implementados, em dois serviços: bloqueio de acesso público S3 (`ctrl-s3-public-block`), política SSL-only (`ctrl-s3-ssl-only`), versionamento S3 (`ctrl-s3-versioning`), encryption S3 (`ctrl-s3-encryption`) e EBS encryption by default (`ctrl-ebs-encryption-default`), com remediação automática, e volume EBS sem criptografia (`ctrl-ebs-volume-encrypted`), detectivo — classifica e escala, sem remediar. Novos controles podem ser adicionados sem rebuild de imagens — políticas Rego e templates HCL de remediação são armazenados no S3 e carregados em runtime. O sistema monitora eventos CloudTrail de múltiplos serviços AWS, resolve dinamicamente quais controles aplicar via tabela DynamoDB, avalia conformidade usando OPA/Rego com fetcher genérico parametrizado por `fetch_config`, e remedia violações usando OpenTofu.
 
-### Design Goals
+### Objetivos de Design
 
 - **Automação determinística**: Cada evento deve seguir fluxo previsível baseado em classificação de estado
 - **Auditabilidade completa**: Todas as avaliações e ações devem ser registradas permanentemente
@@ -14,7 +14,7 @@ O sistema suporta múltiplos controles de compliance de forma extensível e mult
 - **Separação de responsabilidades**: Políticas versionadas em Git, estado em DynamoDB, execução em Lambda
 - **Escalação confiável**: Falhas devem ser notificadas sem perda de informação
 
-### MAPE-K Architecture Mapping
+### Mapeamento da Arquitetura MAPE-K
 
 - **Monitor**: CloudTrail + EventBridge Rule (event pattern gerenciado dinamicamente pela Lambda `controls-sync` via DynamoDB Stream na tabela `controls`)
 - **Analyze**: Lambda Python 3.14 (arm64, 512 MB) + OPA/Rego 1.21.0 (binário arm64 via Lambda Layer, políticas carregadas do S3 em runtime) + fetcher genérico via `fetch_config` (chamadas boto3 parametrizadas pela tabela `controls`) + consulta DynamoDB exceptions + role com só as leituras que os controles fazem
@@ -22,7 +22,7 @@ O sistema suporta múltiplos controles de compliance de forma extensível e mult
 - **Execute**: Lambda Python 3.14 (arm64, 3008 MB) + OpenTofu 1.12.6 (binário via Lambda Layer) com state efêmero local. Templates HCL carregados do S3 em runtime. Provider AWS 6.66.0 pré-inicializado, armazenado no S3 como cache em zstd, baixado e extraído em `/tmp` na fase de init e compartilhado via symlink (elimina `tofu init` em runtime). Cada remediação roda com uma sessão assumida por violação (ver *Autoridade por incidente*)
 - **Knowledge**: DynamoDB (controls, exceptions, violations_log)
 
-### State Classification Model
+### Modelo de Classificação de Estado
 
 O sistema classifica recursos em três estados formais:
 
@@ -53,9 +53,9 @@ Pelos tipos de March e Smith (1995):
 
 | Tipo | Neste trabalho | Onde |
 |---|---|---|
-| **Construto** | Os três estados formais (`S_nominal`, `S_violation`, `S_exception`) e as métricas `t_detection`, `t_remediation`, `t_exposure`, `t_verified` | *State Classification Model*; *Metodologia de Medição* |
-| **Modelo** | O mapeamento do MAPE-K para serviços AWS, o grafo de estados e o modelo de dados do Knowledge | *MAPE-K Architecture Mapping*; *Data Models* |
-| **Método** | O laço em duas rodadas (detecção e verificação), a autoridade por incidente, o disjuntor de reincidência, a exceção com expiração | *Components and Interfaces*; *Autoridade por incidente* |
+| **Construto** | Os três estados formais (`S_nominal`, `S_violation`, `S_exception`) e as métricas `t_detection`, `t_remediation`, `t_exposure`, `t_verified` | *Modelo de Classificação de Estado*; *Metodologia de Medição* |
+| **Modelo** | O mapeamento do MAPE-K para serviços AWS, o grafo de estados e o modelo de dados do Knowledge | *Mapeamento da Arquitetura MAPE-K*; *Modelos de Dados* |
+| **Método** | O laço em duas rodadas (detecção e verificação), a autoridade por incidente, o disjuntor de reincidência, a exceção com expiração | *Componentes e Interfaces*; *Autoridade por incidente* |
 | **Instanciação** | A prova de conceito na AWS: 6 controles em 2 serviços (S3 e EC2) | o repositório |
 
 Na matriz de Gregor e Hevner (2013), a contribuição é de **melhoria**: solução nova — laço autônomo com verificação e autoridade restrita ao incidente — para um problema conhecido, a remediação de conformidade.
@@ -65,8 +65,8 @@ Na matriz de Gregor e Hevner (2013), a contribuição é de **melhoria**: soluç
 | Atividade (PEFFERS et al., 2007) | Neste trabalho |
 |---|---|
 | 1. Identificar o problema | Exposição longa e sem trilha de auditoria na remediação manual — ponto de entrada da pesquisa |
-| 2. Definir os objetivos | *Design Goals* e três hipóteses: **H1** — o laço reduz o MTTR de dias para segundos; **H2** — toda avaliação e toda ação deixam registro completo e encadeado; **H3** — o tempo de exposição cai na mesma proporção |
-| 3. Projetar e desenvolver | `requirements.md` e este documento, com 30 propriedades de corretude (*Correctness Properties*) |
+| 2. Definir os objetivos | *Objetivos de Design* e três hipóteses: **H1** — o laço reduz o MTTR de dias para segundos; **H2** — toda avaliação e toda ação deixam registro completo e encadeado; **H3** — o tempo de exposição cai na mesma proporção |
+| 3. Projetar e desenvolver | `requirements.md` e este documento, com 30 propriedades de corretude (*Propriedades de Corretude*) |
 | 4. Demonstrar | 16 cenários na conta real (C1–C10, CTRL-01–06) e traces de execução (*Evidências Experimentais*) |
 | 5. Avaliar | *Estratégia de avaliação*, abaixo |
 | 6. Comunicar | o TCC, este documento e a página de resultados |
@@ -84,7 +84,7 @@ As atividades 3 a 5 se repetiram nove vezes.
 | **Experimental** — experimento controlado | 9 séries × 10 execuções da suíte completa; entre séries, teste de Welch, teste de permutação e g de Hedges; IC 95% por amostra e por rodada | `results/*/`, *Validação estatística das comparações* |
 | **Experimental** — simulação | Falhas injetadas na camada de operação; experimento de variantes de desempenho do Execute | *Falhas injetadas*; *Otimização do Execute* |
 | **Teste** — caixa-preta | 16 cenários na conta real, 160/160 por série | `scripts/integration_test.py` |
-| **Teste** — caixa-branca | 168 testes (unitários, de propriedade, de contrato) e 44 de política Rego, no CI a cada push | *Testing Strategy* |
+| **Teste** — caixa-branca | 168 testes (unitários, de propriedade, de contrato) e 44 de política Rego, no CI a cada push | *Estratégia de Testes* |
 | **Analítico** — estático | Propriedades do grafo verificadas sem executar: no máximo duas execuções por incidente, a verificação nunca remedia, issue só em linha escalada (P23) | *Testes estruturais do grafo* |
 | **Analítico** — arquitetura e otimização | Custo medido por incidente, dimensionamento das Lambdas, tempo por fase do Execute | *Custo em dinheiro, medido*; *Dimensionamento das Lambdas* |
 | **Descritivo** | Cenários com traces reais; argumentação sobre alternativas (Standard vs. Express, OpenTofu vs. SDK, fetcher genérico vs. código carregado) | *Evidências Experimentais*; seções de decisão |
@@ -131,15 +131,15 @@ Além do artefato, a avaliação produziu conhecimento reaproveitável em outros
 - **Verificação sem espera**: 2.760 leituras imediatas após a escrita, todas consistentes
 - **Um laço automático precisa de disjuntor**: sem ele, uma remediação que a política não aceita oscila sem limite (L11)
 
-## Architecture
+## Arquitetura
 
-### High-Level Architecture Diagram
+### Diagrama de Arquitetura
 
 ```mermaid
 graph TB
     subgraph "Monitor"
         CT[CloudTrail]
-        EB[EventBridge Rule]
+        EB[Regra do EventBridge]
     end
     
     subgraph "Orchestrator"
@@ -147,12 +147,12 @@ graph TB
     end
     
     subgraph "Analyze"
-        AL[Analyze Lambda]
-        OPA[OPA/Rego Engine]
+        AL[Lambda Analyze]
+        OPA[Motor OPA/Rego]
     end
     
     subgraph "Execute"
-        EL[Execute Lambda]
+        EL[Lambda Execute]
         TF[OpenTofu]
     end
     
@@ -162,10 +162,10 @@ graph TB
         DB3[(violations_log)]
     end
     
-    subgraph "Escalation"
-        SQS[SQS FIFO Queue]
-        ESC[Escalation Lambda]
-        GH[GitHub Issues API]
+    subgraph "Escalação"
+        SQS[Fila SQS FIFO]
+        ESC[Lambda de escalação]
+        GH[API de issues do GitHub]
     end
     
     subgraph "Autoridade"
@@ -177,48 +177,48 @@ graph TB
     end
 
     RES[Recurso AWS<br/>S3 · EBS] -->|mutação| CT
-    CT -->|Event| EB
+    CT -->|evento| EB
     EB -->|StartExecution| SF
     DB1 -->|Stream| CS[controls-sync] -->|padrão da regra| EB
     SF -->|controles do evento| DB1
-    SF -->|Invoke| AL
-    AL -->|Query| DB2
-    AL -->|Evaluate| OPA
+    SF -->|invoca| AL
+    AL -->|consulta| DB2
+    AL -->|avalia| OPA
     SF -->|registra estado| DB3
     SF -->|S_violation| EL
     EL -->|AssumeRole| RR
-    EL -->|Apply| TF
-    TF -->|Remediate| RES
+    EL -->|aplica| TF
+    TF -->|remedia| RES
     SF -->|rodada de verificação| SCH
     DB2 -->|Stream| XS[exception-scheduler-sync] -->|expiração| SCH
     SCH -->|StartExecution| SF
     SF -->|escalação| SQS
-    SQS -->|Consume| ESC
-    ESC -->|Create Issue| GH
+    SQS -->|consome| ESC
+    ESC -->|cria a issue| GH
     ESC -->|vincula a issue| DB3
 ```
 
-### Workflow State Machine Diagram
+### Diagrama da Máquina de Estados
 
 ```mermaid
 stateDiagram-v2
     [*] --> Monitor
     Monitor --> Analyze
-    Analyze --> S_nominal: Compliant
-    Analyze --> S_exception: Valid Exception
-    Analyze --> S_violation: Non-compliant
-    Analyze --> Escalate: Evaluation failed (system failure, no state)
+    Analyze --> S_nominal: conforme
+    Analyze --> S_exception: exceção válida
+    Analyze --> S_violation: não conforme
+    Analyze --> Escalate: avaliação falhou (falha do sistema, sem estado)
     S_nominal --> RegisterNominal
     S_exception --> RegisterException
     S_violation --> RegisterViolation
     RegisterViolation --> CountRecentRemediations
     CountRecentRemediations --> PlanAction
-    PlanAction --> Escalate: Verification round (non-convergence)
-    PlanAction --> Escalate: Recurrent violation (breaker)
-    PlanAction --> Escalate: Manual control (detective)
-    PlanAction --> Execute: Detection round
-    Execute --> RegisterRemediated: Success
-    Execute --> Escalate: Failure
+    PlanAction --> Escalate: rodada de verificação (não convergência)
+    PlanAction --> Escalate: reincidência (disjuntor)
+    PlanAction --> Escalate: controle manual (detectivo)
+    PlanAction --> Execute: rodada de detecção
+    Execute --> RegisterRemediated: sucesso
+    Execute --> Escalate: falha
     RegisterRemediated --> ScheduleVerification
     ScheduleVerification --> Monitor: mode = verify
     Escalate --> CreateGitHubIssue
@@ -227,7 +227,7 @@ stateDiagram-v2
     CreateGitHubIssue --> [*]
 ```
 
-### Component Interaction Flow
+### Fluxo de Interação entre Componentes
 
 ```mermaid
 sequenceDiagram
@@ -245,47 +245,47 @@ sequenceDiagram
     participant GitHub
     
     S3->>CloudTrail: PutBucketPublicAccessBlock
-    CloudTrail->>EventBridge: Event
+    CloudTrail->>EventBridge: evento
     EventBridge->>StepFunctions: StartExecution
-    StepFunctions->>DynamoDB: Query controls (eventName)
-    StepFunctions->>AnalyzeLambda: Invoke (controles do evento)
+    StepFunctions->>DynamoDB: consulta os controles (eventName)
+    StepFunctions->>AnalyzeLambda: invoca (controles do evento)
     AnalyzeLambda->>S3: fetch_config (ex.: GetPublicAccessBlock)
-    AnalyzeLambda->>OPA: Evaluate policy
-    AnalyzeLambda->>DynamoDB: Query exceptions (só se não conforme)
+    AnalyzeLambda->>OPA: avalia a política
+    AnalyzeLambda->>DynamoDB: consulta exceções (só se não conforme)
     AnalyzeLambda-->>StepFunctions: results[] {state, violation_id}
-    StepFunctions->>DynamoDB: Register state (violations_log)
+    StepFunctions->>DynamoDB: grava o estado (violations_log)
 
     alt S_violation, rodada de detecção, sem disjuntor
-        StepFunctions->>ExecuteLambda: Invoke
+        StepFunctions->>ExecuteLambda: invoca
         ExecuteLambda->>ExecuteLambda: AssumeRole (session policy da violação)
         ExecuteLambda->>OpenTofu: tofu apply
-        OpenTofu->>S3: Update configuration
+        OpenTofu->>S3: atualiza a configuração
         ExecuteLambda-->>StepFunctions: {remediation_status: success}
-        StepFunctions->>DynamoDB: Update violations_log (success)
+        StepFunctions->>DynamoDB: atualiza violations_log (success)
         StepFunctions->>StepFunctions: ScheduleVerification (mode = verify)
     else Execute falha, verificação não converge, reincidência ou controle manual
-        StepFunctions->>DynamoDB: Update violations_log (failed / not_converged)
+        StepFunctions->>DynamoDB: atualiza violations_log (failed / not_converged)
         StepFunctions->>SQS: SendMessage
-        SQS->>EscalationLambda: Trigger
-        EscalationLambda->>GitHub: Create Issue
-        EscalationLambda->>DynamoDB: Link issue (violations_log)
+        SQS->>EscalationLambda: aciona
+        EscalationLambda->>GitHub: cria a issue
+        EscalationLambda->>DynamoDB: vincula a issue (violations_log)
     end
 ```
 
 
-## Components and Interfaces
+## Componentes e Interfaces
 
 ### 1. Monitor (CloudTrail + EventBridge)
 
-**Responsibility**: Detectar eventos de mutação em recursos AWS e extrair metadados relevantes.
+**Responsabilidade**: Detectar eventos de mutação em recursos AWS e extrair metadados relevantes.
 
-**Implementation**:
+**Implementação**:
 - CloudTrail trail com eventos de gerenciamento de escrita (`ReadWriteType: WriteOnly`) e validação de integridade dos arquivos
 - EventBridge Rule com pattern filter dinâmico (gerenciado por `controls-sync`)
 - Input transformer genérico: extrai `request_parameters` e `response_elements` do CloudTrail; `ResolveResource` na Step Function deriva `resource_id` e `resource_arn`
 - Target: Step Functions state machine, com retentativas limitadas a 1 h e a fila `intake-failures` para o que não puder ser entregue
 
-**Event Pattern** (gerenciado dinamicamente):
+**Padrão de eventos** (gerenciado dinamicamente):
 ```json
 {
   "source": [{"prefix": "aws."}],
@@ -302,7 +302,7 @@ O prefixo `aws.` fecha a brecha sem perder o multi-serviço. O `PutEvents` recus
 
 O padrão gerado pelo `controls-sync` inclui ainda uma cláusula de identidade: eventos cuja sessão foi emitida pela role de remediação — a que o Execute assume para cada violação — são descartados, para que as escritas da própria remediação não reiniciem o loop. A cláusula usa `$or` com `exists: false`, porque identidades sem emissor de sessão (usuários IAM, root) não casariam com um `anything-but` simples — ver *Fechamento do laço em duas rodadas*.
 
-**Output Schema** (o que o *input transformer* entrega à máquina; `ResolveResource` deriva o recurso a partir dele):
+**Esquema de saída** (o que o *input transformer* entrega à máquina; `ResolveResource` deriva o recurso a partir dele):
 ```json
 {
   "account_id": "123456789012",
@@ -316,22 +316,22 @@ O padrão gerado pelo `controls-sync` inclui ainda uma cláusula de identidade: 
 
 `ResolveResource` produz `resource_id` e `resource_arn` (`arn:aws:s3:::bucket-name`; para volumes, `responseElements.volumeId`; para controles de conta, o identificador sintético da conta — L3). As rotas do Scheduler (expiração de exceção, rodada de verificação) chegam com `resource_arn` e `control_id` já definidos.
 
-**Error Handling**:
-- Evento sem campo de recurso: recebe o identificador sintético da conta em vez de ser descartado (Req. 15.6 revisado) — o EventBridge só admite eventos de controles cadastrados, que sempre trazem o recurso
+**Tratamento de erros**:
+- Evento sem campo de recurso: recebe o identificador sintético da conta em vez de ser descartado (requisito 15.6 revisado) — o EventBridge só admite eventos de controles cadastrados, que sempre trazem o recurso
 - Evento que a regra não consegue entregar (role sem permissão, máquina indisponível, throttling por mais de 1 h): vai para a fila `intake-failures`, dispara o alarme `intake-failed` e é reprocessado por `scripts/replay_intake.py` (ver *Operação*)
 
 
 
 ### 2. Orchestrator (Step Functions Standard)
 
-**Responsibility**: Coordenar transições entre componentes do loop MAPE-K baseado em classificação de estado.
+**Responsabilidade**: Coordenar transições entre componentes do loop MAPE-K baseado em classificação de estado.
 
-**Implementation**:
+**Implementação**:
 - Step Functions **Standard** (não Express) — ver *Por que Standard e não Express*
 - Definição em JSONata (`infra/state_machine_definition.json`); `Choice` pelos três estados formais, e o `PlanAction` decide a ação
 - SDK integrations diretas para DynamoDB, SQS e o próprio Step Functions (sem Lambda intermediária); o Step Functions é o único componente que grava no `violations_log`
 - Log de execução em `level: ALL` com `includeExecutionData`, retenção de 30 dias
-- Timeout global de 600 segundos (ver a cadeia de timeouts em *Correctness Properties*)
+- Timeout global de 600 segundos (ver a cadeia de timeouts em *Propriedades de Corretude*)
 - Estados terminais explícitos: `ExecutionSucceeded` (Succeed) e `ExecutionFailed` (Fail com `Error: ComplianceEscalation`)
 - **Laço fechado em duas rodadas**: uma rodada de detecção que remediou algo agenda exatamente uma rodada de verificação (`mode = verify`), que confirma `S_nominal` ou escala — nunca remedeia de novo. Ver *Fechamento do laço em duas rodadas*
 - Após o Map state, `EvaluateOutcome` verifica se algum controle foi escalado — se sim, a execução termina como FAILED
@@ -344,7 +344,7 @@ A escolha não é por custo — nesse quesito o Express ganharia —, e sim por 
 |---|---|---|---|
 | **Histórico consultável por API** | `DescribeExecution`, `GetExecutionHistory` e `ListExecutions`, por 90 dias | Não disponíveis; o histórico existe apenas nos CloudWatch Logs | Toda a medição — `integration_test.py`, `benchmark.py`, `classify_cold_starts.py`, `verification_consistency.py` — lê o histórico por API. Na auditoria (H2), a issue aponta o ARN da execução, que o Standard mantém consultável |
 | **Semântica de execução** | Exatamente uma vez por disparo | Pelo menos uma vez quando iniciada de forma assíncrona (EventBridge, `startExecution`) | Uma violação deve gerar uma remediação, uma linha de `S_violation` e, se falhar, uma issue. Uma execução duplicada teria outro `violation_id` — gerado pelo Analyze a cada avaliação —, então nem a deduplicação da fila FIFO nem a de issues a pegariam: duas linhas e duas escalações para o mesmo incidente |
-| **Duração máxima** | 1 ano | 5 minutos | O `TimeoutSeconds` global é 600 s porque o pior caso serial é 550 s (ver *Property 28*). O caso típico caberia com folga — a execução mais longa de uma rodada da suíte levou 19,4 s —, mas o limite existiria só no caso típico |
+| **Duração máxima** | 1 ano | 5 minutos | O `TimeoutSeconds` global é 600 s porque o pior caso serial é 550 s (ver *Propriedade 28*). O caso típico caberia com folga — a execução mais longa de uma rodada da suíte levou 19,4 s —, mas o limite existiria só no caso típico |
 
 As três propriedades vêm da documentação do Step Functions; a primeira e a segunda são exercitadas por construção em cada execução da suíte, e a terceira pelo orçamento de timeouts.
 
@@ -360,7 +360,7 @@ O Express seria ~100× mais barato. Em valor absoluto é irrelevante para a aval
 
 **Quando o Express seria a escolha**: alto volume de eventos curtos, com deduplicação própria (por exemplo, `violation_id` derivado do evento em vez de gerado por avaliação), auditoria reconstruída a partir dos logs e o pior caso de duração abaixo de 5 minutos. Nenhuma das três condições vale neste escopo.
 
-**State Machine Definition** (estrutura real):
+**Definição da máquina de estados** (estrutura real):
 
 A máquina de estados usa JSONata e processa múltiplos controles via Map state. Fluxo:
 
@@ -485,24 +485,24 @@ Persistência no `violations_log`: o **Step Functions é o único componente que
 
 
 
-### 3. Analyze Lambda
+### 3. Lambda Analyze
 
-**Responsibility**: Classificar estado de conformidade do recurso usando OPA/Rego e consulta de exceções.
+**Responsabilidade**: Classificar estado de conformidade do recurso usando OPA/Rego e consulta de exceções.
 
-**Implementation**:
+**Implementação**:
 - Runtime: Python 3.14, arm64, 512 MB (a 256 MB a avaliação ficou 2,4× mais lenta — *Otimização do Execute*)
 - OPA 1.21.0 via Lambda Layer (`/opt/bin/opa`, ~26 MB comprimido, binário estático arm64); políticas Rego carregadas do S3 em runtime e mantidas em cache por `policy_version`
 - Deployment package: `handler.py` (~5,6 KB)
 - Timeout: 60 s — cobre o pior caso de vários controles por invocação; o orçamento do OPA é recalculado a cada controle a partir do tempo restante
 - Medido na série atual: 0,13 s p50 por invocação quente (OPA ~0,10 s, leitura da configuração ~0,06 s); ~1,2–1,6 s no frio
 
-**Algorithm** (estrutura real, simplificada):
+**Algoritmo** (estrutura real, simplificada):
 ```python
 def lambda_handler(event, context):
     # Uma invocação avalia TODOS os controles que o evento dispara (event['controls'],
     # já resolvidos pelo Step Functions). Função pura: não grava nada.
     resource_id = extract_resource_id(event['resource_arn'])
-    now = canonical_timestamp()            # um instante por invocação (Property 3)
+    now = canonical_timestamp()            # um instante por invocação (Propriedade 3)
     results = []
     for control in event['controls']:
         try:
@@ -522,7 +522,7 @@ def lambda_handler(event, context):
     return {'resource_arn': event['resource_arn'], 'results': results}
 ```
 
-**DynamoDB Query for Exceptions**:
+**Consulta de exceções no DynamoDB**:
 ```python
 def query_exception(control_id, resource_arn):
     response = dynamodb.query(
@@ -539,7 +539,7 @@ def query_exception(control_id, resource_arn):
     return response['Items'][0] if response['Items'] else None
 ```
 
-**Rego Policy** (`s3_public_access.rego`):
+**Política Rego** (`s3_public_access.rego`):
 ```rego
 package s3_public_access
 
@@ -553,7 +553,7 @@ allow if {
 }
 ```
 
-**Output Schema** (um item de `results[]`):
+**Esquema de saída** (um item de `results[]`):
 ```json
 {
   "control_id": "ctrl-s3-public-block",
@@ -570,7 +570,7 @@ allow if {
 }
 ```
 
-**Error Handling** — nenhuma falha vira estado:
+**Tratamento de erros** — nenhuma falha vira estado:
 - Leitura da configuração falhou (erro que o controle não mapeou em `error_defaults`): o controle volta sem `state` e escala como `system_failure`
 - OPA falhou ou estourou o orçamento de tempo: idem — o estado é desconhecido, não `S_violation`
 - Consulta de exceções falhou: idem (`ExceptionQueryError`). Tratar a falha como "sem exceção" remediaria um recurso que pode estar autorizado
@@ -578,11 +578,11 @@ allow if {
 
 
 
-### 4. Execute Lambda
+### 4. Lambda Execute
 
-**Responsibility**: Remediar recursos em violação usando OpenTofu com infraestrutura como código declarativa, com autoridade restrita à violação.
+**Responsabilidade**: Remediar recursos em violação usando OpenTofu com infraestrutura como código declarativa, com autoridade restrita à violação.
 
-**Implementation**:
+**Implementação**:
 - Runtime: Python 3.14, arm64, **3008 MB** (teto da conta; medido — ver *Otimização do Execute*)
 - OpenTofu 1.12.6 via Lambda Layer (`/opt/bin/tofu`, ~29 MB comprimido), gerada por `scripts/build_execute.sh`, que fixa a versão e confere o `SHA256SUMS` oficial
 - Provider AWS 6.66.0 pré-inicializado, no S3 como `tf-dot-terraform.tar.zst` (~123 MB; 780 MB extraído), baixado e descompactado em `/tmp` **na fase de init**
@@ -593,14 +593,14 @@ allow if {
 - Nenhuma permissão de escrita própria: assume `compliance-loop-remediation-<env>` com uma session policy por violação
 - Medido na série atual (`results/optimized/`): 5,51 s p50 quente, 7,14 s no máximo; no frio, ~3,8 s de init + ~6,1 s de handler
 
-**Provider Cache Strategy**:
+**Estratégia de cache do provider**:
 
 O provider AWS extraído (780 MB no 6.66.0; 657 MB no 5.100.0, usado até a série final) não cabe numa Lambda Layer (limite 250 MB descomprimido). A solução usa S3 como cache:
 
-1. **Build time**: o pacote oficial `linux_arm64` do provider é baixado com `tofu providers mirror` (assinatura verificada) e extraído na estrutura de um `.terraform/`; o `.terraform.lock.hcl` vem de `tofu providers lock -platform=linux_arm64`. Os dois são empacotados em zstd como `tf-dot-terraform.tar.zst` e armazenados no S3 — o procedimento está em `lambdas/execute/README.md`.
+1. **Tempo de build**: o pacote oficial `linux_arm64` do provider é baixado com `tofu providers mirror` (assinatura verificada) e extraído na estrutura de um `.terraform/`; o `.terraform.lock.hcl` vem de `tofu providers lock -platform=linux_arm64`. Os dois são empacotados em zstd como `tf-dot-terraform.tar.zst` e armazenados no S3 — o procedimento está em `lambdas/execute/README.md`.
 2. **Init (cold start)**: o módulo baixa e descompacta o cache ao ser importado, dentro da Lambda. A fase de init roda com CPU cheia seja qual for a memória configurada: o frio caiu de 12,6 s para 10,9 s à mesma memória, e para 9,9 s a 3008 MB. Uma falha no init é deixada para o handler, que tenta de novo e reporta a remediação como falha.
-3. **Warm start**: `/tmp` persiste entre invocações — o provider já está disponível, custo zero.
-4. **Setup por controle**: o handler recria um diretório de trabalho limpo, cria um symlink para o `.terraform` pré-inicializado e copia o lock file.
+3. **Início quente (warm start)**: `/tmp` persiste entre invocações — o provider já está disponível, custo zero.
+4. **Preparação por controle**: o handler recria um diretório de trabalho limpo, cria um symlink para o `.terraform` pré-inicializado e copia o lock file.
 
 Essa abordagem elimina tanto o `tofu init` em runtime quanto a necessidade de container image (ECR).
 
@@ -633,7 +633,7 @@ def lambda_handler(event, context):
     # (assume_role, provider_cache, setup, policy_read, tofu, total).
 ```
 
-**Design Rationale**:
+**Justificativa de design**:
 - `-refresh=false`: o Analyze acabou de ler o estado atual; o refresh repetiria a leitura
 - **tfstate efêmero por invocação**: o `work_dir` é recriado a cada execução. Sem isso, `-refresh=false` compararia contra um state obsoleto de um warm start, e um recurso re-violado seria reportado como "No changes" e não remediado
 - **`skip_*` no provider** dos `remediation.tf` (`skip_credentials_validation`, `skip_requesting_account_id`, `skip_metadata_api_check`): o provider deixa de consultar o STS a cada `apply` — −0,17 s medido. As credenciais vêm prontas da sessão assumida; não há o que validar
@@ -641,7 +641,7 @@ def lambda_handler(event, context):
 - ARN parsing genérico: S3 deriva `bucket_name` do ARN; outros serviços usam `resource_id`
 - Symlink para provider: todos os controles compartilham o mesmo provider sem duplicação em disco
 
-**Output Schema**:
+**Esquema de saída**:
 ```json
 {
   "remediation_status": "success",
@@ -649,7 +649,7 @@ def lambda_handler(event, context):
 }
 ```
 
-**Error Handling** — toda falha volta estruturada (`remediation_status: failed`), e o Step Functions escala com `reason = remediation_failed`:
+**Tratamento de erros** — toda falha volta estruturada (`remediation_status: failed`), e o Step Functions escala com `reason = remediation_failed`:
 - Controle pede ação fora de `ALLOWED_ACTIONS`, ou o STS recusa a sessão: falha antes de rodar o `tofu`
 - Leitura da policy do ssl-only falhou por outro motivo que não `NoSuchBucketPolicy`: recusa remediar — seguir sem a policy existente apagaria os statements do cliente
 - `tofu apply` falhou (por exemplo, `AccessDenied` sobre um alvo fora da sessão, como no C10) ou estourou os 65 s: falha com a saída de erro
@@ -659,13 +659,13 @@ def lambda_handler(event, context):
 
 ### 5. Knowledge Base (DynamoDB)
 
-**Responsibility**: Armazenar políticas, exceções aprovadas, e log de violações.
+**Responsabilidade**: Armazenar políticas, exceções aprovadas, e log de violações.
 
-#### Table: controls
+#### Tabela: controls
 
-**Purpose**: Metadados de controles de conformidade.
+**Propósito**: Metadados de controles de conformidade.
 
-**Schema**:
+**Esquema**:
 ```json
 {
   "TableName": "controls",
@@ -679,7 +679,7 @@ def lambda_handler(event, context):
 }
 ```
 
-**Sample Item**:
+**Item de exemplo**:
 ```json
 {
   "control_id": "ctrl-s3-public-block",
@@ -710,7 +710,7 @@ def lambda_handler(event, context):
 
 (O arquivo `controls/<id>/control.json` guarda o mesmo item no formato tipado do DynamoDB. Um controle detectivo tem `"remediation": "manual"` e nenhum `remediation.tf`.)
 
-**Access Pattern**:
+**Padrões de acesso**:
 - `QueryControls` (Step Functions): scan filtrado por `cloudtrail_events` contendo o `eventName` do evento (L2)
 - `GetControlById` (Step Functions): getItem pelo `control_id`, nas rotas do Scheduler
 - DynamoDB Stream → `controls-sync`: regenera o padrão da regra do EventBridge a cada mudança
@@ -718,11 +718,11 @@ def lambda_handler(event, context):
 
 
 
-#### Table: exceptions
+#### Tabela: exceptions
 
-**Purpose**: Armazenar exceções aprovadas com TTL nativo.
+**Propósito**: Armazenar exceções aprovadas com TTL nativo.
 
-**Schema**:
+**Esquema**:
 ```json
 {
   "TableName": "exceptions",
@@ -755,7 +755,7 @@ def lambda_handler(event, context):
 }
 ```
 
-**Sample Item**:
+**Item de exemplo**:
 ```json
 {
   "exception_id": "exc-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
@@ -769,14 +769,14 @@ def lambda_handler(event, context):
 }
 ```
 
-**Access Pattern**:
+**Padrões de acesso**:
 - Query no GSI `resource-control-index` pela chave exata (`resource_arn`, `control_id`), com `FilterExpression valid_until > now` e **sem `Limit`**: o `Limit` é aplicado antes do filtro e poderia descartar uma exceção válida atrás de uma expirada
 - TTL apaga os itens expirados em até 48 h — o comportamento não depende da deleção física
 - DynamoDB Stream (`NEW_AND_OLD_IMAGES`) → `exception-scheduler-sync`
 
-**Design Rationale**:
+**Justificativa de design**:
 - TTL em `valid_until`: limpeza automática, mas o Analyze filtra explicitamente
-- GSI por (`resource_arn`, `control_id`): consulta pontual do par avaliado, em vez de ler todas as exceções de um controle e filtrar por recurso (Req. 5.3 revisado)
+- GSI por (`resource_arn`, `control_id`): consulta pontual do par avaliado, em vez de ler todas as exceções de um controle e filtrar por recurso (requisito 5.3 revisado)
 - `exception_id` como chave primária: cada concessão tem registro próprio e imutável de quem aprovou (H2)
 - Recuperação pontual (PITR, 35 dias): a tabela guarda aprovações, que não se reconstroem de outra fonte
 
@@ -796,11 +796,11 @@ A deleção física de itens expirados pelo DynamoDB TTL é **não-determinísti
 
 
 
-#### Table: violations_log
+#### Tabela: violations_log
 
-**Purpose**: Registro permanente de todas as avaliações de conformidade.
+**Propósito**: Registro permanente de todas as avaliações de conformidade.
 
-**Schema**:
+**Esquema**:
 ```json
 {
   "TableName": "violations_log",
@@ -828,7 +828,7 @@ A deleção física de itens expirados pelo DynamoDB TTL é **não-determinísti
 
 Os exemplos abaixo são linhas reais da série atual (`results/optimized/`), com as saídas longas cortadas.
 
-**Sample Item (S_violation com remediação bem-sucedida)**:
+**Item de exemplo (S_violation com remediação bem-sucedida)**:
 ```json
 {
   "violation_id": "f17fafc7-078d-415d-9b89-7f669803ea99",
@@ -845,7 +845,7 @@ Os exemplos abaixo são linhas reais da série atual (`results/optimized/`), com
 }
 ```
 
-**Sample Item (S_exception)**:
+**Item de exemplo (S_exception)**:
 ```json
 {
   "violation_id": "b47c82f2-c3db-40fd-8fe1-3852e65c7bf4",
@@ -861,7 +861,7 @@ Os exemplos abaixo são linhas reais da série atual (`results/optimized/`), com
 }
 ```
 
-**Sample Item (S_violation com remediação falha e escalada — C8)**:
+**Item de exemplo (S_violation com remediação falha e escalada — C8)**:
 ```json
 {
   "violation_id": "e89cc9ac-4bee-4697-bdee-77e22cab2406",
@@ -880,7 +880,7 @@ Os exemplos abaixo são linhas reais da série atual (`results/optimized/`), com
 }
 ```
 
-**Sample Item (rodada de verificação: confirma a convergência de uma remediação)**:
+**Item de exemplo (rodada de verificação: confirma a convergência de uma remediação)**:
 ```json
 {
   "violation_id": "4c2c4881-a8fe-46f6-bed1-d24dd30fe8c3",
@@ -899,25 +899,25 @@ Os exemplos abaixo são linhas reais da série atual (`results/optimized/`), com
 
 Campos ausentes não são gravados como `null`: uma linha só tem os campos que se aplicam a ela. A auditoria de completude (`scripts/audit_log_completeness.py`) confere, em todas as linhas de uma série, os campos obrigatórios de cada tipo.
 
-**Access Pattern**:
+**Padrões de acesso**:
 - Query by violation_id (primary key) for audit trail
 - Query by resource_arn + timestamp via GSI for resource history — usada também pelo disjuntor (`CountRecentRemediations`) e pela deduplicação de issues
 - No TTL: Permanent audit log; recuperação pontual (PITR, 35 dias)
 
-**Design Rationale**:
+**Justificativa de design**:
 - State field represents actual compliance state, not process state
 - remediation_status indicates outcome of Execute, not a new state
 - github_issue_id links violation to operational resolution workflow
 
 
 
-### 6. Escalation (SQS FIFO + Lambda + GitHub Issues)
+### 6. Escalação (SQS FIFO + Lambda + GitHub Issues)
 
-**Responsibility**: Levar a uma pessoa tudo o que o laço não resolve sozinho — violações escaladas (remediação falha, não convergência, reincidência, controle detectivo, falha do sistema) e os alarmes da operação —, como issues no GitHub.
+**Responsabilidade**: Levar a uma pessoa tudo o que o laço não resolve sozinho — violações escaladas (remediação falha, não convergência, reincidência, controle detectivo, falha do sistema) e os alarmes da operação —, como issues no GitHub.
 
-#### SQS FIFO Queue
+#### Fila SQS FIFO
 
-**Configuration** (`infra/modules/escalation_queue`):
+**Configuração** (`infra/modules/escalation_queue`):
 ```json
 {
   "QueueName": "compliance-loop-escalation-dev.fifo",
@@ -931,7 +931,7 @@ Campos ausentes não são gravados como `null`: uma linha só tem os campos que 
 }
 ```
 
-**Message Schema** (montado pelo estado `Escalate`):
+**Esquema da mensagem** (montado pelo estado `Escalate`):
 ```json
 {
   "violation_id": "e89cc9ac-4bee-4697-bdee-77e22cab2406",
@@ -948,19 +948,19 @@ Campos ausentes não são gravados como `null`: uma linha só tem os campos que 
 
 `reason` é um de `remediation_failed`, `non_convergence`, `recurrent_violation`, `manual_remediation_required` e `system_failure`, e o `error` explica o motivo em texto (a saída do `tofu`, a execução de origem da verificação, quantas remediações o disjuntor contou).
 
-**Design Rationale**:
+**Justificativa de design**:
 - `MessageDeduplicationId = violation_id`: a fila só descarta a reentrega da **mesma** mensagem. Deduplicar por recurso e controle — como numa versão anterior — descartava a mensagem da segunda violação do mesmo par, e a linha dela nunca era vinculada à issue: uma quebra da trilha de auditoria. A deduplicação de **issues** é da Lambda (abaixo), não da fila
 - `MessageGroupId = resource_id#control_id`: ordena as mensagens do mesmo par e processa pares diferentes em paralelo
 - Três recebimentos e a mensagem vai para a DLQ, com o alarme `escalation-dlq`
 
-#### Escalation Lambda
+#### Lambda de Escalação
 
-**Implementation**:
+**Implementação**:
 - Runtime: Python 3.14 (arm64), 256 MB, timeout 30 s
 - Dois gatilhos (batch size 1, `ReportBatchItemFailures`): a fila de escalação e a fila `alarm-notifications`, onde o tópico dos alarmes entrega as transições de estado
 - HTTP via `urllib.request`; credenciais do GitHub no SSM Parameter Store (`/compliance/github/*`)
 
-**Algorithm** (estrutura real, simplificada):
+**Algoritmo** (estrutura real, simplificada):
 ```python
 def lambda_handler(event, context):
     params = get_github_params()                     # SSM: token, owner, repo
@@ -991,7 +991,7 @@ def handle_escalation(body, params):
     link_issue(body['violation_id'], existing)
 ```
 
-**GitHub Issue Example** (issue real, aberta pelo C8 e fechada pela suíte):
+**Exemplo de issue no GitHub** (issue real, aberta pelo C8 e fechada pela suíte):
 ```markdown
 Title: [VIOLATION] ctrl-s3-public-block — compliance-inttest-c8-1790469812
 Labels: compliance-violation, auto-escalation
@@ -1012,14 +1012,14 @@ O nome da sessão no erro é o `violation_id`: a própria mensagem da AWS liga a
 
 **Issues de alarme**: título `[ALARM] <nome do alarme>`, rótulo `operations-alarm`, corpo com a descrição do alarme, o motivo, o link do console e o ponteiro do runbook. Um novo disparo comenta na issue aberta; a volta a OK comenta e não fecha (ver *Operação*).
 
-**Error Handling**:
+**Tratamento de erros**:
 - GitHub indisponível ou token inválido: o registro volta para a fila (`batchItemFailures`); depois de 3 recebimentos, a mensagem de escalação vai para a DLQ e o alarme `escalation-dlq` dispara. As notificações de alarme ficam na fila delas até 14 dias
 - Vínculo falhou porque a linha não existe (falha de sistema, identificador sintético): registrado no log, sem retentativa
 - Issue duplicada: evitada pela consulta ao log antes de criar; a Search API é só o fallback
 
-## Data Models
+## Modelos de Dados
 
-### Event Flow Data Model
+### Modelo de Dados do Fluxo de Eventos
 
 ```mermaid
 erDiagram
@@ -1029,7 +1029,7 @@ erDiagram
     ResolvedInput ||--|| AnalyzeOutput : "Analyze (um item por controle)"
     AnalyzeOutput ||--|| ViolationsLogEntry : "Register* (Step Functions)"
     AnalyzeOutput ||--o| ExecuteInput : "PlanAction remedia"
-    ExecuteInput ||--|| ExecuteOutput : produces
+    ExecuteInput ||--|| ExecuteOutput : "produz"
     AnalyzeOutput ||--o| EscalationMessage : "PlanAction escala ou falha do sistema"
     ExecuteOutput ||--o| EscalationMessage : "remediação falhou"
     EscalationMessage ||--o| GitHubIssue : "abre ou reusa"
@@ -1115,15 +1115,15 @@ erDiagram
 
 Uma saída do Analyze **sem** `state` (controle que não pôde ser avaliado) não gera linha no log: vai direto para a escalação como `system_failure`.
 
-### DynamoDB Schema Relationships
+### Relações entre as Tabelas do DynamoDB
 
 ```mermaid
 erDiagram
-    controls ||--o{ exceptions : "has_exceptions_for"
-    controls ||--o{ violations_log : "generates_violations"
-    exceptions ||--o{ violations_log : "referenced_by"
-    violations_log ||--o{ violations_log : "verifies (rodada de verificação)"
-    violations_log ||--o| github_issues : "escalates_to"
+    controls ||--o{ exceptions : "tem exceções para"
+    controls ||--o{ violations_log : "gera linhas"
+    exceptions ||--o{ violations_log : "referenciada por"
+    violations_log ||--o{ violations_log : "verifica (rodada de verificação)"
+    violations_log ||--o| github_issues : "escala para"
 
     controls {
         string control_id PK
@@ -1179,186 +1179,198 @@ erDiagram
     }
 ```
 
-### State Transition Model
+### Modelo de Transição de Estados
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ResourceMutation: CloudTrail Event
-    ResourceMutation --> Analyzing: Monitor triggers
-    Analyzing --> S_nominal: Compliant
-    Analyzing --> S_exception: Valid Exception
-    Analyzing --> S_violation: Non-compliant
-    Analyzing --> SystemFailure: Evaluation failed (no state)
+    state "Mutação do recurso" as ResourceMutation
+    state "Em análise" as Analyzing
+    state "Falha do sistema" as SystemFailure
+    state "Planejamento" as Planning
+    state "Remediando" as Remediating
+    state "Remediado" as Remediated
+    state "Verificando" as Verifying
+    state "Escalando" as Escalating
+    state "Issue criada" as IssueCreated
 
-    S_nominal --> [*]: Log (em verify, confirma a convergência)
-    S_exception --> [*]: Log only
-    S_violation --> Planning: Log
+    [*] --> ResourceMutation: evento do CloudTrail
+    ResourceMutation --> Analyzing: o Monitor aciona
+    Analyzing --> S_nominal: conforme
+    Analyzing --> S_exception: exceção válida
+    Analyzing --> S_violation: não conforme
+    Analyzing --> SystemFailure: avaliação falhou (sem estado)
 
-    Planning --> Remediating: Detection round
-    Planning --> Escalating: Verification round (non-convergence)
-    Planning --> Escalating: Recurrent violation (breaker)
-    Planning --> Escalating: Detective control
+    S_nominal --> [*]: registra (em verify, confirma a convergência)
+    S_exception --> [*]: só registra
+    S_violation --> Planning: registra
 
-    Remediating --> Remediated: Success
-    Remediating --> Escalating: Failure (remediation_failed)
+    Planning --> Remediating: rodada de detecção
+    Planning --> Escalating: rodada de verificação (não convergência)
+    Planning --> Escalating: reincidência (disjuntor)
+    Planning --> Escalating: controle detectivo
+
+    Remediating --> Remediated: sucesso
+    Remediating --> Escalating: falha (remediation_failed)
     Remediated --> Verifying: ScheduleVerification (mode = verify)
     Verifying --> Analyzing: mesma máquina, só os controles remediados
 
     SystemFailure --> Escalating: system_failure
     Escalating --> IssueCreated: GitHub API (ou issue já aberta)
-    IssueCreated --> [*]: Link issue na linha da violação
+    IssueCreated --> [*]: vincula a issue à linha da violação
 ```
 
 
-## Correctness Properties
+## Propriedades de Corretude
 
-A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.
+Uma propriedade é uma característica ou um comportamento que deve valer em todas as execuções válidas do sistema — uma afirmação formal sobre o que o sistema deve fazer. As propriedades ligam a especificação, legível por pessoas, às garantias de corretude verificáveis por máquina. Os enunciados usam a forma dos requisitos: **PARA TODO** caso do domínio, o componente **DEVE** (ou **NÃO DEVE**) apresentar o comportamento; foram escritos originalmente em inglês e traduzidos sem mudança de conteúdo.
 
-> **Nota**: As Properties 4, 7 e 19 foram especificadas para o controle inicial (`ctrl-s3-public-block`) e usam-no como exemplo concreto. O sistema evoluiu para multi-controle e multi-serviço (S3, EC2) — essas propriedades generalizam para qualquer controle: a avaliação de conformidade é delegada à política Rego do controle, e a remediação ao seu template HCL. A Property 25 foi atualizada para refletir o event pattern dinâmico multi-serviço. As propriedades revisadas por decisão de projeto trazem a nota **Revisado**, com o comportamento que vale; a matriz `traceability.md` liga cada uma à evidência.
+> **Nota**: as Propriedades 4, 7 e 19 foram especificadas para o controle inicial (`ctrl-s3-public-block`) e usam-no como exemplo concreto. O sistema evoluiu para vários controles em vários serviços (S3, EC2) — essas propriedades generalizam para qualquer controle: a avaliação de conformidade é delegada à política Rego do controle, e a remediação ao seu template HCL. A Propriedade 25 foi atualizada para refletir o padrão de eventos dinâmico. As propriedades revisadas por decisão de projeto trazem a nota **Revisado**, com o comportamento que vale; a matriz `traceability.md` liga cada uma à evidência.
 
-### Property 1: CloudTrail Event Parsing Completeness
+### Propriedade 1: Leitura Completa do Evento do CloudTrail
 
-For any valid CloudTrail PutBucketPublicAccessBlock event, the Monitor SHALL successfully extract all required metadata fields (bucket ARN, account ID, region) and construct a valid output schema.
+PARA TODO evento `PutBucketPublicAccessBlock` válido do CloudTrail, o Monitor DEVE extrair todos os metadados obrigatórios (ARN do bucket, ID da conta, região) e construir uma saída com esquema válido.
 
-**Validates: Requirements 1.2, 1.3, 1.4, 1.5, 15.1, 15.7**
+**Valida: requisitos 1.2, 1.3, 1.4, 1.5, 15.1, 15.7**
 
-### Property 2: Orchestrator State-Based Routing
+### Propriedade 2: Roteamento pelo Estado no Orchestrator
 
-For any Analyze output with state S_nominal or S_exception, the Orchestrator SHALL terminate the workflow without invoking Execute; for any Analyze output with state S_violation, the Orchestrator SHALL invoke Execute.
+PARA TODA saída do Analyze com estado S_nominal ou S_exception, o Orchestrator DEVE encerrar o fluxo sem invocar o Execute; PARA TODA saída do Analyze com estado S_violation, o Orchestrator DEVE invocar o Execute.
 
-**Validates: Requirements 2.2, 2.3, 2.4**
+**Valida: requisitos 2.2, 2.3, 2.4**
 
 **Revisado**: uma `S_violation` passa pelo `PlanAction`, que invoca o Execute só numa rodada de detecção, fora do disjuntor e para controles com remediação automática; nos demais casos escala (não convergência, reincidência, controle detectivo). Verificado estaticamente sobre o grafo (`tests/unit/test_state_machine.py`).
 
-### Property 3: Analyze Classification Determinism
+### Propriedade 3: Determinismo da Classificação
 
-For any resource configuration and exception set, when Analyze evaluates the same inputs multiple times with the same timestamp, it SHALL return identical classification results.
+PARA TODA configuração de recurso e todo conjunto de exceções, quando o Analyze avaliar as mesmas entradas várias vezes com o mesmo instante, ele DEVE retornar classificações idênticas.
 
-**Validates: Requirements 3.9, 16.3**
+**Valida: requisitos 3.9, 16.3**
 
-### Property 4: Compliant Resource Classification
+### Propriedade 4: Classificação de Recurso Conforme
 
-For any S3 bucket configuration where BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, and RestrictPublicBuckets are all true, the Analyze SHALL return S_nominal.
+PARA TODA configuração de bucket S3 em que BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy e RestrictPublicBuckets sejam todos verdadeiros, o Analyze DEVE retornar S_nominal.
 
-**Validates: Requirements 3.3, 10.7**
+**Valida: requisitos 3.3, 10.7**
 
-### Property 5: Valid Exception Classification
+### Propriedade 5: Classificação com Exceção Válida
 
-For any non-compliant resource configuration with an exception where valid_until > current_timestamp, the Analyze SHALL return S_exception.
+PARA TODA configuração de recurso não conforme com uma exceção em que valid_until > instante atual, o Analyze DEVE retornar S_exception.
 
-**Validates: Requirements 3.4, 3.7**
+**Valida: requisitos 3.4, 3.7**
 
-### Property 6: Violation Classification
+### Propriedade 6: Classificação de Violação
 
-For any non-compliant resource configuration without a valid exception, the Analyze SHALL return S_violation.
+PARA TODA configuração de recurso não conforme sem exceção válida, o Analyze DEVE retornar S_violation.
 
-**Validates: Requirements 3.5, 3.8**
+**Valida: requisitos 3.5, 3.8**
 
-### Property 7: S3 Public Access Policy Evaluation
+### Propriedade 7: Avaliação da Política de Acesso Público do S3
 
-For any S3 bucket configuration, the s3_public_access Rego policy SHALL return violation if any of the four public access block settings (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets) is false.
+PARA TODA configuração de bucket S3, a política Rego `s3_public_access` DEVE retornar violação se qualquer uma das quatro configurações de bloqueio de acesso público (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets) for falsa.
 
-**Validates: Requirements 10.2, 10.3, 10.4, 10.5, 10.6**
+**Valida: requisitos 10.2, 10.3, 10.4, 10.5, 10.6**
 
-### Property 8: Exception Query Correctness
+### Propriedade 8: Correção da Consulta de Exceções
 
-For any control_id and resource_arn, the Analyze SHALL query the exceptions table and return only exceptions with valid_until > current_timestamp.
+PARA TODO control_id e resource_arn, o Analyze DEVE consultar a tabela de exceções e retornar apenas as exceções com valid_until > instante atual.
 
-**Revisado**: a consulta usa o GSI `resource-control-index` pela chave exata (`resource_arn`, `control_id`), sem `Limit` antes do filtro (Req. 3.6 e 5.3 revisados).
+**Revisado**: a consulta usa o GSI `resource-control-index` pela chave exata (`resource_arn`, `control_id`), sem `Limit` antes do filtro (requisitos 3.6 e 5.3 revisados).
 
-**Validates: Requirements 3.6, 5.8**
+**Valida: requisitos 3.6, 5.8**
 
-### Property 9: Exception Data Model Completeness
+### Propriedade 9: Completude do Modelo de Exceção
 
-For any exception created in the Knowledge_Base, it SHALL contain all required fields: exception_id (UUID), control_id, resource_arn, valid_until (Unix timestamp), justification, approved_by, and created_at.
+PARA TODA exceção criada no Knowledge_Base, ela DEVE conter todos os campos obrigatórios: exception_id (UUID), control_id, resource_arn, valid_until (timestamp Unix), justification, approved_by e created_at.
 
-**Validates: Requirements 5.4, 5.5, 5.6, 5.10, 5.11, 5.12**
+**Revisado**: o sistema não cria exceções — o cadastro fica fora do escopo (L20) —, então esta propriedade é do registro feito por quem escreve na tabela, e o sistema não a impõe. O que ele garante é a outra ponta: toda linha `S_exception` do log leva `exception_id` e `approved_by` (Propriedade 13; auditoria de completude).
 
-### Property 10: Exception Filtering Independence from TTL
+**Valida: requisitos 5.4, 5.5, 5.6, 5.10, 5.11, 5.12**
 
-For any exception query, the Analyze SHALL filter by valid_until > now() in the query expression, ensuring behavior does not depend on DynamoDB TTL physical deletion.
+### Propriedade 10: Filtro de Exceções Independente do TTL
 
-**Validates: Requirements 5.9**
+PARA TODA consulta de exceções, o Analyze DEVE filtrar por valid_until > agora na própria expressão da consulta, de modo que o comportamento não dependa da deleção física pelo TTL do DynamoDB.
 
-### Property 11: Violations Log Entry Uniqueness
+**Valida: requisitos 5.9**
 
-For any Analyze evaluation, exactly one entry SHALL be created in the violations_log table with a unique violation_id (UUID).
+### Propriedade 11: Unicidade da Entrada no Log de Violações
 
-**Validates: Requirements 6.1, 6.2**
+PARA TODA avaliação do Analyze, DEVE ser criada exatamente uma entrada na tabela violations_log, com um violation_id (UUID) único.
 
-**Revisado**: uma linha por avaliação de controle **que produz estado**, gravada pelo Step Functions; um controle que não pôde ser avaliado não tem estado e não gera linha (Req. 6.1 revisado). Medido: violation_id único nas 1.160 linhas da série atual.
+**Valida: requisitos 6.1, 6.2**
 
-### Property 12: Violations Log Data Model Completeness
+**Revisado**: uma linha por avaliação de controle **que produz estado**, gravada pelo Step Functions; um controle que não pôde ser avaliado não tem estado e não gera linha (requisito 6.1 revisado). Medido: violation_id único nas 1.160 linhas da série atual.
 
-For any violations_log entry, it SHALL contain all required fields: violation_id, resource_arn, control_id, state (one of S_nominal, S_exception, S_violation), timestamp (ISO 8601), and policy_version.
+### Propriedade 12: Completude do Modelo do Log de Violações
 
-**Validates: Requirements 6.3, 6.4, 6.5, 6.6, 6.7**
+PARA TODA entrada do violations_log, ela DEVE conter todos os campos obrigatórios: violation_id, resource_arn, control_id, state (S_nominal, S_exception ou S_violation), timestamp (ISO 8601) e policy_version.
 
-### Property 13: Exception Reference in Log
+**Valida: requisitos 6.3, 6.4, 6.5, 6.6, 6.7**
 
-For any violations_log entry with state S_exception, it SHALL include a non-null exception_id reference.
+### Propriedade 13: Referência à Exceção no Log
 
-**Validates: Requirements 6.8**
+PARA TODA entrada do violations_log com estado S_exception, ela DEVE incluir uma referência exception_id não nula.
 
-### Property 14: Remediation Status Logging
+**Valida: requisitos 6.8**
 
-For any violations_log entry where Execute was invoked, it SHALL include a remediation_status field with value "success" if Execute succeeded or "failed" if Execute failed.
+### Propriedade 14: Registro do Status da Remediação
 
-**Validates: Requirements 6.9, 6.10, 6.11**
+PARA TODA entrada do violations_log em que o Execute foi invocado, ela DEVE incluir o campo remediation_status, com o valor "success" se o Execute teve sucesso ou "failed" se ele falhou.
 
-### Property 15: Execute Idempotency
+**Valida: requisitos 6.9, 6.10, 6.11**
 
-For any resource in S_violation state, invoking Execute multiple times SHALL produce the same final resource configuration (all four public access block settings true).
+### Propriedade 15: Idempotência do Execute
 
-**Validates: Requirements 7.7, 9.1, 11.5**
+PARA TODO recurso em S_violation, invocar o Execute várias vezes DEVE produzir a mesma configuração final do recurso (as quatro configurações de bloqueio de acesso público verdadeiras).
 
-### Property 16: Execute OpenTofu Invocation
+**Valida: requisitos 7.7, 9.1, 11.5**
 
-For any S_violation input, Execute SHALL invoke OpenTofu with the -refresh=false flag and the resource_id correctly mapped to OpenTofu variables.
+### Propriedade 16: Invocação do OpenTofu pelo Execute
 
-**Validates: Requirements 7.1, 7.2, 7.3**
+PARA TODA entrada S_violation, o Execute DEVE invocar o OpenTofu com a opção `-refresh=false` e com o resource_id mapeado corretamente para as variáveis do OpenTofu.
 
-### Property 17: Execute Success Response
+**Valida: requisitos 7.1, 7.2, 7.3**
 
-For any successful OpenTofu apply (return code 0), Execute SHALL return remediation_status "success" to the Orchestrator.
+### Propriedade 17: Resposta de Sucesso do Execute
 
-**Validates: Requirements 7.5**
+PARA TODO `tofu apply` bem-sucedido (código de retorno 0), o Execute DEVE retornar remediation_status "success" ao Orchestrator.
 
-### Property 18: Execute Failure Response
+**Valida: requisitos 7.5**
 
-For any failed OpenTofu apply (return code != 0), Execute SHALL return remediation_status "failed" with error details to the Orchestrator.
+### Propriedade 18: Resposta de Falha do Execute
 
-**Validates: Requirements 7.6**
+PARA TODO `tofu apply` que falhar (código de retorno diferente de 0), o Execute DEVE retornar ao Orchestrator remediation_status "failed", com os detalhes do erro.
 
-### Property 19: Remediation Outcome Compliance
+**Valida: requisitos 7.6**
 
-For any resource after successful Execute, querying the S3 public access block configuration SHALL show BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, and RestrictPublicBuckets all set to true.
+### Propriedade 19: Conformidade do Resultado da Remediação
 
-**Validates: Requirements 7.9**
+PARA TODO recurso após um Execute bem-sucedido, a consulta à configuração de bloqueio de acesso público do S3 DEVE mostrar BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy e RestrictPublicBuckets todos verdadeiros.
 
-### Property 20: Escalation Trigger on Failure
+**Valida: requisitos 7.9**
 
-For any Execute failure, the Orchestrator SHALL send a message to the Escalation_Queue containing all required fields: violation_id, resource_arn, control_id, error details, timestamp, and step_functions_execution_arn.
+### Propriedade 20: Escalação na Falha
 
-**Validates: Requirements 2.6, 8.1, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8**
+PARA TODA falha do Execute, o Orchestrator DEVE enviar à Escalation_Queue uma mensagem com todos os campos obrigatórios: violation_id, resource_arn, control_id, detalhes do erro, timestamp e step_functions_execution_arn.
+
+**Valida: requisitos 2.6, 8.1, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8**
 
 **Ampliado**: a mesma mensagem, com o campo `reason`, é enviada nos cinco casos de escalação — `remediation_failed`, `non_convergence`, `recurrent_violation`, `manual_remediation_required` e `system_failure`.
 
-### Property 21: GitHub Issue Creation
+### Propriedade 21: Criação da Issue no GitHub
 
-For any message in the Escalation_Queue, the Escalation Lambda SHALL create a GitHub Issue containing all escalation message details and labeled with "compliance-violation" and "auto-escalation".
+PARA TODA mensagem na Escalation_Queue, a Lambda de escalação DEVE criar uma issue no GitHub com todos os detalhes da mensagem e os rótulos "compliance-violation" e "auto-escalation".
 
-**Validates: Requirements 8.9, 8.10, 8.11**
+**Valida: requisitos 8.9, 8.10, 8.11**
 
-### Property 22: GitHub Issue ID Persistence
+### Propriedade 22: Persistência do Número da Issue
 
-For any GitHub Issue created for a failed remediation, the issue number returned by the GitHub API SHALL be saved to the violations_log entry corresponding to the violation_id.
+PARA TODA issue do GitHub criada para uma remediação falha, o número devolvido pela API do GitHub DEVE ser gravado na entrada do violations_log correspondente ao violation_id.
 
-**Validates: Requirements 8.12, 19.1, 19.4**
+**Valida: requisitos 8.12, 19.1, 19.4**
 
-### Property 23: GitHub Issue ID Null for Non-Escalated Violations
+### Propriedade 23: Issue Nula para Violações Não Escaladas
 
-For any violations_log entry where Execute was not invoked or Execute succeeded, the github_issue_id field SHALL be null.
+PARA TODA entrada do violations_log em que o Execute não foi invocado ou teve sucesso, o campo github_issue_id DEVE ser nulo.
 
 **Revisado**: o enunciado ficou falso quando entraram os controles detectivos, o disjuntor e a rodada de verificação — os três escalam **sem** invocar o Execute, e a linha ganha a issue corretamente. O que vale: `github_issue_id` só aparece numa linha escalada — `remediation_status = failed`, ou `state = S_violation` sem `remediation_status` (o `PlanAction` escalou: disjuntor, controle manual ou detectivo, não convergência). Linhas em `S_nominal`, em `S_exception` ou com `remediation_status = success` não têm issue.
 
@@ -1369,81 +1381,83 @@ For any violations_log entry where Execute was not invoked or Execute succeeded,
 
 *E medida*: a auditoria de completude (`scripts/audit_log_completeness.py`) confere a propriedade em todas as linhas de cada série — 0 violações nas 1.160 linhas da série otimizada, 30 delas com issue.
 
-**Validates: Requirements 19.5**
+**Valida: requisitos 19.5**
 
-### Property 24: State Persistence After Failed Remediation
+### Propriedade 24: Persistência do Estado Após Falha de Remediação
 
-For any Execute failure, the violations_log entry SHALL maintain state as S_violation (not create a new state like S_remediation_failed), with the remediation_status field indicating "failed".
+PARA TODA falha do Execute, a entrada do violations_log DEVE manter o estado S_violation (sem criar um estado novo como S_remediation_failed), com o campo remediation_status indicando "failed".
 
-**Validates: Requirements 18.1, 18.2, 18.5**
+**Valida: requisitos 18.1, 18.2, 18.5**
 
-### Property 25: EventBridge Rule Event Filtering
+### Propriedade 25: Filtro de Eventos da Regra do EventBridge
 
-For any CloudTrail event whose `eventName` is NOT in the union of `cloudtrail_events` across all registered controls, the EventBridge Rule SHALL NOT match the event and SHALL NOT trigger the Orchestrator. O event pattern é gerenciado dinamicamente pela Lambda `controls-sync` e cobre múltiplos serviços (S3, EC2). A mesma regra SHALL NOT casar com um evento que não foi emitido pela AWS: o `source` é fixado pelo prefixo `aws.`, que o `PutEvents` recusa (ver *Proveniência do evento*).
+PARA TODO evento do CloudTrail cujo `eventName` NÃO esteja na união dos `cloudtrail_events` dos controles cadastrados, a regra do EventBridge NÃO DEVE casar com o evento nem acionar o Orchestrator. O padrão de eventos é gerenciado dinamicamente pela Lambda `controls-sync` e cobre vários serviços (S3, EC2). A mesma regra NÃO DEVE casar com um evento que não foi emitido pela AWS — o `source` é fixado pelo prefixo `aws.`, que o `PutEvents` recusa (ver *Proveniência do evento*) — nem com um evento cuja identidade seja a role de remediação.
 
-**Validates: Requirements 1.6**
+**Valida: requisitos 1.6, 26.1, 26.2**
 
-### Property 26: Monitor Error Handling
+### Propriedade 26: Tratamento de Erro no Monitor
 
-For any CloudTrail event with missing required fields (bucketName, accountId, or region), the Monitor SHALL log an error and discard the event.
+PARA TODO evento do CloudTrail sem campos obrigatórios (bucketName, accountId ou region), o Monitor DEVE registrar um erro e descartar o evento.
 
-**Validates: Requirements 15.6**
+**Valida: requisitos 15.6**
 
-**Revisado**: um evento sem campo de recurso recebe o identificador sintético da conta em vez de ser descartado (Req. 15.6 revisado, L3); o EventBridge só admite eventos de controles cadastrados, que sempre trazem o recurso.
+**Revisado**: um evento sem campo de recurso recebe o identificador sintético da conta em vez de ser descartado (requisito 15.6 revisado, L3); o EventBridge só admite eventos de controles cadastrados, que sempre trazem o recurso.
 
-### Property 27: ARN Construction Format
+### Propriedade 27: Formato do ARN
 
-For any bucket name extracted from a CloudTrail event, the Monitor SHALL construct the resource ARN in the format "arn:aws:s3:::bucket-name".
+PARA TODO nome de bucket extraído de um evento do CloudTrail, o Monitor DEVE construir o ARN do recurso no formato "arn:aws:s3:::nome-do-bucket".
 
-**Validates: Requirements 15.7**
+**Valida: requisitos 15.7**
 
-### Property 28: Timeout Error Handling
+### Propriedade 28: Tratamento de Timeout
 
-For any component timeout (Analyze task > 75s, Execute task > 90s, Orchestrator global > 600s), the Orchestrator SHALL log a timeout error and terminate the workflow.
+PARA TODO timeout de componente (tarefa do Analyze > 75 s, tarefa do Execute > 90 s, execução inteira > 600 s), o Orchestrator DEVE registrar um erro de timeout e encerrar o fluxo.
 
-A cadeia é monotônica em dois ramos, cada um com folga para o cold start:
+**Revisado**: encerrar em silêncio deixaria o recurso sem dono (requisito 17.4 revisado). O timeout do Analyze cai no `Catch` da tarefa e é escalado como falha do sistema; o do Execute vira `remediation_status = failed` e é escalado; o da execução inteira não tem estado que o capture e dispara o alarme `executions-timed-out`, que abre uma issue.
 
-- **Execute**: subprocess do tofu (65s) + o resto do handler frio (~1 s; o cache do provider é baixado no init, que tem limite próprio de 10 s) ≈ 66s ≤ Execute Lambda (90s) ≤ Execute task SFN (90s). A folga garante que um timeout do tofu sempre retorne erro estruturado (`subprocess.TimeoutExpired`) antes de o Lambda ser morto com `States.Timeout` genérico
-- **Analyze**: orçamento de OPA derivado do tempo restante (ver *Analyze Error Handling*) ≤ Analyze Lambda (60s) ≤ InvokeAnalyze task SFN (75s). O task fica **acima** do Lambda para que o retorno estruturado do handler vença a corrida contra o Step Functions
+A cadeia de timeouts é monotônica em dois ramos, cada um com folga para o cold start:
 
-O **global (600s)** precisa cobrir o pior caso serial, porque `ProcessResults` roda com `MaxConcurrency=1`: `75 + n_controles × (90 + escritas ~5) = 550s` com 5 controles no mesmo evento — hoje o maior fan-out é o `CreateBucket`, com 4. Adicionar controles que compartilhem um evento CloudTrail, ou elevar o timeout do Execute, exige revisitar esse valor.
+- **Execute**: subprocesso do tofu (65 s) + o resto do handler frio (~1 s; o cache do provider é baixado no init, que tem limite próprio de 10 s) ≈ 66 s ≤ Lambda Execute (90 s) ≤ tarefa do Execute no Step Functions (90 s). A folga garante que um timeout do tofu sempre retorne erro estruturado (`subprocess.TimeoutExpired`) antes de a Lambda ser encerrada com o `States.Timeout` genérico
+- **Analyze**: orçamento do OPA derivado do tempo restante (ver *Tratamento de Erros no Analyze*) ≤ Lambda Analyze (60 s) ≤ tarefa `InvokeAnalyze` no Step Functions (75 s). A tarefa fica **acima** da Lambda para que o retorno estruturado do handler vença a corrida contra o Step Functions
 
-**Validates: Requirements 17.4**
+O **global (600 s)** precisa cobrir o pior caso serial, porque `ProcessResults` roda com `MaxConcurrency=1`: `75 + n_controles × (90 + escritas ~5) = 550s` com 5 controles no mesmo evento — hoje o maior fan-out é o `CreateBucket`, com 4. Adicionar controles que compartilhem um evento CloudTrail, ou elevar o timeout do Execute, exige revisitar esse valor.
 
-### Property 29: Resource State Unchanged for S_exception
+**Valida: requisitos 17.4**
 
-For any resource classified as S_exception, the resource configuration SHALL remain unchanged after the workflow completes.
+### Propriedade 29: Recurso Inalterado em S_exception
 
-**Validates: Requirements 12.5**
+PARA TODO recurso classificado como S_exception, a configuração do recurso DEVE permanecer inalterada após o fim do fluxo.
 
-### Property 30: Resource State Unchanged After Failed Remediation
+**Valida: requisitos 12.5**
 
-For any resource where Execute fails, the resource configuration SHALL remain in its non-compliant state.
+### Propriedade 30: Recurso Inalterado Após Falha de Remediação
 
-**Validates: Requirements 14.5**
+PARA TODO recurso em que o Execute falhar, a configuração do recurso DEVE permanecer no estado não conforme.
+
+**Valida: requisitos 14.5**
 
 
-## Error Handling
+## Tratamento de Erros
 
-### Monitor Error Handling
+### Tratamento de Erros no Monitor
 
 **Eventos**:
-- Evento sem campo de recurso: recebe o identificador sintético da conta (Req. 15.6 revisado)
+- Evento sem campo de recurso: recebe o identificador sintético da conta (requisito 15.6 revisado)
 - Evento fora do padrão, ou forjado (`source` sem o prefixo `aws.`): a regra não casa
 - Evento da própria remediação: descartado pela cláusula de identidade (sem eco)
 
 **Entrega à máquina de estados**: o alvo da regra tenta por até 1 h; o que não puder ser entregue — role sem permissão, máquina indisponível, throttling persistente — vai para a fila `intake-failures` (14 dias) em vez de ser descartado, com o alarme `intake-failed`. Um erro de permissão não é retentado: vai para a fila na hora (medido: 18–24 s depois da mutação). `scripts/replay_intake.py` inicia depois a execução que cada evento deveria ter iniciado, no máximo uma por evento.
 
-**Error Recovery**: o que não chega ao EventBridge (evento que o CloudTrail não entrega) não é recuperado — L15.
+**Recuperação de erros**: o que não chega ao EventBridge (evento que o CloudTrail não entrega) não é recuperado — L15.
 
-### Analyze Error Handling
+### Tratamento de Erros no Analyze
 
-**AWS API Failures**:
+**Falhas de API da AWS**:
 - Resource fetch fails (NoSuchBucket, AccessDenied): tratado via `error_defaults` no `fetch_config` quando aplicável; senão o controle volta sem estado → escalação como falha de sistema
 - DynamoDB exception query timeout: **escala como falha de sistema, sem estado** — NÃO assume "sem exceção". Assumir ausência de exceção remediaria um recurso potencialmente autorizado (destrutivo). A query de exceção só ocorre para recursos não-conformes
 - DynamoDB write failure: o Step Functions (não o Analyze) grava. As integrações SDK de DynamoDB **não** possuem retry implícito no Step Functions; ver *Limitações Conhecidas*
 
-**OPA Evaluation Errors**:
+**Erros de avaliação do OPA**:
 - Policy file missing / Rego syntax error / OPA runtime error: **escala como falha de sistema, sem estado**, via `PolicyEvaluationError`. Falha de avaliação NÃO é o mesmo que não-conformidade: classificar como `S_violation` dispararia remediação sem nenhuma decisão de política — para controles que reescrevem configuração (ex: bucket policy do ssl-only), isso seria destrutivo. Mesma lógica aplicada à falha de leitura de exceções
 - Cache de políticas Rego em `/tmp` é **versionado** (`{package}@{policy_version}.rego`): container warm nunca avalia um `.rego` obsoleto após bump de `policy_version` na tabela controls — sem isso, o log afirmaria uma `policy_version` que não foi a executada
 
@@ -1474,11 +1488,11 @@ Dimensionamento correspondente:
 
 O valor anterior (Lambda 15s) não cobria sequer o pior caso nominal de 4 controles (20s), e o timeout global de 300s já era insuficiente antes desta correção (410s com o timeout de 30s do `InvokeAnalyze`).
 
-**Error Recovery**: `InvokeAnalyze` retenta erros do serviço Lambda (`ServiceException`, `AWSLambdaException`, `SdkClientException`, `TooManyRequestsException`) — 3 tentativas, 2 s, ×2; qualquer outro erro, inclusive timeout da função, vai ao `Catch` → `AnalyzeFailedEscalation`.
+**Recuperação de erros**: `InvokeAnalyze` retenta erros do serviço Lambda (`ServiceException`, `AWSLambdaException`, `SdkClientException`, `TooManyRequestsException`) — 3 tentativas, 2 s, ×2; qualquer outro erro, inclusive timeout da função, vai ao `Catch` → `AnalyzeFailedEscalation`.
 
-### Execute Error Handling
+### Tratamento de Erros no Execute
 
-**OpenTofu Failures**:
+**Falhas do OpenTofu**:
 - IAM permission denied: Return failure status with error details, escalate to GitHub Issue
 - Leitura de policy existente falha (ssl-only): **aborta** com failure. Apenas `NoSuchBucketPolicy` é tratado como "sem policy"; qualquer outro erro (AccessDenied, throttling) interrompe a remediação — prosseguir sem a policy existente a sobrescreveria apenas com a statement SSL, destruindo silenciosamente as statements do cliente
 - Bucket not found: Return failure status (bucket may have been deleted), escalate
@@ -1490,11 +1504,11 @@ O valor anterior (Lambda 15s) não cobria sequer o pior caso nominal de 4 contro
 - `/tmp` cheio (2048 MB; o provider extraído ocupa 780 MB): o cache ou o `tofu` falham, e a remediação volta como falha
 - Cache do provider indisponível no S3: o init registra o erro e o handler tenta de novo; se falhar, `Setup failed` → escalação
 
-**Error Recovery**: `InvokeExecute` retenta só erros do serviço Lambda — 2 tentativas, 5 s, ×2. Erros da função e timeout vão ao `Catch` → `UpdateLogFailed` → escalação `remediation_failed`. Uma remediação não é repetida às cegas: a próxima tentativa é da pessoa, com a issue em mãos.
+**Recuperação de erros**: `InvokeExecute` retenta só erros do serviço Lambda — 2 tentativas, 5 s, ×2. Erros da função e timeout vão ao `Catch` → `UpdateLogFailed` → escalação `remediation_failed`. Uma remediação não é repetida às cegas: a próxima tentativa é da pessoa, com a issue em mãos.
 
-### Orchestrator Error Handling
+### Tratamento de Erros no Orchestrator
 
-**State Machine Errors**:
+**Erros da máquina de estados**:
 - Lambda invocation failure: `Retry` explícito em `InvokeAnalyze` e `InvokeExecute`, com `Catch States.ALL` para escalação
 - Lambda: `Retry` em `Lambda.ServiceException`, `Lambda.AWSLambdaException`, `Lambda.SdkClientException` e `Lambda.TooManyRequestsException` — o último, throttling, faltava na lista
 - Leitura da tabela `controls` (`QueryControls` / `GetControlById`): `Retry` em `DynamoDb.ProvisionedThroughputExceededException`, `DynamoDb.RequestLimitExceededException` e `DynamoDb.InternalServerErrorException` + `Catch` → `ControlLookupFailedEscalation`. **Correção**: o `Retry` anterior usava o prefixo `DynamoDB.`, que é o da integração otimizada; a integração `aws-sdk` nomeia os erros `DynamoDb.*` (observado com `test-state` nas duas integrações), então o retry nunca casava e um throttling na leitura dos controles escalava na primeira tentativa. `tests/unit/test_state_machine.py` agora exige o prefixo de cada integração
@@ -1504,11 +1518,11 @@ O valor anterior (Lambda 15s) não cobria sequer o pior caso nominal de 4 contro
 
 **Nota sobre retry nas escritas**: o Step Functions aplica retry *default* apenas às integrações otimizadas de **Lambda**. Integrações DynamoDB e SQS **não** têm retry implícito — o retry precisa ser declarado estado a estado. Hoje **toda** escrita declara `Retry`: as gravações de auditoria apenas sobre erros transitórios (`ProvisionedThroughputExceeded`, `RequestLimitExceeded`, `InternalServerError`), para que um `ConditionalCheckFailed` ou um erro de validação não seja repetido, e as escalações sobre `States.ALL`, já que uma mensagem que não entra na fila merece nova tentativa qualquer que seja a causa — o `MessageDeduplicationId` torna a repetição idempotente, então não há risco de escalar duas vezes. O que permanece em aberto é o `Catch`: nenhum desses estados o declara, e o `ProcessResults` também não (ver L1).
 
-**Error Recovery**: `Retry` e `Catch` declarados por estado nos pontos listados acima. Erros não capturados resultam em execução `FAILED`, visível no console e nas métricas do Step Functions.
+**Recuperação de erros**: `Retry` e `Catch` declarados por estado nos pontos listados acima. Erros não capturados resultam em execução `FAILED`, visível no console e nas métricas do Step Functions.
 
-### Escalation Error Handling
+### Tratamento de Erros na Escalação
 
-**SQS Consumer Failures**:
+**Falhas do consumidor da fila**:
 - GitHub indisponível, rate limit ou falha de rede: o registro volta à fila (`batchItemFailures`) e é reprocessado depois do visibility timeout (300 s)
 - Token inválido ou expirado: idem; depois de 3 recebimentos a mensagem vai para a DLQ e o alarme `escalation-dlq` dispara. Como os alarmes também chegam como issues pela mesma Lambda, esse aviso depende do canal que falhou — o painel é o último recurso (ver *Operação*)
 
@@ -1520,28 +1534,28 @@ A deduplicação de **issues** continua existindo, uma camada acima, na Lambda d
 
 O `MessageGroupId` permanece `resource_id#control_id`, serializando o processamento por par e evitando que duas escalações concorrentes criem duas issues.
 
-**DynamoDB Update Failures**:
+**Falhas de escrita no DynamoDB**:
 - Update violations_log with github_issue_id fails: Log error to CloudWatch, continue (issue already created)
 - Conditional check failure: Log warning, continue (idempotent operation)
 
-**Error Recovery**: SQS visibility timeout triggers automatic retry. After 3 receive attempts, message moves to DLQ. CloudWatch alarm notifies operators.
+**Recuperação de erros**: SQS visibility timeout triggers automatic retry. After 3 receive attempts, message moves to DLQ. CloudWatch alarm notifies operators.
 
-### Fail-Secure Principles
+### Princípios de Falha Segura
 
-- **Unknown exception state**: falha na **leitura** de exceção (timeout DynamoDB) escala como falha de sistema, não remedia — evita derrubar recurso com autorização legítima
-- **OPA evaluation error**: escala como falha de sistema — não remedia sem decisão de política avaliada; remediação sem avaliação seria destrutiva para controles que reescrevem configuração
-- **Timeout in Analyze**: Escalate (do not assume compliant)
-- **Timeout in Execute**: Escalate (do not assume remediated)
+- **Estado de exceção desconhecido**: falha na **leitura** de exceção (timeout DynamoDB) escala como falha de sistema, não remedia — evita derrubar recurso com autorização legítima
+- **Erro de avaliação do OPA**: escala como falha de sistema — não remedia sem decisão de política avaliada; remediação sem avaliação seria destrutiva para controles que reescrevem configuração
+- **Timeout no Analyze**: Escalate (do not assume compliant)
+- **Timeout no Execute**: Escalate (do not assume remediated)
 
 
-## Testing Strategy
+## Estratégia de Testes
 
 A estratégia planejada no início (LocalStack, mocks do GitHub, testes de carga) foi substituída por uma que testa o que importa onde importa: a lógica sem nuvem, o que depende da AWS **contra a própria AWS**, e o laço inteiro na conta real, repetido para medir. A matriz `traceability.md` liga cada requisito e cada propriedade à evidência abaixo.
 
 | Camada | Onde | Quantidade | Precisa da AWS | O que prova |
 |---|---|---|---|---|
 | Unitários | `tests/unit` | 129 | não | handlers (Analyze, Execute, escalação, sincronizações, reprocessamento do intake) e propriedades estruturais do grafo da máquina de estados |
-| Propriedade (Hypothesis, 100 exemplos cada) | `tests/property` | 13 | não | Properties 3–6, 8 e 15–18 sobre entradas geradas |
+| Propriedade (Hypothesis, 100 exemplos cada) | `tests/property` | 13 | não | Propriedades 3–6, 8 e 15–18 sobre entradas geradas |
 | Contrato | `tests/contract` | 26 | parte | permissões de leitura da Analyze × leituras dos controles; remediação × política (o estado que cada `remediation.tf` produz, avaliado pela política com o OPA da layer); padrão do EventBridge e estado `ResolveResource` avaliados pela própria AWS (`test-event-pattern`, `test-state`) |
 | Política (Rego) | `controls/*/policy_test.rego` | 44 | não | cada política aceita e recusa o que deve |
 | Integração | `scripts/integration_test.py` | 16 cenários + auditoria | sim | o laço inteiro, na conta real |
@@ -1625,7 +1639,7 @@ representa uma redução de ordem de grandeza no MTTR.
 - **Provisioned Concurrency**: eliminaria o cold start (~10 s). Não move a média — na série atual, nenhuma das 80 amostras foi fria — e custa um valor fixo por instância. Serviria só a um SLA sobre a cauda.
 - **SnapStart**: não se aplica ao Execute. A documentação da AWS o suporta para Python 3.12+, mas não com armazenamento efêmero acima de 512 MB, e o Execute precisa de 2048 MB para o provider extraído; também não combina com provisioned concurrency e exige versões publicadas. No Analyze seria possível, mas o init dele é de ~0,5 s e o SnapStart é cobrado à parte no Python.
 - **Mais memória**: 3008 MB é o teto desta conta; acima disso exigiria pedir aumento de cota.
-- **Paralelizar os controles de um mesmo evento** (`MaxConcurrency > 1` no `ProcessResults`): reduziria o tempo de um incidente com vários controles violados (o fan-out do `CreateBucket`), não o MTTR de uma violação isolada. Exigiria revisar o orçamento de timeouts (Property 28) e a concorrência na policy do ssl-only.
+- **Paralelizar os controles de um mesmo evento** (`MaxConcurrency > 1` no `ProcessResults`): reduziria o tempo de um incidente com vários controles violados (o fan-out do `CreateBucket`), não o MTTR de uma violação isolada. Exigiria revisar o orçamento de timeouts (Propriedade 28) e a concorrência na policy do ssl-only.
 - **SDK direto por controle**: a alavanca grande (de ~5,5 s para décimos) — mas é uma troca de desenho, não uma otimização; ver acima.
 
 
@@ -1654,11 +1668,11 @@ O EventBridge passa o `event_name` e `request_parameters` do CloudTrail para a S
 
 **Limitação conhecida — pseudo-ARN de recursos account-level**: para eventos sem recurso nomeável (ex: EBS encryption by default), o `ResolveResource` sintetiza `arn:aws:{region}:{account_id}` — um identificador interno, não um ARN AWS válido. Esse pseudo-ARN é a chave usada na consulta de exceções e no `violations_log`; uma exceção cadastrada com qualquer outro formato (ex: um ARN "correto" inventado pelo operador) é silenciosamente ignorada e o recurso é remediado apesar da aprovação. Ao cadastrar exceções para controles account-level, o `resource_arn` DEVE ser exatamente o pseudo-ARN sintetizado. Formalizar esse identificador (ou derivá-lo do controle) é melhoria futura.
 
-### Multi-Control em Invocação Única
+### Vários Controles numa Invocação Única
 
 O Analyze recebe os items completos da tabela `controls` (passados pela Step Function via `QueryControls`), eliminando a necessidade de consultar DynamoDB. Avalia todos os controles em uma única invocação Lambda, compartilhando o cache de configuração do recurso (ex: `GetBucketPublicAccessBlock` é chamado uma vez e reutilizado por múltiplos controles). Os resultados são processados individualmente pelo Map state da Step Function.
 
-### Adição de Novo Controle (sem rebuild de Lambda)
+### Adição de Novo Controle (sem novo build da Lambda)
 
 1. Criar `controls/<control-id>/` com `control.json`, `policy.rego`, `policy_test.rego` e `remediation.tf` (ou `"remediation": "manual"`, sem template)
 2. `scripts/deploy_control.sh <control-id>`: valida o cadastro, publica os artefatos no S3 e grava o item na tabela `controls`
@@ -1670,7 +1684,7 @@ O passo 2 dispara automaticamente a Lambda `controls-sync` via DynamoDB Stream, 
 - A API `PutRule` é idempotente (upsert por nome) — não cria rules duplicadas
 - O scan completo a cada trigger garante consistência mesmo com múltiplos updates simultâneos
 
-### Otimização: Eliminação do `tofu init` em Runtime e do Container Image
+### Otimização: Eliminação do `tofu init` em Tempo de Execução e da Imagem de Contêiner
 
 O `tofu init` com `-plugin-dir` extraía o provider AWS (~140MB zip → ~628MB binário) a cada cold start, levando 30-50s. A evolução arquitetural passou por duas fases:
 
@@ -1692,7 +1706,7 @@ O `tofu init` com `-plugin-dir` extraía o provider AWS (~140MB zip → ~628MB b
 
 O provider cache no S3 só precisa ser regenerado ao atualizar a versão do provider AWS. O binário tofu na Layer só precisa ser atualizado ao mudar a versão do OpenTofu.
 
-### Remediação SSL com Merge de Policy
+### Remediação SSL com Mesclagem da Bucket Policy
 
 O controle `ctrl-s3-ssl-only` faz merge com a bucket policy existente em vez de substituí-la. O template HCL recebe a policy existente como variável `existing_policy` (passada pelo handler do Execute via `get_bucket_policy`), filtra o statement `DenyNonSSLRequests` (evita duplicata), e concatena com o novo statement. Se o bucket não tem policy, a variável fica vazia e o `try()` no HCL trata o default, criando a policy apenas com o statement SSL. Isso preserva policies pré-existentes (ex: CloudFront, cross-account access) sem depender de `data source` que falha em buckets sem policy.
 
@@ -1860,19 +1874,19 @@ O que o trace mostra:
 - **A corrida é limitada, não deduplicada** (L6): o public-block foi remediado duas vezes — o mesmo estado final, idempotente — e cada remediação foi verificada.
 - **Os controles de um evento rodam em série** (`MaxConcurrency = 1`): da criação, o ssl-only terminou em 7 s, o public-block em 13,7 s e o versioning em 21,5 s.
 
-### Teste 1: Ciclo Completo de Exception Governance com Convergência
+### Teste 1: Ciclo Completo de Governança de Exceções com Convergência
 
 > **Nota histórica**: Este teste foi executado com o mecanismo original (EventBridge Pipe + DynamoDB TTL `REMOVE`), posteriormente substituído pelo EventBridge Scheduler devido à latência não determinística do TTL (até 48h). Veja o Teste 5 (C3) para o mecanismo atual. O trace é mantido como registro da evolução arquitetural; a propriedade de convergência demonstrada permanece válida.
 
 **Data**: 2026-04-11 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::test-compliance-bucket-1775622472`
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 
 Este teste demonstra duas propriedades do sistema em sequência:
-1. **Exception Governance**: exceção expirada dispara re-avaliação automática via EventBridge Pipe
+1. **Governança de exceções**: exceção expirada dispara re-avaliação automática via EventBridge Pipe
 2. **Convergência**: após remediação, o sistema confirma autonomamente a transição para `S_nominal`
 
-#### Timeline
+#### Linha do tempo
 
 | Timestamp (UTC) | Evento | Origem | Estado |
 |---|---|---|---|
@@ -1928,9 +1942,9 @@ O trace demonstra empiricamente que o sistema satisfaz a propriedade de converg�
 
 **Data**: 2026-04-11 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::test-compliance-bucket-1775622472`
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 
-#### Timeline
+#### Linha do tempo
 
 | Timestamp (UTC) | Evento | Origem | Estado |
 |---|---|---|---|
@@ -1956,14 +1970,14 @@ O trace demonstra empiricamente que o sistema satisfaz a propriedade de converg�
 
 **Data**: 2026-04-12 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c1-1776025390`
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 **Hipóteses validadas**: H1 (MTTR), H3 (tempo de exposição)
 
 Este teste demonstra o cenário mais básico: um bucket tem seu public access block
 desabilitado (simulando ação via console), o sistema detecta, classifica como
 `S_violation`, remedia automaticamente, e confirma convergência para `S_nominal`.
 
-#### Timeline
+#### Linha do tempo
 
 | Timestamp (UTC) | Evento | Origem | Estado |
 |---|---|---|---|
@@ -2012,13 +2026,13 @@ Todos os campos obrigatórios presentes: `violation_id`, `resource_arn`, `contro
 
 **Data**: 2026-04-12 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c2-1776025390`
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 **Hipótese validada**: H2 (rastreabilidade)
 
 Exceção `exc-c2-1776025390` criada com `valid_until` 24h no futuro e `approved_by=test-approver`.
 Bucket configurado com todos os public access settings em `false`.
 
-#### Timeline
+#### Linha do tempo
 
 | Timestamp (UTC) | Evento | Origem | Estado |
 |---|---|---|---|
@@ -2044,7 +2058,7 @@ Bucket configurado com todos os public access settings em `false`.
 
 **Data**: 2026-04-13 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c3-1776025390`
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 **Hipóteses validadas**: H2 (rastreabilidade), H3 (tempo de exposição)
 
 Este é o teste mais completo do sistema. Demonstra o ciclo de vida inteiro de uma
@@ -2077,14 +2091,14 @@ Propriedades do novo mecanismo:
 - **Auto-limpeza**: `ActionAfterCompletion=DELETE` remove o Scheduler após disparo
 - **Extensibilidade**: `MODIFY` no DynamoDB atualiza o Scheduler (ex: extensão de prazo)
 
-#### Setup
+#### Preparação
 
 1. Bucket configurado com todos os public access settings em `false`
 2. Exceção `exc-c3v4-1776044143` criada com `valid_until` = 3 minutos no futuro (epoch 1776044321)
 3. Lambda `exception-scheduler-sync` processou o Stream e criou Scheduler `exc-exc-c3v4-1776044143`
 4. Scheduler programado para `at(2026-04-13T01:39:11)` (valid_until + 30s)
 
-#### Timeline
+#### Linha do tempo
 
 | Timestamp (UTC) | Evento | Origem | Estado |
 |---|---|---|---|
@@ -2146,24 +2160,24 @@ confirmação. É o argumento empírico central de H2 (rastreabilidade/completud
 
 **Data**: 2026-04-13 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::bucket-inexistente-c4v2-test` (bucket propositalmente inexistente)
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 **Hipótese validada**: H2 (rastreabilidade)
 
 Este teste valida o caminho de escalação: quando o Analyze não consegue avaliar o recurso
 (bucket inexistente), o erro é capturado pelo Catch da Step Functions e escalado via SQS FIFO
 para a Escalation Lambda, que cria um GitHub Issue.
 
-#### Bug Descoberto e Corrigido
+#### Defeito Descoberto e Corrigido
 
 Na primeira execução do C4, o Analyze tratava `NoSuchBucket` como "todos os settings false"
 (violação), o que fazia o Execute tentar remediar um bucket inexistente. A chamada à API S3
 era registrada no CloudTrail mesmo falhando, gerando re-triggers em loop infinito.
 
-**Fix aplicado**: separar `NoSuchBucket` de `NoSuchPublicAccessBlockConfiguration` no Analyze.
+**Correção aplicada**: separar `NoSuchBucket` de `NoSuchPublicAccessBlockConfiguration` no Analyze.
 Bucket inexistente agora propaga exceção → Catch → `AnalyzeFailedEscalation` → SQS → GitHub Issue.
 O Execute nunca é invocado, eliminando o loop.
 
-#### Timeline (após fix)
+#### Linha do tempo (após a correção)
 
 | Timestamp (UTC) | Evento | Origem | Estado |
 |---|---|---|---|
@@ -2176,7 +2190,7 @@ O Execute nunca é invocado, eliminando o loop.
 
 - Duração: ~1.3s
 - Execute Lambda **não invocada**
-- **Zero re-triggers** (loop eliminado)
+- **Nenhum redisparo** (loop eliminado)
 - GitHub Issue criada com detalhes do erro
 - Nenhum registro de estado no violations_log: o controle não foi avaliado. Uma versão anterior deste registro afirmava `state=S_violation` preservado, o que não se aplica aqui — a preservação de `S_violation` após falha de remediação é demonstrada no Teste 11 (C8)
 
@@ -2189,7 +2203,7 @@ O Execute nunca é invocado, eliminando o loop.
 
 **Data**: 2026-04-13 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c5-1776025390`
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 **Hipóteses validadas**: H1 (MTTR), H2 (rastreabilidade)
 
 Este teste demonstra que o sistema funciona como guardrail independente da origem da
@@ -2197,7 +2211,7 @@ mudança. A violação foi criada por um `tofu apply` externo (simulando um time
 desenvolvimento configurando um bucket como público via IaC), e o sistema detectou,
 remediou e confirmou convergência automaticamente.
 
-#### Setup
+#### Preparação
 
 Arquivo `tests/c5_iac_violation/main.tf` aplicado via OpenTofu:
 ```hcl
@@ -2210,7 +2224,7 @@ resource "aws_s3_bucket_public_access_block" "non_compliant" {
 }
 ```
 
-#### Timeline
+#### Linha do tempo
 
 | Timestamp (UTC) | Evento | Origem | Estado |
 |---|---|---|---|
@@ -2246,13 +2260,13 @@ O Teste C5 demonstra apenas um ciclo: apply externo → detecção → remediaç
 
 **Data**: 2026-04-13 (timestamps em UTC)
 **Recurso**: `arn:aws:s3:::compliance-test-c6-1776025390`
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 **Hipótese validada**: H1 (MTTR)
 
 Cenário mais simples: bucket já conforme recebe `PutBucketPublicAccessBlock` com todos
 os settings em `true`. O sistema detecta, avalia, confirma conformidade e encerra.
 
-#### Timeline
+#### Linha do tempo
 
 | Timestamp (UTC) | Evento | Origem | Estado |
 |---|---|---|---|
@@ -2322,12 +2336,12 @@ entrega do Scheduler, não do laço.
 
 **Data**: 2026-09-14 (execução isolada, depois do benchmark de 10 rodadas)
 **Recurso**: `arn:aws:s3:::compliance-inttest-c8-1789351669`
-**Control**: `ctrl-s3-public-block`
+**Controle**: `ctrl-s3-public-block`
 **Hipótese validada**: H2 (rastreabilidade do caminho de falha)
 
 **Como a falha é induzida**: sem mock. Uma bucket policy nega exatamente uma ação, `s3:PutBucketPublicAccessBlock`, a exatamente um principal, a role de remediação que o Execute assume (`aws:PrincipalArn`). O Analyze, com outra role, continua lendo o bucket; o runner, um usuário IAM, continua violando e apagando. O teste espera a rodada do `CreateBucket` terminar antes de gravar a policy — a remediação do ssl-only faz merge na policy e, se tivesse lido antes, descartaria o `Deny` — e confere que o `Deny` sobreviveu antes de disparar a violação.
 
-#### Timeline da execução
+#### Linha do tempo da execução
 
 | t (s) | Estado | Resultado |
 |---|---|---|
@@ -2342,8 +2356,8 @@ entrega do Scheduler, não do laço.
 #### Resultado
 
 - `t_escalation` = **6,23 s** — dominado pelo Execute, que tenta a remediação antes de falhar; no C4 a escalação leva ~0,5 s porque nada é tentado. Na série de 10 rodadas (`results/three-state/`): **6,03 s** ± 0,13, 10 de 10 aprovadas
-- `state = S_violation` preservado, com `remediation_status = failed` e `remediation_error` contendo o `AccessDenied` do provider (Property 24)
-- `github_issue_url` gravado na mesma linha pela Escalation Lambda (Property 22), issue #217 — fechada pelo próprio teste
+- `state = S_violation` preservado, com `remediation_status = failed` e `remediation_error` contendo o `AccessDenied` do provider (Propriedade 24)
+- `github_issue_url` gravado na mesma linha pela Lambda de escalação (Propriedade 22), issue #217 — fechada pelo próprio teste
 - Bucket permaneceu violado; nenhuma rodada de verificação foi agendada para a remediação que falhou
 - AUDIT: nenhuma execução falha além da esperada
 
@@ -2678,7 +2692,7 @@ São **13 alarmes**, todos com ação no tópico (alarme e volta a OK):
 | `stream-dlq` | Um registro de stream (controle ou exceção) foi abandonado depois das tentativas | A mensagem identifica o lote (shard e intervalo de sequência), **não** traz o registro. Ler o log da Lambda para achar o item, corrigir a causa e reescrevê-lo: uma nova escrita gera um novo registro. Para exceção, regravar a linha; para controle, `deploy_control.sh` |
 | `escalation-dlq` | Uma escalação não virou issue depois de 3 tentativas | Conferir o token do GitHub no SSM; reprocessar a mensagem |
 | `<função>-errors` (5) | Uma Lambda **caiu** (timeout, memória, erro de runtime) — falhas estruturadas não contam aqui | Ler o log da função; no Execute, verificar o tempo do `tofu` |
-| `executions-timed-out` | Uma execução estourou os 600 s globais | Rever a cadeia de timeouts (*Property 28*): um controle novo pode ter mudado o pior caso |
+| `executions-timed-out` | Uma execução estourou os 600 s globais | Rever a cadeia de timeouts (*Propriedade 28*): um controle novo pode ter mudado o pior caso |
 | `executions-throttled` | O Step Functions limitou execuções: rajada acima da cota da conta | Ver o volume de eventos no painel; considerar agrupar eventos |
 
 **Três falhas silenciosas foram fechadas junto com os alarmes**:
@@ -2754,7 +2768,7 @@ Esta seção registra lacunas **identificadas e não fechadas**, com a justifica
 
 `QueryControls` (integração SDK, que não pagina automaticamente) lê apenas a primeira página de 1 MB. Irrelevante com 6 controles; ao crescer, controles seriam detectados pela regra mas omitidos da avaliação. Fechar exige paginação explícita no grafo ou, preferencialmente, um GSI por `cloudtrail_event` que substitua o scan por query — mudança no caminho medido, por isso não feita depois da série final.
 
-### L3. Pseudo-ARN de recursos account-level
+### L3. Pseudo-ARN de recursos de conta
 
 Recursos sem ARN nomeável (ex: EBS encryption by default) usam o identificador sintético `arn:aws:{region}:{account_id}`, que não é um ARN AWS válido. É a chave usada na consulta de exceções e no `violations_log`: uma exceção cadastrada em qualquer outro formato é silenciosamente ignorada e o recurso é remediado apesar da aprovação.
 
