@@ -28,7 +28,8 @@ EventBridge detecta e dispara o loop de compliance
 │              → Classifica: nominal / exceção / violação   │
 │                                                          │
 │  4. Plan     → decide a ação para cada violação:         │
-│              detecção → remedia; verificação → escala    │
+│              detecção → remedia (salvo disjuntor ou      │
+│              controle detectivo); verificação → escala   │
 │                                                          │
 │  5. Execute  → Remedia com OpenTofu (HCL do S3)          │
 │              (falhou → Escalate: cria GitHub Issue)      │
@@ -82,7 +83,7 @@ recurso que o Analyze classificou e as ações que aquele controle declarou, e u
 ligada à violação que a motivou.
 
 Como o IAM intersecta session policy e role, a sessão nunca é mais ampla que a
-role, e a role de remediação é limitada às 8 APIs de configuração, à própria
+role, e a role de remediação é limitada a 10 APIs de configuração (8 do S3, 2 do EC2), à própria
 conta, com `Deny` sobre o bucket do CloudTrail e o do tfstate — o laço não
 reescreve a própria evidência. O cenário C10 demonstra: um `remediation.tf`
 adulterado apontando para outro bucket é barrado com `AccessDenied`.
@@ -96,13 +97,13 @@ adulterado apontando para outro bucket é barrado com `AccessDenied`.
 | Analyze | Lambda + OPA/Rego (arm64) | Avalia conformidade via fetcher genérico + `fetch_config` |
 | Execute | Lambda + OpenTofu (arm64) | Remedia violações via IaC declarativa |
 | Knowledge | DynamoDB (3 tabelas) | Controles, exceções e log de violações |
-| Escalação | SQS FIFO + Lambda + GitHub API | Cria issues para falhas de remediação |
+| Escalação | SQS FIFO + Lambda + GitHub API | Cria issues para as escalações (cinco motivos) e para os alarmes de operação |
 | Scheduler | EventBridge Scheduler | Re-avalia após expiração de exceções |
-| Controls Sync | DynamoDB Stream → Lambda | Atualiza a EventBridge rule ao inserir/modificar controles, excluindo eventos da própria remediação |
+| Controls Sync | DynamoDB Stream → Lambda | Regenera a regra do EventBridge ao inserir, modificar ou remover controles, excluindo eventos da própria remediação |
 
 ## Extensibilidade
 
-Adicionar um novo controle para um serviço já suportado **não requer rebuild de nenhuma Lambda ou infra**:
+Adicionar um novo controle que use leituras e ações já concedidas **não requer rebuild de nenhuma Lambda nem `apply` da infra**:
 
 1. Criar `controls/<control-id>/policy.rego`, `remediation.tf` e `control.json`
 2. Executar: `./scripts/deploy_control.sh <control-id>`
@@ -147,7 +148,10 @@ falha enquanto as duas coisas não baterem.
 │       ├── execute/                # Lambda Execute + IAM
 │       ├── escalation_queue/       # SQS FIFO + DLQ
 │       ├── escalation_lambda/      # Lambda Escalation + IAM
+│       ├── controls_sync/          # Lambda que regenera a regra do EventBridge
 │       ├── exception_scheduler/    # Lambda sync + EventBridge Scheduler
+│       ├── alerting/               # SNS → SQS dos alarmes → Lambda de escalação
+│       ├── operations/             # Alarmes, painel, fila intake-failures
 │       ├── opa_layer/              # Lambda Layer OPA binary
 │       └── tofu_layer/             # Lambda Layer OpenTofu binary
 ├── lambdas/
@@ -161,8 +165,9 @@ falha enquanto as duas coisas não baterem.
 │   ├── integration_test.py         # Testes end-to-end automatizados
 │   └── benchmark.py                # Agrega N execuções da suíte (n, desvio, IC 95%)
 └── tests/
-    ├── unit/                       # Testes unitários
-    └── property/                   # Property-based tests (Hypothesis)
+    ├── unit/                       # Testes unitários e estruturais do grafo
+    ├── property/                   # Property-based tests (Hypothesis)
+    └── contract/                   # Contratos: política × remediação, permissões, AWS
 ```
 
 ## Pré-requisitos
