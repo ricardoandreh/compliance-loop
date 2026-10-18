@@ -268,9 +268,9 @@ artefatos de build ignorados pelo git — precisam existir localmente antes do
 | Camada | O que cobre | Onde | Quantidade |
 |---|---|---|---|
 | Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, alarmes que viram issue, sincronização de exceções, reprocessamento do intake | `tests/unit`, `tests/property` | 142 |
-| Contrato | permissões de leitura da Analyze × leituras dos controles; remediação × política (OPA); padrão do EventBridge (identidades e origem forjada) e estado `ResolveResource` avaliados pela própria AWS | `tests/contract` | 26 |
+| Contrato | permissões de leitura da Analyze × leituras dos controles; remediação × política (OPA); padrão do EventBridge (identidades e origem forjada) e estado `ResolveResource` avaliados pela própria AWS; escrita na tabela de exceções só pelo papel `exception-writer` | `tests/contract` | 30 |
 | Políticas Rego | casos conformes, violados e entradas enganosas, por controle | `controls/*/policy_test.rego` | 44 |
-| Integração | 16 cenários contra a conta real | `scripts/integration_test.py` | 16 |
+| Integração | 17 cenários contra a conta real (o C11 ainda sem série) | `scripts/integration_test.py` | 17 |
 
 A rastreabilidade de cada requisito e de cada propriedade de corretude até a
 evidência que a sustenta está em
@@ -344,6 +344,7 @@ de remediação juntam os dois patamares de ambiente — separados, estão em *P
 | C8 | Remediação negada pelo IAM | S_violation preservado, escala com o erro | `t_escalation` 5,98s ± 0,77 |
 | C9 | Mesma violação repetida | Disjuntor escala na 4ª, sem remediar | `t_escalation` 0,73s ± 0,06 |
 | C10 | Template adulterado para outro bucket | Sessão escopada nega a escrita | 10/10 |
+| C11 | Exceção gravada fora do canal de aprovação | A tabela nega a escrita; a do papel `exception-writer` é aceita | ainda sem série |
 | AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4, C8, C9 e CTRL-06 | 10/10 |
 
 O **disjuntor disparou na quarta violação em 10 de 10 rodadas**: com limiar 3, as três

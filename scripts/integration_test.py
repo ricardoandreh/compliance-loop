@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Integration test runner for MAPE-K Compliance Automation Loop.
-Executes scenarios C1-C7 against the live AWS environment.
+Executes scenarios C1-C11 and CTRL-01..06 against the live AWS environment.
 Collects timing metrics per hypothesis (H1: tempo de exposição, with the MTTR as its
 component; H2: rastreabilidade; H3: convergência do laço).
 
@@ -23,12 +23,13 @@ from datetime import datetime, timezone
 # --- Config ---
 
 REGION = PREFIX = ENV = SFN_ARN = CONTROLS_TABLE = EXCEPTIONS_TABLE = VIOLATIONS_TABLE = None
+EXCEPTION_WRITER_ARN = None
 s3 = sfn = dynamodb = None
 WAIT_CLOUDTRAIL = 25
 
 
 def init(region, prefix, env):
-    global REGION, PREFIX, ENV, SFN_ARN, CONTROLS_TABLE, EXCEPTIONS_TABLE, VIOLATIONS_TABLE
+    global REGION, PREFIX, ENV, SFN_ARN, CONTROLS_TABLE, EXCEPTIONS_TABLE, VIOLATIONS_TABLE, EXCEPTION_WRITER_ARN
     global s3, sfn, dynamodb
     REGION, PREFIX, ENV = region, prefix, env
     acct = boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
@@ -36,6 +37,7 @@ def init(region, prefix, env):
     CONTROLS_TABLE = f"{PREFIX}-controls-{ENV}"
     EXCEPTIONS_TABLE = f"{PREFIX}-exceptions-{ENV}"
     VIOLATIONS_TABLE = f"{PREFIX}-violations-log-{ENV}"
+    EXCEPTION_WRITER_ARN = f"arn:aws:iam::{acct}:role/{PREFIX}-exception-writer-{ENV}"
     s3 = boto3.client("s3", region_name=REGION)
     sfn = boto3.client("stepfunctions", region_name=REGION)
     dynamodb = boto3.resource("dynamodb", region_name=REGION)
@@ -362,19 +364,38 @@ def query_violations(resource_arn):
     return sorted(resp["Items"], key=lambda x: x["timestamp"])
 
 
+TEST_APPROVER = "test-approver"
+
+
+def exceptions_writer(approver=TEST_APPROVER):
+    """The exceptions table, as the platform's approval channel sees it.
+
+    The table's resource policy denies every write that does not come through
+    the exception-writer role, so this runner grants exceptions the way the
+    platform would: assuming the role, with the approver as the session name,
+    which is what CloudTrail records next to each write.
+    """
+    creds = boto3.client("sts", region_name=REGION).assume_role(
+        RoleArn=EXCEPTION_WRITER_ARN, RoleSessionName=approver)["Credentials"]
+    return boto3.resource(
+        "dynamodb", region_name=REGION, aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"],
+    ).Table(EXCEPTIONS_TABLE)
+
+
 def put_exception(control_id, resource_arn, valid_until):
     eid = f"exc-test-{uuid.uuid4().hex[:8]}"
-    dynamodb.Table(EXCEPTIONS_TABLE).put_item(Item={
+    exceptions_writer().put_item(Item={
         "exception_id": eid, "control_id": control_id,
         "resource_arn": resource_arn, "valid_until": valid_until,
-        "justification": "Integration test", "approved_by": "test-approver",
+        "justification": "Integration test", "approved_by": TEST_APPROVER,
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     })
     return eid
 
 
 def delete_exception(eid):
-    dynamodb.Table(EXCEPTIONS_TABLE).delete_item(Key={"exception_id": eid})
+    exceptions_writer().delete_item(Key={"exception_id": eid})
 
 
 # --- Test Scenarios ---
@@ -1183,6 +1204,55 @@ def test_ctrl_ebs_volume_encrypted():
             ec2.enable_ebs_encryption_by_default()
 
 
+def test_c11():
+    """C11: Exceção gravada fora do canal de aprovação → negada pela tabela"""
+    # The runner's own credentials can write DynamoDB (it is an administrator of
+    # the test account); the table's resource policy must still refuse them.
+    # The denied writes produce no stream record. The one written through the
+    # channel does, and removing it while still valid is a revoke that
+    # re-evaluates the resource — so the resource is a real, compliant bucket,
+    # never an invented ARN, or the re-evaluation fails and escalates.
+    from botocore.exceptions import ClientError
+    name = f"compliance-inttest-c11-{int(time.time())}"
+    arn = f"arn:aws:s3:::{name}"
+    eid = f"exc-test-{uuid.uuid4().hex[:8]}"
+    item = {"exception_id": eid, "control_id": "ctrl-s3-public-block", "resource_arn": arn,
+            "valid_until": int(time.time()) + 900, "justification": "Integration test (C11)",
+            "approved_by": "nobody"}
+    table = dynamodb.Table(EXCEPTIONS_TABLE)
+    for op, call in [("PutItem", lambda: table.put_item(Item=item)),
+                     ("UpdateItem", lambda: table.update_item(
+                         Key={"exception_id": eid}, UpdateExpression="SET approved_by = :a",
+                         ExpressionAttributeValues={":a": "nobody"})),
+                     ("DeleteItem", lambda: table.delete_item(Key={"exception_id": eid}))]:
+        try:
+            call()
+        except ClientError as e:
+            code = e.response["Error"]["Code"]
+            assert code == "AccessDeniedException", f"{op} outside the channel failed with {code}"
+            log(f"{op} outside the channel: denied", "OK")
+        else:
+            raise AssertionError(f"{op} outside the channel was accepted")
+    assert "Item" not in table.get_item(Key={"exception_id": eid}), "denied write left a row"
+
+    create_bucket(name)
+    granted = None
+    try:
+        # Let the CreateBucket evaluation finish before the grant lands.
+        time.sleep(WAIT_CLOUDTRAIL)
+        wait_quiesce()
+        granted = put_exception("ctrl-s3-public-block", arn, int(time.time()) + 900)
+        assert "Item" in table.get_item(Key={"exception_id": granted}), "write through the channel left no row"
+        log("PutItem through the channel: accepted", "OK")
+    finally:
+        if granted:
+            delete_exception(granted)
+            wait_for_revocation_cascade()
+        delete_bucket(name)
+    log("C11 PASSED", "OK")
+    return True, {}
+
+
 TESTS = [
     ("C1", "Acesso público do S3 desligado pelo console → remediação", test_c1),
     ("C2", "Acesso público do S3 com exceção ativa → S_exception, sem remediar", test_c2),
@@ -1194,6 +1264,7 @@ TESTS = [
     ("C8", "Remediação negada pelo IAM → escalação com estado preservado", test_c8),
     ("C9", "Mesma violação repetida → disjuntor escala na 4ª", test_c9),
     ("C10", "Template adulterado para outro bucket → sessão escopada nega", test_c10),
+    ("C11", "Exceção gravada fora do canal de aprovação → negada pela tabela", test_c11),
     ("CTRL-01", "S3: acesso público bloqueado", test_ctrl_s3_public_block),
     ("CTRL-02", "S3: TLS obrigatório na bucket policy", test_ctrl_s3_ssl_only),
     ("CTRL-03", "S3: versioning ativo", test_ctrl_s3_versioning),

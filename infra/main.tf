@@ -34,9 +34,11 @@ module "alerting" {
 }
 
 module "knowledge" {
-  source       = "./modules/knowledge"
-  project_name = var.project_name
-  environment  = var.environment
+  source                      = "./modules/knowledge"
+  project_name                = var.project_name
+  environment                 = var.environment
+  account_id                  = data.aws_caller_identity.current.account_id
+  exception_writer_principals = var.exception_writer_principals
 }
 
 module "escalation_queue" {
@@ -47,9 +49,10 @@ module "escalation_queue" {
 }
 
 module "monitoring" {
-  source       = "./modules/monitoring"
-  project_name = var.project_name
-  environment  = var.environment
+  source               = "./modules/monitoring"
+  project_name         = var.project_name
+  environment          = var.environment
+  exceptions_table_arn = module.knowledge.exceptions_table_arn
 }
 
 module "opa_layer" {
@@ -175,6 +178,7 @@ output "state_machine_name" { value = module.orchestration.state_machine_name }
 output "controls_table_name" { value = module.knowledge.controls_table_name }
 output "exceptions_table_name" { value = module.knowledge.exceptions_table_name }
 output "violations_log_table_name" { value = module.knowledge.violations_log_table_name }
+output "exception_writer_role_arn" { value = module.knowledge.exception_writer_role_arn }
 output "eventbridge_rule_name" { value = module.orchestration.eventbridge_rule_name }
 output "analyze_function_name" { value = module.analyze.function_name }
 output "execute_function_name" { value = module.execute.function_name }

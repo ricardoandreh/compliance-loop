@@ -1,5 +1,12 @@
 variable "project_name" { type = string }
 variable "environment" { type = string }
+variable "account_id" { type = string }
+
+variable "exception_writer_principals" {
+  description = "Principals allowed to assume the exception-writer role; empty means any principal of the account that IAM lets assume it"
+  type        = list(string)
+  default     = []
+}
 
 resource "aws_dynamodb_table" "controls" {
   name         = "${var.project_name}-controls-${var.environment}"
@@ -72,6 +79,70 @@ resource "aws_dynamodb_table" "exceptions" {
   tags = { Name = "${var.project_name}-exceptions-${var.environment}", Environment = var.environment, ManagedBy = "OpenTofu" }
 }
 
+# --- Who may write an exception ---
+#
+# The loop obeys every row of the exceptions table: whoever can write a row can
+# switch remediation off for a resource. Granting an exception (who may ask, who
+# approves, for how long) belongs to the platform that consumes the loop, not to
+# the loop (L20); what the loop can guarantee is that the platform's channel is
+# the only way in. The writer role is that channel, and the table's own resource
+# policy denies every write that does not come through it, whatever the caller's
+# IAM policies allow.
+#
+# The channel attests approved_by. CloudTrail records each write as a data event
+# with the session that made it, so the row and the trail can be checked against
+# each other. Whoever can change this policy (dynamodb:PutResourcePolicy) or the
+# role's trust is still above it: the guarantee moves to IAM administration, it
+# does not disappear.
+resource "aws_iam_role" "exception_writer" {
+  name = "${var.project_name}-exception-writer-${var.environment}"
+  # Without a list, trust the account: IAM still decides who may sts:AssumeRole.
+  # The platform narrows it to its approval pipeline (e.g. the CI role of an
+  # exceptions repository).
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { AWS = length(var.exception_writer_principals) > 0 ? var.exception_writer_principals : ["arn:aws:iam::${var.account_id}:root"] }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+  max_session_duration = 3600
+  tags                 = { Name = "${var.project_name}-exception-writer", Environment = var.environment, ManagedBy = "OpenTofu" }
+}
+
+locals {
+  exception_write_actions = [
+    "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:BatchWriteItem",
+    "dynamodb:PartiQLInsert", "dynamodb:PartiQLUpdate", "dynamodb:PartiQLDelete",
+  ]
+}
+
+resource "aws_iam_role_policy" "exception_writer" {
+  name = "exceptions-write"
+  role = aws_iam_role.exception_writer.id
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Action = concat(local.exception_write_actions, ["dynamodb:GetItem"]), Resource = aws_dynamodb_table.exceptions.arn }]
+  })
+}
+
+resource "aws_dynamodb_resource_policy" "exceptions" {
+  resource_arn = aws_dynamodb_table.exceptions.arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "OnlyTheExceptionWriterWrites"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = local.exception_write_actions
+      Resource  = aws_dynamodb_table.exceptions.arn
+      # aws:PrincipalArn of an assumed-role session is the role's ARN.
+      Condition = { ArnNotEquals = { "aws:PrincipalArn" = aws_iam_role.exception_writer.arn } }
+    }]
+  })
+}
+
 resource "aws_dynamodb_table" "violations_log" {
   name         = "${var.project_name}-violations-log-${var.environment}"
   billing_mode = "PAY_PER_REQUEST"
@@ -118,5 +189,6 @@ output "controls_stream_arn" { value = aws_dynamodb_table.controls.stream_arn }
 output "exceptions_table_name" { value = aws_dynamodb_table.exceptions.name }
 output "exceptions_table_arn" { value = aws_dynamodb_table.exceptions.arn }
 output "exceptions_stream_arn" { value = aws_dynamodb_table.exceptions.stream_arn }
+output "exception_writer_role_arn" { value = aws_iam_role.exception_writer.arn }
 output "violations_log_table_name" { value = aws_dynamodb_table.violations_log.name }
 output "violations_log_table_arn" { value = aws_dynamodb_table.violations_log.arn }

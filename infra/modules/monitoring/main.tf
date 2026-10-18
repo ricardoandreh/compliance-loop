@@ -1,5 +1,6 @@
 variable "project_name" { type = string }
 variable "environment" { type = string }
+variable "exceptions_table_arn" { type = string }
 
 resource "aws_s3_bucket" "cloudtrail_logs" {
   bucket = "${var.project_name}-cloudtrail-logs-${var.environment}"
@@ -54,6 +55,18 @@ resource "aws_cloudtrail" "s3_events" {
   event_selector {
     read_write_type           = "WriteOnly"
     include_management_events = true
+  }
+
+  # Every write to the exceptions table, with the session that made it: the
+  # evidence of which channel granted an exception, independent of the row's
+  # own approved_by.
+  event_selector {
+    read_write_type           = "WriteOnly"
+    include_management_events = false
+    data_resource {
+      type   = "AWS::DynamoDB::Table"
+      values = [var.exceptions_table_arn]
+    }
   }
 
   tags       = { Name = "${var.project_name}-s3-events", Environment = var.environment }

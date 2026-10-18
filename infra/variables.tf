@@ -28,3 +28,9 @@ variable "github_repo" {
   type        = string
   default     = ""
 }
+
+variable "exception_writer_principals" {
+  description = "Principals allowed to assume the exception-writer role (the platform's approval channel); empty trusts the account and leaves it to IAM"
+  type        = list(string)
+  default     = []
+}

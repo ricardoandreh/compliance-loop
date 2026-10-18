@@ -170,7 +170,15 @@ def depth(sqs, queue):
 
 
 def sync(s):
-    ddb, sqs, cw = s.resource("dynamodb").Table(EXCEPTIONS), s.client("sqs"), s.client("cloudwatch")
+    sqs, cw = s.client("sqs"), s.client("cloudwatch")
+    # Only the exception-writer role may write the table (its resource policy
+    # denies everyone else), so the bad row goes in the way a real one would.
+    account = s.client("sts").get_caller_identity()["Account"]
+    creds = s.client("sts").assume_role(RoleArn=f"arn:aws:iam::{account}:role/compliance-loop-exception-writer-dev",
+                                        RoleSessionName="fault-injection")["Credentials"]
+    ddb = boto3.Session(region_name=REGION, aws_access_key_id=creds["AccessKeyId"],
+                        aws_secret_access_key=creds["SecretAccessKey"],
+                        aws_session_token=creds["SessionToken"]).resource("dynamodb").Table(EXCEPTIONS)
     alarms = [f"{P}-exception-sync-failures", f"{P}-stream-dlq"]
     queue = sqs.get_queue_url(QueueName=STREAM_DLQ)["QueueUrl"]
 
