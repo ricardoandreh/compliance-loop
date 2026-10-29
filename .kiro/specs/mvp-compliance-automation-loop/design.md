@@ -331,7 +331,7 @@ O padrão gerado pelo `controls-sync` inclui ainda uma cláusula de identidade: 
 - Definição em JSONata (`infra/state_machine_definition.json`); `Choice` pelos três estados formais, e o `PlanAction` decide a ação
 - SDK integrations diretas para DynamoDB, SQS e o próprio Step Functions (sem Lambda intermediária); o Step Functions é o único componente que grava no `violations_log`
 - Log de execução em `level: ALL` com `includeExecutionData`, retenção de 30 dias
-- Timeout global de 600 segundos (ver a cadeia de timeouts em *Propriedades de Corretude*)
+- Timeout global de 600 segundos (ver a cadeia de timeouts em *Propriedades de Corretude*) *(revisado: 660 s, com a tarefa do Execute em 100 s; L22)*
 - Estados terminais explícitos: `ExecutionSucceeded` (Succeed) e `ExecutionFailed` (Fail com `Error: ComplianceEscalation`)
 - **Laço fechado em duas rodadas**: uma rodada de detecção que remediou algo agenda exatamente uma rodada de verificação (`mode = verify`), que confirma `S_nominal` ou escala — nunca remedeia de novo. Ver *Fechamento do laço em duas rodadas*
 - Após o Map state, `EvaluateOutcome` verifica se algum controle foi escalado — se sim, a execução termina como FAILED
@@ -344,7 +344,7 @@ A escolha não é por custo — nesse quesito o Express ganharia —, e sim por 
 |---|---|---|---|
 | **Histórico consultável por API** | `DescribeExecution`, `GetExecutionHistory` e `ListExecutions`, por 90 dias | Não disponíveis; o histórico existe apenas nos CloudWatch Logs | Toda a medição — `integration_test.py`, `benchmark.py`, `classify_cold_starts.py`, `verification_consistency.py` — lê o histórico por API. Na auditoria (H2), a issue aponta o ARN da execução, que o Standard mantém consultável |
 | **Semântica de execução** | Exatamente uma vez por disparo | Pelo menos uma vez quando iniciada de forma assíncrona (EventBridge, `startExecution`) | Uma violação deve gerar uma remediação, uma linha de `S_violation` e, se falhar, uma issue. Uma execução duplicada teria outro `violation_id` — gerado pelo Analyze a cada avaliação —, então nem a deduplicação da fila FIFO nem a de issues a pegariam: duas linhas e duas escalações para o mesmo incidente |
-| **Duração máxima** | 1 ano | 5 minutos | O `TimeoutSeconds` global é 600 s porque o pior caso serial é 550 s (ver *Propriedade 28*). O caso típico caberia com folga — a execução mais longa de uma rodada da suíte levou 19,4 s —, mas o limite existiria só no caso típico |
+| **Duração máxima** | 1 ano | 5 minutos | O `TimeoutSeconds` global é 600 s porque o pior caso serial é 550 s (ver *Propriedade 28*; *revisado*: 660 s para 600 s de pior caso, L22). O caso típico caberia com folga — a execução mais longa de uma rodada da suíte levou 19,4 s —, mas o limite existiria só no caso típico |
 
 As três propriedades vêm da documentação do Step Functions; a primeira e a segunda são exercitadas por construção em cada execução da suíte, e a terceira pelo orçamento de timeouts.
 
@@ -368,9 +368,10 @@ A máquina de estados usa JSONata e processa múltiplos controles via Map state.
 ResolveResource          # extrai resource_id/resource_arn dos request_parameters do CloudTrail;
                          # normaliza mode (detect|verify) e a origem da rodada de verificação
   → RouteControlLookup   # Choice, em ordem:
-       ├─ mode = verify e há controles → InvokeAnalyze   # lê imediatamente: consistência medida
-       │                          # usa as definições dos controles remediados que a rodada
-       │                          # de detecção carregou; não há consulta a fazer
+       ├─ mode = verify e há control_ids → LoadVerificationControls   # batchGetItem na tabela controls
+       │     → CheckVerificationControlsLoaded → InvokeAnalyze   # lê imediatamente: consistência medida
+       │                          # as definições vêm da tabela, nunca da entrada (L22); se faltar
+       │                          # algum controle nomeado → UnverifiableRemediationEscalation
        ├─ mode = verify sem controles → UnverifiableRemediationEscalation → ExecutionFailed
        │                          # uma verificação sem controles reavaliaria nada e passaria
        ├─ input tem control_id (re-avaliação de exceção) → GetControlById
@@ -428,7 +429,7 @@ Até esta versão, o laço se fechava por **eco**: cada escrita do Execute (`Put
 O laço agora é explícito:
 
 1. **O eco é filtrado na origem.** A regra do EventBridge descarta eventos cuja sessão foi emitida pela role de remediação, que o Execute assume para cada violação (ver *Autoridade por incidente*; antes da session policy, era a role da própria Lambda). Toda escrita de remediação chega ao CloudTrail como `AssumedRole` dessa role — verificado no CloudTrail da conta — enquanto mudanças humanas chegam como `IAMUser`, **sem** `sessionContext.sessionIssuer`.
-2. **A rodada de detecção agenda uma única verificação.** Se remediou algo, ela inicia a própria máquina em `mode = verify`, levando as definições dos controles remediados e o mapa controle → `violation_id`.
+2. **A rodada de detecção agenda uma única verificação.** Se remediou algo, ela inicia a própria máquina em `mode = verify`, levando as definições dos controles remediados e o mapa controle → `violation_id`. *Revisado (L22)*: leva só os `control_id`; a rodada de verificação relê as definições na tabela `controls`. A execução recebe um nome derivado da rodada de detecção, então uma repetição do `startExecution` não cria uma segunda verificação.
 3. **A rodada de verificação não remedeia.** Reavalia imediatamente exatamente os controles remediados e registra `S_nominal` ligado à violação que confirma, ou registra a não convergência e escala.
 
 Um incidente custa, portanto, **no máximo duas execuções**, e oscilar é estruturalmente impossível. Essas propriedades são verificadas estaticamente sobre o grafo em `tests/unit/test_state_machine.py`: a classificação tem exatamente os três estados formais e nenhuma regra por rodada; toda saída de `RegisterViolation` passa pelo `PlanAction`, cuja primeira regra manda a rodada de verificação para a escalação, de modo que ela não alcança `InvokeExecute`; e só uma rodada de detecção agenda verificação.
@@ -538,6 +539,8 @@ def query_exception(control_id, resource_arn):
     )
     return response['Items'][0] if response['Items'] else None
 ```
+
+**Revisado (L21)**: o índice só localiza os candidatos. Cada um é relido na tabela com `GetItem` e `ConsistentRead`, e só vale a linha sem status ou com status `active` e `valid_until` no futuro (`is_live_grant`). O índice é eventualmente consistente e não projeta o status: sem a releitura, uma exceção revogada continuava valendo até o `valid_until`.
 
 **Política Rego** (`s3_public_access.rego`):
 ```rego
@@ -771,6 +774,7 @@ def lambda_handler(event, context):
 
 **Padrões de acesso**:
 - Query no GSI `resource-control-index` pela chave exata (`resource_arn`, `control_id`), com `FilterExpression valid_until > now` e **sem `Limit`**: o `Limit` é aplicado antes do filtro e poderia descartar uma exceção válida atrás de uma expirada
+- *Revisado (L21)*: `GetItem` com `ConsistentRead` de cada candidato na tabela, que é quem decide; o índice só localiza
 - TTL apaga os itens expirados em até 48 h — o comportamento não depende da deleção física
 - DynamoDB Stream (`NEW_AND_OLD_IMAGES`) → `exception-scheduler-sync`
 
@@ -789,6 +793,8 @@ O input enviado ao Step Functions carrega o `control_id` da exceção (não um `
 Este mecanismo substituiu a abordagem anterior baseada em EventBridge Pipe + DynamoDB TTL, que dependia da deleção física de itens expirados — operação com latência não determinística de até 48h. O novo mecanismo reduz essa latência em ordens de grandeza, mas **não é preciso ao segundo**: medido em nove séries de 10 execuções (C3), o disparo ocorre em média **17,9 s a 29,5 s após o instante agendado**, conforme a série, com extremos de 0,1 s e 48,1 s. O ganho real é de latência **limitada e observável** (dezenas de segundos) contra **ilimitada** (até 48 h) — não de determinismo.
 
 Isso garante que, após expiração de uma exceção, o recurso seja automaticamente re-avaliado pelo loop MAPE-K completo, mantendo o invariante arquitetural de que o Analyze é sempre o componente decisor.
+
+**Revogação antecipada.** A plataforma revoga uma exceção antes do `valid_until` de duas formas: muda o status para `revoked`, mantendo a linha, ou apaga a linha. Nas duas, a `exception-scheduler-sync` apaga o agendamento e reavalia o recurso na hora (`exception_revoked` ou `exception_deleted`). A reavaliação só remedia se o Analyze deixar de ver a exceção, e por isso ele decide pela linha na tabela, lida com consistência forte, e não pelo índice (L21; cenário C12).
 
 **Limitação conhecida — Latência do TTL**:
 
@@ -1274,7 +1280,7 @@ PARA TODA configuração de bucket S3, a política Rego `s3_public_access` DEVE 
 
 PARA TODO control_id e resource_arn, o Analyze DEVE consultar a tabela de exceções e retornar apenas as exceções com valid_until > instante atual.
 
-**Revisado**: a consulta usa o GSI `resource-control-index` pela chave exata (`resource_arn`, `control_id`), sem `Limit` antes do filtro (requisitos 3.6 e 5.3 revisados).
+**Revisado**: a consulta usa o GSI `resource-control-index` pela chave exata (`resource_arn`, `control_id`), sem `Limit` antes do filtro (requisitos 3.6 e 5.3 revisados). Cada candidato é relido na tabela com `ConsistentRead`, e só conta a linha sem status ou com status `active` (L21; requisito 24.6).
 
 **Valida: requisitos 3.6, 5.8**
 
@@ -1413,6 +1419,8 @@ PARA TODO nome de bucket extraído de um evento do CloudTrail, o Monitor DEVE co
 
 PARA TODO timeout de componente (tarefa do Analyze > 75 s, tarefa do Execute > 90 s, execução inteira > 600 s), o Orchestrator DEVE registrar um erro de timeout e encerrar o fluxo.
 
+*Revisado (L22)*: tarefa do Execute > 100 s e execução inteira > 660 s.
+
 **Revisado**: encerrar em silêncio deixaria o recurso sem dono (requisito 17.4 revisado). O timeout do Analyze cai no `Catch` da tarefa e é escalado como falha do sistema; o do Execute vira `remediation_status = failed` e é escalado; o da execução inteira não tem estado que o capture e dispara o alarme `executions-timed-out`, que abre uma issue.
 
 A cadeia de timeouts é monotônica em dois ramos, cada um com folga para o cold start:
@@ -1421,6 +1429,8 @@ A cadeia de timeouts é monotônica em dois ramos, cada um com folga para o cold
 - **Analyze**: orçamento do OPA derivado do tempo restante (ver *Tratamento de Erros no Analyze*) ≤ Lambda Analyze (60 s) ≤ tarefa `InvokeAnalyze` no Step Functions (75 s). A tarefa fica **acima** da Lambda para que o retorno estruturado do handler vença a corrida contra o Step Functions
 
 O **global (600 s)** precisa cobrir o pior caso serial, porque `ProcessResults` roda com `MaxConcurrency=1`: `75 + n_controles × (90 + escritas ~5) = 550s` com 5 controles no mesmo evento — hoje o maior fan-out é o `CreateBucket`, com 4. Adicionar controles que compartilhem um evento CloudTrail, ou elevar o timeout do Execute, exige revisitar esse valor.
+
+**Revisado (L22)**: a tarefa do Execute estava em 90 s, igual à Lambda, e não acima dela como no ramo do Analyze. Se a tarefa estourasse, a Lambda podia continuar aplicando enquanto o log gravava `failed`, sem verificação agendada. A tarefa passou a 100 s, e o global a 660 s: `75 + 5 × (100 + 5) = 600 s`. Um teste estrutural (`test_execute_task_outlasts_the_lambda`) compara a tarefa com o timeout da Lambda no Terraform e o global com esse orçamento.
 
 **Valida: requisitos 17.4**
 
@@ -1485,6 +1495,7 @@ Dimensionamento correspondente:
 | Timeout da Lambda Analyze | 60s | > `n_controles x OPA_MAX_TIMEOUT`; `CreateBucket` já aciona 4 controles S3 |
 | `InvokeAnalyze.TimeoutSeconds` | 75s | **acima** do timeout da Lambda, para que o retorno estruturado da Lambda vença a corrida |
 | Timeout global da máquina | 600s | `MaxConcurrency=1` ⇒ pior caso serial: `75 + 5 x (90 + 5) = 550s` |
+| *Revisado (L22)*: `InvokeExecute.TimeoutSeconds` e global | 100s e 660s | a tarefa **acima** da Lambda Execute (90 s), como no Analyze; pior caso serial `75 + 5 x (100 + 5) = 600s` |
 
 O valor anterior (Lambda 15s) não cobria sequer o pior caso nominal de 4 controles (20s), e o timeout global de 300s já era insuficiente antes desta correção (410s com o timeout de 30s do `InvokeAnalyze`).
 
@@ -1514,7 +1525,7 @@ O valor anterior (Lambda 15s) não cobria sequer o pior caso nominal de 4 contro
 - Leitura da tabela `controls` (`QueryControls` / `GetControlById`): `Retry` em `DynamoDb.ProvisionedThroughputExceededException`, `DynamoDb.RequestLimitExceededException` e `DynamoDb.InternalServerErrorException` + `Catch` → `ControlLookupFailedEscalation`. **Correção**: o `Retry` anterior usava o prefixo `DynamoDB.`, que é o da integração otimizada; a integração `aws-sdk` nomeia os erros `DynamoDb.*` (observado com `test-state` nas duas integrações), então o retry nunca casava e um throttling na leitura dos controles escalava na primeira tentativa. `tests/unit/test_state_machine.py` agora exige o prefixo de cada integração
 - Rodada de verificação que não pode verificar tudo: não iniciou, carregaria menos controles que os remediados, ou chegou sem controles → `UnverifiableRemediationEscalation`. Antes, uma rodada de verificação sem controles reavaliava nada e terminava `SUCCEEDED`
 - Todo `Choice` tem `Default` e todo estado é alcançável — verificado estaticamente
-- Global timeout (600s): encerra a execução como `FAILED`
+- Global timeout (600s; *revisado*: 660 s): encerra a execução como `FAILED`
 
 **Nota sobre retry nas escritas**: o Step Functions aplica retry *default* apenas às integrações otimizadas de **Lambda**. Integrações DynamoDB e SQS **não** têm retry implícito — o retry precisa ser declarado estado a estado. Hoje **toda** escrita declara `Retry`: as gravações de auditoria apenas sobre erros transitórios (`ProvisionedThroughputExceeded`, `RequestLimitExceeded`, `InternalServerError`), para que um `ConditionalCheckFailed` ou um erro de validação não seja repetido, e as escalações sobre `States.ALL`, já que uma mensagem que não entra na fila merece nova tentativa qualquer que seja a causa — o `MessageDeduplicationId` torna a repetição idempotente, então não há risco de escalar duas vezes. O que permanece em aberto é o `Catch`: nenhum desses estados o declara, e o `ProcessResults` também não (ver L1).
 
@@ -1533,6 +1544,8 @@ O `MessageDeduplicationId` é o `violation_id` (uuid4 por avaliação), **não**
 A deduplicação de **issues** continua existindo, uma camada acima, na Lambda de escalação: primeiro `open_issue_from_log()`, que acha no próprio `violations_log` (GSI por recurso, sem `Limit`) a issue ainda aberta deste recurso e controle — sem o atraso de indexação da Search API (L5); só para falhas de sistema, sem linha própria, `find_open_issue()` busca pelo título. É a camada correta para deduplicação semântica — a do SQS faz apenas o que lhe cabe, proteger contra entrega duplicada da mesma mensagem.
 
 O `MessageGroupId` permanece `resource_id#control_id`, serializando o processamento por par e evitando que duas escalações concorrentes criem duas issues.
+
+*Revisado (L22)*: as duas escalações fora do Map (`AnalyzeFailedEscalation` e `ControlLookupFailedEscalation`) usavam `$now()` no `violation_id` sintético e no `MessageDeduplicationId`. Se o Step Functions reavaliar a expressão a cada tentativa — a documentação não diz —, um retry depois de um envio que chegou gera outra chave, e a fila não o descarta. As duas passaram a usar o nome da execução, como a `UnverifiableRemediationEscalation` já fazia.
 
 **Falhas de escrita no DynamoDB**:
 - Update violations_log with github_issue_id fails: Log error to CloudWatch, continue (issue already created)
@@ -1754,6 +1767,7 @@ O fetcher genérico via `fetch_config` é o meio-termo: parametriza a chamada bo
 - S3: `GetBucketPublicAccessBlock`, `GetBucketPolicy`, `GetEncryptionConfiguration`, `GetBucketVersioning` — em qualquer bucket, com `aws:ResourceAccount` igual à conta (um controle adulterado não lê bucket de outra conta)
 - EC2: `DescribeVolumes` e `GetEbsEncryptionByDefault` — sem escopo de recurso, porque essas APIs não o aceitam (ver a correção abaixo)
 - `s3:GetObject` só em `controls/*/policy.rego` do bucket de políticas, e `dynamodb:Query` só no índice `resource-control-index` da tabela de exceções
+- *Revisado (L21)*: `dynamodb:GetItem` na tabela de exceções, só leitura, para reler cada exceção que o índice localiza
 
 **Escrita (Execute)**: a role de remediação é o teto, e cada remediação recebe uma sessão restrita ao recurso classificado e às ações do controle — ver *Autoridade por incidente*.
 
@@ -2707,7 +2721,7 @@ São **13 alarmes**, todos com ação no tópico (alarme e volta a OK):
 | `stream-dlq` | Um registro de stream (controle ou exceção) foi abandonado depois das tentativas | A mensagem identifica o lote (shard e intervalo de sequência), **não** traz o registro. Ler o log da Lambda para achar o item, corrigir a causa e reescrevê-lo: uma nova escrita gera um novo registro. Para exceção, regravar a linha; para controle, `deploy_control.sh` |
 | `escalation-dlq` | Uma escalação não virou issue depois de 3 tentativas | Conferir o token do GitHub no SSM; reprocessar a mensagem |
 | `<função>-errors` (5) | Uma Lambda **caiu** (timeout, memória, erro de runtime) — falhas estruturadas não contam aqui | Ler o log da função; no Execute, verificar o tempo do `tofu` |
-| `executions-timed-out` | Uma execução estourou os 600 s globais | Rever a cadeia de timeouts (*Propriedade 28*): um controle novo pode ter mudado o pior caso |
+| `executions-timed-out` | Uma execução estourou o timeout global (660 s) | Rever a cadeia de timeouts (*Propriedade 28*): um controle novo pode ter mudado o pior caso |
 | `executions-throttled` | O Step Functions limitou execuções: rajada acima da cota da conta | Ver o volume de eventos no painel; considerar agrupar eventos |
 
 **Três falhas silenciosas foram fechadas junto com os alarmes**:
@@ -2805,7 +2819,7 @@ O TTL sobre `valid_until` permanece habilitado para limpeza eventual. Como a del
 
 Conta e região únicas, 6 controles em 2 serviços, violações sintéticas induzidas pelo runner. Não foram exercitados: operação multi-conta (AWS Organizations), nem controles cujo `fetch_config` exija paginação da API de origem.
 
-Concorrência sobre o mesmo recurso **foi** exercitada — de forma incidental, não planejada. Em toda execução do C1 e do C5, `CreateBucket` e a violação induzida pelo teste chegam juntos, e duas execuções remedeiam `ctrl-s3-public-block` no mesmo bucket em paralelo. O resultado converge, porque a remediação é declarativa e idempotente, mas tem duas consequências observáveis: o Execute roda duas vezes para o mesmo ajuste, e o `violations_log` registra **dois** `S_violation` (e duas confirmações `S_nominal`) para o que operacionalmente é uma única violação. Com o laço fechado em duas rodadas, as confirmações por eco deixam de existir, mas a corrida entre as duas mudanças *externas* permanece: são duas rodadas de detecção, cada uma com sua rodada de verificação. O log é correto como registro de *avaliações*; contar violações por número de linhas superestima incidentes. Concorrência adversarial — remediações não idempotentes, ou duas remediações que escrevem estados diferentes — não foi exercitada; o merge de policy do ssl-only é o candidato mais sensível a isso. A generalização do fetcher genérico está demonstrada para 2 serviços (S3, EC2), mas com força de evidência desigual: as séries repetidas (10 execuções cada) cobrem **apenas S3**. O controle de EC2 (`ctrl-ebs-encryption-default`) tem teste na `integration_test.py` (CTRL-05), incluído depois das séries e exercitado uma vez, a frio. Portanto, a afirmação sustentada por medição repetida é sobre S3; EC2 sustenta a afirmação de *extensibilidade do mecanismo* — o mesmo laço, com verificação e auditoria, sobre outro serviço e um recurso de conta —, não a de desempenho.
+Concorrência sobre o mesmo recurso **foi** exercitada — de forma incidental, não planejada. Em toda execução do C1 e do C5, `CreateBucket` e a violação induzida pelo teste chegam juntos, e duas execuções remedeiam `ctrl-s3-public-block` no mesmo bucket em paralelo. O resultado converge, porque a remediação é declarativa e idempotente, mas tem duas consequências observáveis: o Execute roda duas vezes para o mesmo ajuste, e o `violations_log` registra **dois** `S_violation` (e duas confirmações `S_nominal`) para o que operacionalmente é uma única violação. Com o laço fechado em duas rodadas, as confirmações por eco deixam de existir, mas a corrida entre as duas mudanças *externas* permanece: são duas rodadas de detecção, cada uma com sua rodada de verificação. O log é correto como registro de *avaliações*; contar violações por número de linhas superestima incidentes. Concorrência adversarial — remediações não idempotentes, ou duas remediações que escrevem estados diferentes — não foi exercitada; o merge de policy do ssl-only é o candidato mais sensível a isso. A generalização do fetcher genérico está demonstrada para 2 serviços (S3, EC2), mas com força de evidência desigual: as séries repetidas (10 execuções cada) cobrem **apenas S3**. O controle de EC2 (`ctrl-ebs-encryption-default`) tem teste na `integration_test.py` (CTRL-05), incluído a partir da série de três estados e exercitado em 10 de 10 rodadas em cada uma das séries seguintes (os `summary.json` de cada série registram o CTRL-05 com `t_remediation` da mesma ordem que o dos buckets). A medição repetida, portanto, cobre S3 e o controle de conta do EC2; o que o EC2 **não** cobre é um recurso com identidade própria no serviço (o CTRL-06 é detectivo e não remedeia), de modo que a afirmação de *extensibilidade do mecanismo* a outros serviços continua sustentada por um único controle remediável fora do S3.
 
 ### L7. Comparação com soluções gerenciadas *(fora do escopo, por decisão)*
 
@@ -2947,6 +2961,34 @@ O caminho por eventos continua o principal — é ele que dá a exposição de s
 **Consequência**: o `approved_by` gravado no log é o que o canal escreveu; sua autenticidade é a do canal, que a plataforma implementa e o laço não verifica. A garantia não desaparece, mas sobe para a administração do IAM: quem pode alterar a política da tabela (`dynamodb:PutResourcePolicy`) ou a confiança do papel ainda está acima dela.
 
 **Como fechar o resto**: a interface de cadastro (API, formulário ou fluxo de pull request sobre um repositório de exceções), que assume o papel `exception-writer` — cuja confiança se restringe a ela pela variável `exception_writer_principals` —, gera o identificador, exige os campos, valida a duração máxima e grava a identidade autenticada do aprovador, de preferência também como nome da sessão.
+
+### L21. Revogação por status ignorada pelo Analyze *(resolvido)*
+
+**O que**: a `exception-scheduler-sync` aceita revogar uma exceção mudando o status para `revoked`: apaga o agendamento e reavalia o recurso na hora. Mas o Analyze filtrava só `valid_until > agora`, e o índice `resource-control-index` nem projeta o status. A reavaliação disparada pela revogação via a exceção como vigente e classificava `S_exception`. Como o agendamento já tinha sido apagado, o recurso ficava exposto até o próximo evento sobre ele.
+
+**Como foi achado**: na leitura do código, e depois reproduzido na conta em 18/10/2026: bucket público sob exceção, `UpdateItem status = revoked` pelo papel `exception-writer`, execução `exception_revoked` com `SUCCEEDED`, linha `S_exception` no `violations_log` e bucket ainda público. A suíte não pegava porque só revogava apagando a linha, e o teste da sincronização parava no disparo da reavaliação, sem olhar o que o Analyze decidia.
+
+**Mesmo ponto, segundo defeito**: o índice é eventualmente consistente. Logo depois da remoção de uma linha, a reavaliação imediata pode ainda encontrá-la no índice. Não foi observado, mas não há garantia de prazo.
+
+**Correção**: o índice só localiza os candidatos. O Analyze relê cada um na tabela com `GetItem` e `ConsistentRead`, e só conta a linha sem status ou com status `active` e `valid_until` no futuro; um status desconhecido não conta. A role do Analyze ganhou `dynamodb:GetItem` na tabela, só leitura. Testes: unitários do Analyze (linha revogada, linha apagada que o índice ainda mostra, linha vencida, status desconhecido, releitura que falha escala) e cenário de integração C12.
+
+### L22. A rodada de verificação confiava nas definições da entrada *(resolvido)*
+
+**O que**: a rodada de verificação recebia na entrada as definições completas dos controles a verificar, e o `RouteControlLookup` as mandava direto ao Analyze, sem reler a tabela `controls`. Quem pudesse iniciar uma execução — a regra do EventBridge, o Scheduler, a sincronização de exceções, a própria máquina e os administradores — podia forjar uma verificação com um `fetch_config` ou um `rego_s3_key` de outro controle e gravar `S_nominal` com `verifies_violation_id` ligado a uma violação real. Isso forjaria justamente a cadeia de auditoria da H2. O Execute nunca era alcançado, e o `StartExecution` fica no CloudTrail: detectável, mas não impedido.
+
+**Como foi achado**: numa revisão externa da máquina de estados. A mesma revisão apontou três problemas menores, corrigidos juntos: `$now()` nas chaves de deduplicação de duas escalações; a tarefa do Execute com o mesmo timeout da Lambda (ver *Propriedade 28*); e o `startExecution` da verificação sem `Name`, de modo que um retry depois de um início que chegou criaria duas verificações. Também apontou comentários que citavam `ConditionalCheckFailed` em escritas sem condição; os comentários foram corrigidos, e a condição não foi acrescentada, porque um retry depois de uma escrita que chegou falharia a execução, e o `violation_id` é gerado pelo Analyze, então uma entrada não escolhe a linha que grava.
+
+**Correção**: a verificação carrega só os `control_id`. O estado `LoadVerificationControls` relê as definições com `batchGetItem`, e `CheckVerificationControlsLoaded` escala se faltar algum controle nomeado. O `ResolveResource` descarta qualquer `controls` da entrada. A role da máquina ganhou `dynamodb:BatchGetItem` na tabela `controls`, e o `Query` do disjuntor foi restrito ao índice que ele usa.
+
+**O que continua possível**: uma entrada forjada com `mode = verify` ainda faz uma avaliação real dos controles cadastrados e grava o resultado com o `verifies_violation_id` que a entrada declarar. A linha diz a verdade sobre o recurso, mas o vínculo com a violação pode ser falso. Fechar isso exigiria conferir a execução de origem (`origin_execution`) no histórico do Step Functions.
+
+### L23. Corrida entre o cliente e a remediação do `ctrl-s3-ssl-only`
+
+**O que**: a remediação do `ssl-only` lê a política do bucket, junta a ela a declaração de TLS e grava o resultado. Se o cliente gravar outra política entre a leitura e a escrita — uma janela de segundos —, a remediação a sobrescreve com a versão anterior acrescida da declaração. A reavaliação disparada pela gravação do cliente encontra um estado conforme, e a perda passa despercebida.
+
+**Por que não se resolve no laço**: duas execuções do próprio laço sobre o mesmo bucket leem a política corrente e gravam a mesma junção, o que é idempotente. A corrida que perde dados é com o cliente, e um lock no laço não a impede: o S3 não oferece escrita condicional de bucket policy.
+
+**Como mitigar**: comparar a política lida antes da escrita com a política corrente imediatamente depois, e escalar se a corrente mudou nesse intervalo, com as duas versões no corpo da issue; ou tratar o controle como detectivo em buckets cuja política muda com frequência.
 
 ## Referências
 

@@ -32,7 +32,7 @@ Este documento é a especificação inicial do MVP e fica preservado como tal. O
 | 15.3, 15.7 | apenas `bucketName` | também volume e recurso de conta | controles de EC2 |
 | 15.6 | descartar evento incompleto | identificador sintético da conta | o EventBridge só admite eventos de controles cadastrados (L3) |
 | 16.2 | nenhum estado externo além do Knowledge_Base | também a configuração do recurso (3.1) e a política no S3 (4.2 revisado) | o critério contradizia o 3.1; o que vale é que a classificação depende só dessas entradas, lidas uma vez por avaliação |
-| 17.1–17.3 | 15 / 45 / 60 s | 60 / 90 / 600 s | os valores originais não cobriam o pior caso (*Propriedade 28*) |
+| 17.1–17.3 | 15 / 45 / 60 s | 60 / 90 / 660 s; a tarefa do Execute espera 100 s, acima da Lambda | os valores originais não cobriam o pior caso (*Propriedade 28*); 600 → 660 s com a tarefa do Execute acima da Lambda (L22) |
 | 17.4 | registrar o timeout e encerrar | timeout do Analyze ou do Execute é escalado; timeout da execução inteira dispara um alarme | encerrar em silêncio deixaria o recurso sem dono |
 | 19.5 | issue nula quando não houve escalação, lida como "o Execute não rodou ou teve sucesso" (*Propriedade 23*) | issue só em linha escalada: remediação falha ou `S_violation` escalada pelo `PlanAction` | controles detectivos, disjuntor e verificação escalam sem invocar o Execute |
 
@@ -344,6 +344,7 @@ Os requisitos abaixo não estavam na especificação inicial. Cada um nasceu de 
 5. SE a Rodada_de_Verificação não puder ser agendada ou não puder avaliar os controles remediados, ENTÃO o Orchestrator DEVE escalar o incidente
 6. A entrada do violations_log de uma Rodada_de_Verificação DEVE referenciar a execução de origem e o violation_id que ela verifica
 7. O Orchestrator DEVE executar no máximo duas vezes por incidente, qualquer que seja o número de controles remediados
+8. A Rodada_de_Verificação DEVE ler as definições dos controles que verifica na tabela `controls`, e NÃO DEVE aceitá-las da entrada da execução *(acrescentado: o defeito L22)*
 
 ### Requisito 21: Interromper Remediações Reincidentes
 
@@ -394,6 +395,8 @@ Os requisitos abaixo não estavam na especificação inicial. Cada um nasceu de 
 2. QUANDO o Agendamento_de_Exceção disparar, o Orchestrator DEVE avaliar o recurso para o controle da exceção
 3. QUANDO uma exceção for apagada, o Compliance_Loop DEVE apagar o seu Agendamento_de_Exceção
 4. O Agendamento_de_Exceção NÃO DEVE depender da deleção física da exceção pelo TTL
+5. QUANDO uma exceção for revogada antes de valid_until — com status `revoked` ou pela remoção da linha —, o Compliance_Loop DEVE apagar o seu Agendamento_de_Exceção e reavaliar o recurso imediatamente *(acrescentado: o defeito L21)*
+6. O Analyze DEVE decidir se uma exceção vale pela leitura fortemente consistente da linha na tabela, e não pelo índice que a localiza; só contam a linha sem status ou com status `active` e valid_until no futuro *(acrescentado: o defeito L21)*
 
 ### Requisito 25: Atualizar os Controles sem Nova Implantação
 

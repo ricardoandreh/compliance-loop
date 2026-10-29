@@ -134,10 +134,69 @@ def test_retries_use_the_error_prefix_of_their_integration(sm):
 def test_a_verification_round_without_controls_escalates(sm):
     """Otherwise it would re-evaluate nothing and succeed."""
     route = sm["States"]["RouteControlLookup"]["Choices"]
-    assert "$count($states.input.controls) > 0" in route[0]["Condition"]
-    assert route[0]["Next"] == "InvokeAnalyze"
+    assert "$count($states.input.control_ids) > 0" in route[0]["Condition"]
+    assert route[0]["Next"] == "LoadVerificationControls"
     assert "mode = 'verify'" in route[1]["Condition"]
     assert route[1]["Next"] == "UnverifiableRemediationEscalation"
+
+
+def test_control_definitions_never_come_from_the_input(sm):
+    """Regression: a verification round used to evaluate the definitions it
+    carried, so anyone allowed to start an execution could forge a control and
+    write S_nominal rows linked to a real violation. Now the input only names
+    controls; every definition the Analyze receives was read from the table."""
+    top = sm["States"]
+    assert top["ResolveResource"]["Output"]["controls"] == []
+    started = top["ScheduleVerification"]["Arguments"]["Input"]
+    assert "controls" not in started and "control_ids" in started
+    load = top["LoadVerificationControls"]
+    assert load["Resource"].endswith("dynamodb:batchGetItem")
+    assert list(load["Arguments"]["RequestItems"]) == ["${controls_table}"]
+    assert "$states.result.Responses" in load["Output"]["controls"]
+    # Each way into the Analyze follows a read of the controls table.
+    assert predecessors(top, "InvokeAnalyze") == {
+        "CheckControlsFound", "CheckRequestedControlFound", "CheckVerificationControlsLoaded"}
+
+
+def test_a_verification_round_missing_a_control_escalates(sm):
+    """A named control that does not come back (removed since, or left in
+    UnprocessedKeys) would let the round pass without checking it."""
+    check = sm["States"]["CheckVerificationControlsLoaded"]
+    assert check["Choices"] == [{
+        "Condition": "{% $count($states.input.controls) = $count($states.input.control_ids) %}",
+        "Next": "InvokeAnalyze"}]
+    assert check["Default"] == "UnverifiableRemediationEscalation"
+    assert [c["Next"] for c in sm["States"]["LoadVerificationControls"]["Catch"]] == ["UnverifiableRemediationEscalation"]
+
+
+def test_a_retried_schedule_starts_one_verification_round(sm):
+    """StartExecution with a name already running and the same input returns
+    that execution, so a retry after a start that did land is idempotent."""
+    args = sm["States"]["ScheduleVerification"]["Arguments"]
+    assert "$states.context.Execution.Name" in args["Name"]
+    assert "$states.context.State.EnteredTime" in args["Input"]["event_time"]
+
+
+def test_escalation_dedup_ids_are_stable_across_retries(sm):
+    """Regression: $now() in a MessageDeduplicationId can change between
+    attempts, and then the FIFO queue no longer deduplicates a retry."""
+    senders = {n: s for n, s in sm["States"].items() if s.get("Resource", "").endswith("sqs:sendMessage")}
+    for name, st in senders.items():
+        args = st["Arguments"]
+        assert "$now()" not in args.get("MessageDeduplicationId", ""), name
+        assert "$now()" not in args["MessageBody"].split("'resource_arn'")[0], name
+
+
+def test_execute_task_outlasts_the_lambda(sm):
+    """The task waits longer than the Lambda can run, so the handler's own
+    result, success or structured error, always arrives before States.Timeout
+    — the same rule InvokeAnalyze follows."""
+    tf = open(os.path.join(os.path.dirname(DEFINITION), "modules", "execute", "main.tf")).read()
+    lambda_timeout = int(re.search(r"^\s*timeout\s*=\s*(\d+)", tf, re.M).group(1))
+    task = map_states(sm)["InvokeExecute"]["TimeoutSeconds"]
+    assert task > lambda_timeout
+    budget = sm["States"]["InvokeAnalyze"]["TimeoutSeconds"] + 5 * (task + 5)
+    assert sm["TimeoutSeconds"] >= budget
 
 
 def test_a_partial_verification_is_not_scheduled(sm):
@@ -221,8 +280,9 @@ def test_verification_round_reads_straight_away(sm):
     # non-convergence escalation, never as a false S_nominal).
     top = sm["States"]
     route = top["RouteControlLookup"]["Choices"]
-    assert route[0]["Next"] == "InvokeAnalyze", "verify mode must be routed first"
+    assert route[0]["Next"] == "LoadVerificationControls", "verify mode must be routed first"
     assert "mode = 'verify'" in route[0]["Condition"]
+    assert top["CheckVerificationControlsLoaded"]["Choices"][0]["Next"] == "InvokeAnalyze"
     assert not any(s["Type"] == "Wait" for s in top.values())
 
 

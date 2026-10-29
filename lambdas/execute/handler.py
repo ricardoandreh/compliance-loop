@@ -176,8 +176,9 @@ def _remediate(event: Dict[str, Any], timings: Dict[str, float]) -> Dict[str, An
     except Exception as e:
         return {"remediation_status": "failed", "error": f"Could not scope the remediation session: {e}"}
 
-    # Every AWS call from here on uses the scoped credentials, including the
-    # policy read below: the Lambda's own role can no longer touch the resource.
+    # Every call on the resource from here on uses the scoped credentials:
+    # OpenTofu and the policy read below. Only the template download in
+    # setup_remediation still uses the Lambda's own role, on the controls bucket.
 
     try:
         with _phase(timings, 'provider_cache'):

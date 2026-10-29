@@ -90,7 +90,10 @@ def main():
         if inp.get("mode") != "verify":
             continue
         rounds += 1
-        remediated = [c["control_id"]["S"] for c in inp.get("controls", [])]
+        # Verification rounds name their controls (control_ids); before the
+        # fix that stopped trusting definitions from the input, they carried
+        # the definitions themselves (controls).
+        remediated = inp.get("control_ids") or [c["control_id"]["S"] for c in inp.get("controls", [])]
         outcomes = {}
         if d.get("output"):
             outcomes = {o.get("control_id"): o["outcome"]

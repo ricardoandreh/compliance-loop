@@ -1,7 +1,7 @@
 {
-  "Comment": "MAPE-K Compliance Loop — Single Analyze, Map over results. Timeout budget: the global timeout must cover the serial worst case, since ProcessResults runs with MaxConcurrency=1 — InvokeAnalyze (75s) + n_controls x (InvokeExecute 90s + writes ~5s). At the current 5 controls that is 550s, hence 600s. Raising the per-control Execute timeout, or adding controls that share a CloudTrail event, requires revisiting this.",
+  "Comment": "MAPE-K Compliance Loop — Single Analyze, Map over results. Timeout budget: the global timeout must cover the serial worst case, since ProcessResults runs with MaxConcurrency=1 — InvokeAnalyze (75s) + n_controls x (InvokeExecute 100s + writes ~5s). Budgeted for 5 controls on one event: 600s, hence 660s; the largest fan-out today (CreateBucket) is 4. Raising the per-control Execute timeout, or adding controls that share a CloudTrail event, requires revisiting this.",
   "StartAt": "ResolveResource",
-  "TimeoutSeconds": 600,
+  "TimeoutSeconds": 660,
   "QueryLanguage": "JSONata",
   "States": {
     "ResolveResource": {
@@ -17,17 +17,18 @@
         "mode": "{% $states.input.mode ? $states.input.mode : 'detect' %}",
         "origin_execution": "{% $states.input.origin_execution ? $states.input.origin_execution : '' %}",
         "origin_violations": "{% $states.input.origin_violations ? $states.input.origin_violations : {} %}",
-        "controls": "{% $states.input.controls ? $states.input.controls : [] %}"
+        "control_ids": "{% $states.input.control_ids ? [$states.input.control_ids] : [] %}",
+        "controls": []
       },
       "Next": "RouteControlLookup"
     },
     "RouteControlLookup": {
       "Type": "Choice",
-      "Comment": "Verification rounds (mode=verify) carry the controls to re-check → re-evaluate them straight away; a verification round without controls would re-evaluate nothing and succeed, so it escalates instead. Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events carry neither → fan out by event_name.",
+      "Comment": "Verification rounds (mode=verify) name the controls to re-check (control_ids) → their definitions are re-read from the controls table, never taken from the input, which anyone allowed to start an execution could forge; a verification round without controls would re-evaluate nothing and succeed, so it escalates instead. Scheduler-triggered re-evaluation (TTL expiry / revocation / deletion) carries a control_id → re-check exactly that control. CloudTrail-triggered events carry neither → fan out by event_name.",
       "Choices": [
         {
-          "Condition": "{% $states.input.mode = 'verify' and $count($states.input.controls) > 0 %}",
-          "Next": "InvokeAnalyze"
+          "Condition": "{% $states.input.mode = 'verify' and $count($states.input.control_ids) > 0 %}",
+          "Next": "LoadVerificationControls"
         },
         {
           "Condition": "{% $states.input.mode = 'verify' %}",
@@ -39,6 +40,72 @@
         }
       ],
       "Default": "QueryControls"
+    },
+    "LoadVerificationControls": {
+      "Type": "Task",
+      "Comment": "The definitions a verification round evaluates come from the controls table, by the ids the detection round remediated.",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:batchGetItem",
+      "Arguments": {
+        "RequestItems": {
+          "${controls_table}": {
+            "Keys": "{% [$states.input.control_ids.{'control_id': {'S': $}}] %}"
+          }
+        }
+      },
+      "Output": {
+        "resource_arn": "{% $states.input.resource_arn %}",
+        "resource_id": "{% $states.input.resource_id %}",
+        "account_id": "{% $states.input.account_id %}",
+        "region": "{% $states.input.region %}",
+        "event_time": "{% $states.input.event_time %}",
+        "event_name": "{% $states.input.event_name %}",
+        "mode": "{% $states.input.mode %}",
+        "origin_execution": "{% $states.input.origin_execution %}",
+        "origin_violations": "{% $states.input.origin_violations %}",
+        "control_ids": "{% $states.input.control_ids %}",
+        "controls": "{% [$lookup($states.result.Responses, '${controls_table}')] %}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "DynamoDb.ProvisionedThroughputExceededException",
+            "DynamoDb.RequestLimitExceededException",
+            "DynamoDb.InternalServerErrorException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0,
+          "Comment": "aws-sdk integration: DynamoDb.* (lowercase b)."
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Output": {
+            "resource_arn": "{% $states.input.resource_arn %}",
+            "resource_id": "{% $states.input.resource_id %}",
+            "account_id": "{% $states.input.account_id %}",
+            "region": "{% $states.input.region %}",
+            "mode": "{% $states.input.mode %}",
+            "error": "{% $states.errorOutput %}"
+          },
+          "Next": "UnverifiableRemediationEscalation"
+        }
+      ],
+      "Next": "CheckVerificationControlsLoaded"
+    },
+    "CheckVerificationControlsLoaded": {
+      "Type": "Choice",
+      "Comment": "Every named control must come back: one missing (removed since, or left in UnprocessedKeys) would let the round pass without checking it.",
+      "Choices": [
+        {
+          "Condition": "{% $count($states.input.controls) = $count($states.input.control_ids) %}",
+          "Next": "InvokeAnalyze"
+        }
+      ],
+      "Default": "UnverifiableRemediationEscalation"
     },
     "GetControlById": {
       "Type": "Task",
@@ -292,7 +359,7 @@
                   "DynamoDB.RequestLimitExceededException",
                   "DynamoDB.InternalServerErrorException"
                 ],
-                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "Comment": "Transient only: a validation error is a bug and must not be retried. A retry after a write that did land rewrites the same item, so it is idempotent.",
                 "IntervalSeconds": 1,
                 "MaxAttempts": 3,
                 "BackoffRate": 2.0
@@ -348,7 +415,7 @@
                   "DynamoDB.RequestLimitExceededException",
                   "DynamoDB.InternalServerErrorException"
                 ],
-                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "Comment": "Transient only: a validation error is a bug and must not be retried. A retry after a write that did land rewrites the same item, so it is idempotent.",
                 "IntervalSeconds": 1,
                 "MaxAttempts": 3,
                 "BackoffRate": 2.0
@@ -372,7 +439,7 @@
                   "DynamoDB.RequestLimitExceededException",
                   "DynamoDB.InternalServerErrorException"
                 ],
-                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "Comment": "Transient only: a validation error is a bug and must not be retried. A retry after a write that did land rewrites the same item, so it is idempotent.",
                 "IntervalSeconds": 1,
                 "MaxAttempts": 3,
                 "BackoffRate": 2.0
@@ -468,7 +535,7 @@
                 "remediation_scope": "{% $states.input.analyze_result.remediation_scope %}"
               }
             },
-            "TimeoutSeconds": 90,
+            "TimeoutSeconds": 100,
             "Output": {
               "resource_arn": "{% $states.input.resource_arn %}",
               "resource_id": "{% $states.input.resource_id %}",
@@ -565,7 +632,7 @@
                   "DynamoDB.RequestLimitExceededException",
                   "DynamoDB.InternalServerErrorException"
                 ],
-                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "Comment": "Transient only: a validation error is a bug and must not be retried. A retry after a write that did land rewrites the same item, so it is idempotent.",
                 "IntervalSeconds": 1,
                 "MaxAttempts": 3,
                 "BackoffRate": 2.0
@@ -612,7 +679,7 @@
                   "DynamoDB.RequestLimitExceededException",
                   "DynamoDB.InternalServerErrorException"
                 ],
-                "Comment": "Transient only: a ConditionalCheckFailed or a validation error is a bug and must not be retried.",
+                "Comment": "Transient only: a validation error is a bug and must not be retried. A retry after a write that did land rewrites the same item, so it is idempotent.",
                 "IntervalSeconds": 1,
                 "MaxAttempts": 3,
                 "BackoffRate": 2.0
@@ -688,8 +755,9 @@
           "event_time": "{% $states.context.State.EnteredTime %}",
           "origin_execution": "{% $states.context.Execution.Id %}",
           "origin_violations": "{% $merge($states.input.outcomes[outcome = 'remediated'].{control_id: violation_id}) %}",
-          "controls": "{% ( $ids := $states.input.outcomes[outcome = 'remediated'].control_id; [$states.input.controls[control_id.S in $ids]] ) %}"
-        }
+          "control_ids": "{% [$states.input.outcomes[outcome = 'remediated'].control_id] %}"
+        },
+        "Name": "{% $substring($states.context.Execution.Name, 0, 73) & '-verify' %}"
       },
       "Output": "{% $states.input %}",
       "Retry": [
@@ -755,9 +823,9 @@
       "Resource": "arn:aws:states:::sqs:sendMessage",
       "Arguments": {
         "QueueUrl": "${escalation_queue_url}",
-        "MessageBody": "{% $string({'violation_id': 'analyze-failed-' & $states.input.resource_id & '-' & $now(), 'resource_arn': $states.input.resource_arn, 'control_id': 'all', 'error': 'Analyze Lambda failed: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+        "MessageBody": "{% $string({'violation_id': 'analyze-failed-' & $states.context.Execution.Name, 'resource_arn': $states.input.resource_arn, 'control_id': 'all', 'error': 'Analyze Lambda failed: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
         "MessageGroupId": "{% $states.input.resource_id & '#analyze' %}",
-        "MessageDeduplicationId": "{% 'analyze-failed-' & $states.input.resource_id & '-' & $now() %}"
+        "MessageDeduplicationId": "{% 'analyze-failed-' & $states.context.Execution.Name %}"
       },
       "Next": "ExecutionFailed",
       "Retry": [
@@ -778,9 +846,9 @@
       "Resource": "arn:aws:states:::sqs:sendMessage",
       "Arguments": {
         "QueueUrl": "${escalation_queue_url}",
-        "MessageBody": "{% $string({'violation_id': 'control-lookup-failed-' & $states.input.resource_id & '-' & $now(), 'resource_arn': $states.input.resource_arn, 'control_id': 'unknown', 'error': 'Control lookup failed: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
+        "MessageBody": "{% $string({'violation_id': 'control-lookup-failed-' & $states.context.Execution.Name, 'resource_arn': $states.input.resource_arn, 'control_id': 'unknown', 'error': 'Control lookup failed: ' & $string($states.input.error), 'timestamp': $states.context.State.EnteredTime, 'step_functions_execution_arn': $states.context.Execution.Id, 'account_id': $states.input.account_id, 'region': $states.input.region}) %}",
         "MessageGroupId": "{% $states.input.resource_id & '#control-lookup' %}",
-        "MessageDeduplicationId": "{% 'control-lookup-failed-' & $states.input.resource_id & '-' & $now() %}"
+        "MessageDeduplicationId": "{% 'control-lookup-failed-' & $states.context.Execution.Name %}"
       },
       "Next": "ExecutionFailed",
       "Retry": [

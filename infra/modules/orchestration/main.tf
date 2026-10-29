@@ -226,9 +226,11 @@ resource "aws_iam_role_policy" "sfn_dynamodb" {
     Version = "2012-10-17"
     Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem"], Resource = [var.violations_log_table_arn] },
       # The circuit breaker counts recent remediations of the same
-      # (resource, control) through the GSI.
-      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = ["${var.violations_log_table_arn}/index/*"] },
-    { Effect = "Allow", Action = ["dynamodb:Scan", "dynamodb:GetItem"], Resource = [var.controls_table_arn] }]
+      # (resource, control) through the one GSI it queries.
+      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = ["${var.violations_log_table_arn}/index/resource_arn-timestamp-index"] },
+      # BatchGetItem: a verification round re-reads the definitions of the
+      # controls it names instead of trusting them from its input.
+    { Effect = "Allow", Action = ["dynamodb:Scan", "dynamodb:GetItem", "dynamodb:BatchGetItem"], Resource = [var.controls_table_arn] }]
   })
 }
 
