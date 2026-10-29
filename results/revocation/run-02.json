@@ -1,0 +1,89 @@
+{
+  "results": {
+    "C1": "PASS",
+    "C2": "PASS",
+    "C3": "PASS",
+    "C4": "PASS",
+    "C5": "PASS",
+    "C6": "PASS",
+    "C7": "PASS",
+    "C8": "PASS",
+    "C9": "PASS",
+    "C10": "PASS",
+    "C11": "PASS",
+    "C12": "PASS",
+    "CTRL-01": "PASS",
+    "CTRL-02": "PASS",
+    "CTRL-03": "PASS",
+    "CTRL-04": "PASS",
+    "CTRL-05": "PASS",
+    "CTRL-06": "PASS",
+    "AUDIT": "PASS"
+  },
+  "metrics": {
+    "C1": {
+      "t_detection": 9.29,
+      "t_remediation": 6.74,
+      "t_exposure": 16.03,
+      "t_verified": 16.41
+    },
+    "C2": {
+      "t_classification": 0.53
+    },
+    "C3": {
+      "t_scheduler_fire": 41.13,
+      "t_remediation_post_expiry": 45.75,
+      "t_remediation": 4.62,
+      "t_verified_post_expiry": 46.11
+    },
+    "C4": {
+      "t_escalation": 0.49
+    },
+    "C5": {
+      "t_detection": 7.61,
+      "t_remediation": 6.87,
+      "t_exposure": 14.47,
+      "t_verified": 14.88
+    },
+    "C6": {
+      "t_classification": 0.48
+    },
+    "C7": {
+      "t_sync_insert": 15.62,
+      "t_sync_delete": 15.59
+    },
+    "C8": {
+      "t_escalation": 4.46
+    },
+    "C9": {
+      "t_escalation": 0.68,
+      "violations_until_break": 4
+    },
+    "C10": {},
+    "C11": {},
+    "C12": {
+      "t_remediation_post_revoke": 8.52,
+      "t_verified_post_revoke": 8.96
+    },
+    "CTRL-01": {
+      "t_total": 26.81
+    },
+    "CTRL-02": {
+      "t_total": 26.81
+    },
+    "CTRL-03": {
+      "t_total": 27.0
+    },
+    "CTRL-04": {
+      "t_total": 26.87
+    },
+    "CTRL-05": {
+      "t_remediation": 6.31,
+      "t_verified": 12.14,
+      "t_total": 29.58
+    },
+    "CTRL-06": {
+      "t_escalation": 0.85
+    }
+  }
+}

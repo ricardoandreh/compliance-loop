@@ -1,0 +1,298 @@
+{
+  "executions_per_round": 69.1,
+  "executions_by_round": [
+    61,
+    70,
+    70,
+    70,
+    70,
+    70,
+    70,
+    70,
+    70,
+    70
+  ],
+  "round_duration_s": {
+    "median": 1091.4,
+    "min": 1063.2,
+    "max": 1135.1
+  },
+  "execute_invocations": {
+    "total": 513,
+    "fast": 193,
+    "fast_threshold_s": 4.832,
+    "containers": {
+      "40b398": {
+        "invocations": 203,
+        "fast": 0
+      },
+      "2a61ec": {
+        "invocations": 154,
+        "fast": 151
+      },
+      "8989b6": {
+        "invocations": 18,
+        "fast": 0
+      },
+      "96e7eb": {
+        "invocations": 17,
+        "fast": 12
+      },
+      "343a40": {
+        "invocations": 46,
+        "fast": 30
+      },
+      "70455c": {
+        "invocations": 75,
+        "fast": 0
+      }
+    }
+  },
+  "remediation_samples": {
+    "run-01.json/C5": {
+      "container": "40b398",
+      "execute_s": 5.556,
+      "fast": false
+    },
+    "run-01.json/C3": {
+      "container": "40b398",
+      "execute_s": 5.719,
+      "fast": false
+    },
+    "run-01.json/C8": {
+      "container": "2a61ec",
+      "execute_s": 3.432,
+      "fast": true
+    },
+    "run-01.json/CTRL-05": {
+      "container": "40b398",
+      "execute_s": 5.513,
+      "fast": false
+    },
+    "run-02.json/C1": {
+      "container": "40b398",
+      "execute_s": 5.612,
+      "fast": false
+    },
+    "run-02.json/C5": {
+      "container": "40b398",
+      "execute_s": 5.815,
+      "fast": false
+    },
+    "run-02.json/C3": {
+      "container": "2a61ec",
+      "execute_s": 3.417,
+      "fast": true
+    },
+    "run-02.json/C8": {
+      "container": "2a61ec",
+      "execute_s": 3.299,
+      "fast": true
+    },
+    "run-02.json/CTRL-05": {
+      "container": "40b398",
+      "execute_s": 5.343,
+      "fast": false
+    },
+    "run-03.json/C1": {
+      "container": "2a61ec",
+      "execute_s": 3.56,
+      "fast": true
+    },
+    "run-03.json/C5": {
+      "container": "2a61ec",
+      "execute_s": 3.5,
+      "fast": true
+    },
+    "run-03.json/C3": {
+      "container": "40b398",
+      "execute_s": 5.507,
+      "fast": false
+    },
+    "run-03.json/C8": {
+      "container": "40b398",
+      "execute_s": 5.347,
+      "fast": false
+    },
+    "run-03.json/CTRL-05": {
+      "container": "40b398",
+      "execute_s": 5.593,
+      "fast": false
+    },
+    "run-04.json/C1": {
+      "container": "40b398",
+      "execute_s": 5.705,
+      "fast": false
+    },
+    "run-04.json/C5": {
+      "container": "40b398",
+      "execute_s": 5.721,
+      "fast": false
+    },
+    "run-04.json/C3": {
+      "container": "2a61ec",
+      "execute_s": 3.66,
+      "fast": true
+    },
+    "run-04.json/C8": {
+      "container": "2a61ec",
+      "execute_s": 3.482,
+      "fast": true
+    },
+    "run-04.json/CTRL-05": {
+      "container": "2a61ec",
+      "execute_s": 3.486,
+      "fast": true
+    },
+    "run-05.json/C1": {
+      "container": "40b398",
+      "execute_s": 5.777,
+      "fast": false
+    },
+    "run-05.json/C5": {
+      "container": "2a61ec",
+      "execute_s": 3.572,
+      "fast": true
+    },
+    "run-05.json/C3": {
+      "container": "2a61ec",
+      "execute_s": 3.458,
+      "fast": true
+    },
+    "run-05.json/C8": {
+      "container": "40b398",
+      "execute_s": 5.423,
+      "fast": false
+    },
+    "run-05.json/CTRL-05": {
+      "container": "40b398",
+      "execute_s": 5.46,
+      "fast": false
+    },
+    "run-06.json/C1": {
+      "container": "40b398",
+      "execute_s": 5.57,
+      "fast": false
+    },
+    "run-06.json/C5": {
+      "container": "2a61ec",
+      "execute_s": 3.527,
+      "fast": true
+    },
+    "run-06.json/C3": {
+      "container": "2a61ec",
+      "execute_s": 3.503,
+      "fast": true
+    },
+    "run-06.json/C8": {
+      "container": "40b398",
+      "execute_s": 5.503,
+      "fast": false
+    },
+    "run-06.json/CTRL-05": {
+      "container": "2a61ec",
+      "execute_s": 3.334,
+      "fast": true
+    },
+    "run-07.json/C1": {
+      "container": "2a61ec",
+      "execute_s": 3.628,
+      "fast": true
+    },
+    "run-07.json/C5": {
+      "container": "40b398",
+      "execute_s": 5.702,
+      "fast": false
+    },
+    "run-07.json/C3": {
+      "container": "40b398",
+      "execute_s": 5.659,
+      "fast": false
+    },
+    "run-07.json/C8": {
+      "container": "2a61ec",
+      "execute_s": 3.386,
+      "fast": true
+    },
+    "run-07.json/CTRL-05": {
+      "container": "40b398",
+      "execute_s": 5.504,
+      "fast": false
+    },
+    "run-08.json/C1": {
+      "container": "96e7eb",
+      "execute_s": 4.517,
+      "fast": false
+    },
+    "run-08.json/C5": {
+      "container": "8989b6",
+      "execute_s": 5.507,
+      "fast": false
+    },
+    "run-08.json/C3": {
+      "container": "8989b6",
+      "execute_s": 5.627,
+      "fast": false
+    },
+    "run-08.json/C8": {
+      "container": "96e7eb",
+      "execute_s": 4.017,
+      "fast": true
+    },
+    "run-08.json/CTRL-05": {
+      "container": "70455c",
+      "execute_s": 5.459,
+      "fast": false
+    },
+    "run-09.json/C1": {
+      "container": "70455c",
+      "execute_s": 5.663,
+      "fast": false
+    },
+    "run-09.json/C5": {
+      "container": "343a40",
+      "execute_s": 4.207,
+      "fast": true
+    },
+    "run-09.json/C3": {
+      "container": "343a40",
+      "execute_s": 4.139,
+      "fast": true
+    },
+    "run-09.json/C8": {
+      "container": "70455c",
+      "execute_s": 5.327,
+      "fast": false
+    },
+    "run-09.json/CTRL-05": {
+      "container": "343a40",
+      "execute_s": 4.094,
+      "fast": true
+    },
+    "run-10.json/C1": {
+      "container": "70455c",
+      "execute_s": 5.62,
+      "fast": false
+    },
+    "run-10.json/C5": {
+      "container": "343a40",
+      "execute_s": 4.251,
+      "fast": true
+    },
+    "run-10.json/C3": {
+      "container": "343a40",
+      "execute_s": 4.336,
+      "fast": true
+    },
+    "run-10.json/C8": {
+      "container": "70455c",
+      "execute_s": 5.458,
+      "fast": false
+    },
+    "run-10.json/CTRL-05": {
+      "container": "70455c",
+      "execute_s": 5.453,
+      "fast": false
+    }
+  }
+}

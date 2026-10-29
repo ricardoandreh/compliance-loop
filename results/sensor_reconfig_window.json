@@ -1,0 +1,70 @@
+{
+  "trail": "compliance-loop-s3-events-dev",
+  "interval_s": 30,
+  "clock_offset_s": 0.002,
+  "selectors_before": [
+    {
+      "ReadWriteType": "WriteOnly",
+      "IncludeManagementEvents": true,
+      "DataResources": [],
+      "ExcludeManagementEventSources": []
+    },
+    {
+      "ReadWriteType": "WriteOnly",
+      "IncludeManagementEvents": false,
+      "DataResources": [
+        {
+          "Type": "AWS::DynamoDB::Table",
+          "Values": [
+            "arn:aws:dynamodb:us-east-1:034362047722:table/compliance-loop-exceptions-dev"
+          ]
+        }
+      ],
+      "ExcludeManagementEventSources": []
+    }
+  ],
+  "probes": [
+    {
+      "name": "compliance-probe-1793261126-01",
+      "t_create": 1793261126.5646026,
+      "t_create_iso": "2026-10-29T08:05:26.564+00:00",
+      "since_restore_s": 0.4,
+      "exec_start": "2026-10-29T08:05:33.492+00:00",
+      "delay_s": 6.93,
+      "executions": 1,
+      "cloudtrail_event_time": "2026-10-29T05:05:27-03:00",
+      "classification": "delivered"
+    },
+    {
+      "name": "compliance-probe-1793261126-02",
+      "t_create": 1793261158.270074,
+      "t_create_iso": "2026-10-29T08:05:58.270+00:00",
+      "since_restore_s": 32.1,
+      "exec_start": "2026-10-29T08:06:06.141+00:00",
+      "delay_s": 7.87,
+      "executions": 1,
+      "cloudtrail_event_time": "2026-10-29T05:05:58-03:00",
+      "classification": "delivered"
+    },
+    {
+      "name": "compliance-probe-1793261126-03",
+      "t_create": 1793261191.7684708,
+      "t_create_iso": "2026-10-29T08:06:31.768+00:00",
+      "since_restore_s": 65.6,
+      "exec_start": "2026-10-29T08:06:41.241+00:00",
+      "delay_s": 9.47,
+      "executions": 1,
+      "cloudtrail_event_time": "2026-10-29T05:06:32-03:00",
+      "classification": "delivered"
+    }
+  ],
+  "t_put_reduced": "2026-10-29T08:05:21.028+00:00",
+  "t_put_restored": "2026-10-29T08:05:26.200+00:00",
+  "selectors_restored_identical": true,
+  "probes_total": 3,
+  "probes_delivered": 3,
+  "probes_undelivered": 0,
+  "window_s_upper_bound": 0.4,
+  "window_s_lower_bound": 0.0,
+  "finished": "2026-10-29T08:07:06.603+00:00"
+}

@@ -111,6 +111,20 @@
       "welch_df": 30.5,
       "permutation_p": 0.0,
       "hedges_g": -7.08
+    },
+    {
+      "from": "optimized",
+      "to": "revocation",
+      "change": "releitura consistente das exceções no Analyze; verificação lendo as definições na tabela; folga nos tempos limite",
+      "n": [
+        15,
+        15
+      ],
+      "delta_s": 0.081,
+      "welch_t": 1.84,
+      "welch_df": 27.2,
+      "permutation_p": 0.077,
+      "hedges_g": 0.65
     }
   ],
   "clustering": [
@@ -239,6 +253,20 @@
         "n": 10
       },
       "width_ratio": 0.86
+    },
+    {
+      "series": "revocation",
+      "per_sample": {
+        "mean": 6.693,
+        "ci_half": 0.072,
+        "n": 15
+      },
+      "per_run": {
+        "mean": 6.686,
+        "ci_half": 0.084,
+        "n": 10
+      },
+      "width_ratio": 1.17
     }
   ]
 }

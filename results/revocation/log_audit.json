@@ -1,0 +1,23 @@
+{
+  "results": "results/revocation",
+  "window": [
+    "2026-10-29T08:10:15.000Z",
+    "2026-10-29T11:22:06.000Z"
+  ],
+  "rows": 1302,
+  "unique_violation_ids": true,
+  "by_state": {
+    "S_nominal": 731,
+    "S_violation": 503,
+    "S_exception": 68
+  },
+  "by_remediation_status": {
+    "success": 473,
+    "failed": 10
+  },
+  "verification_rows": 473,
+  "rows_with_issue": 30,
+  "complete_rows": 1302,
+  "problems": {},
+  "example_violation_ids": {}
+}

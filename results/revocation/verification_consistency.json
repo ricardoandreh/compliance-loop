@@ -1,0 +1,26 @@
+{
+  "results": "results/revocation",
+  "verification_rounds": 296,
+  "controls_checked": {
+    "ctrl-ebs-encryption-default": {
+      "verified": 20
+    },
+    "ctrl-s3-public-block": {
+      "verified": 127
+    },
+    "ctrl-s3-ssl-only": {
+      "verified": 168
+    },
+    "ctrl-s3-versioning": {
+      "verified": 158
+    }
+  },
+  "not_verified": [],
+  "read_after_write_gap_s": {
+    "n": 296,
+    "mean": 0.45,
+    "median": 0.45,
+    "min": 0.28,
+    "max": 1.11
+  }
+}

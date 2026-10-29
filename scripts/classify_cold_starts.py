@@ -76,7 +76,7 @@ def run_windows(results_dir):
     log = os.path.join(results_dir, "benchmark.log")
     if os.path.exists(log):
         took = {f"run-{int(m.group(1)):02d}.json": float(m.group(2))
-                for m in re.finditer(r"run (\d+): .*\(ok, ([\d.]+)s\)", open(log).read())}
+                for m in re.finditer(r"run (\d+): .*\((?:ok|exit=\d+), ([\d.]+)s\)", open(log).read())}
         # A little slack for the process start before the suite's own clock.
         starts = [e - took[os.path.basename(f)] - 5 if os.path.basename(f) in took else s
                   for f, s, e in zip(files, starts, ends)]

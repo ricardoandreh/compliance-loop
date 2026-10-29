@@ -267,10 +267,10 @@ artefatos de build ignorados pelo git — precisam existir localmente antes do
 
 | Camada | O que cobre | Onde | Quantidade |
 |---|---|---|---|
-| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, alarmes que viram issue, sincronização de exceções, reprocessamento do intake | `tests/unit`, `tests/property` | 142 |
+| Unitários e de propriedade | Lambdas, estados do grafo, deduplicação de issues, alarmes que viram issue, sincronização de exceções, reprocessamento do intake | `tests/unit`, `tests/property` | 157 |
 | Contrato | permissões de leitura da Analyze × leituras dos controles; remediação × política (OPA); padrão do EventBridge (identidades e origem forjada) e estado `ResolveResource` avaliados pela própria AWS; escrita na tabela de exceções só pelo papel `exception-writer` | `tests/contract` | 30 |
 | Políticas Rego | casos conformes, violados e entradas enganosas, por controle | `controls/*/policy_test.rego` | 44 |
-| Integração | 17 cenários contra a conta real (o C11 ainda sem série) | `scripts/integration_test.py` | 17 |
+| Integração | 18 cenários contra a conta real (série `results/revocation/`) | `scripts/integration_test.py` | 18 |
 
 A rastreabilidade de cada requisito e de cada propriedade de corretude até a
 evidência que a sustenta está em
@@ -344,7 +344,8 @@ de remediação juntam os dois patamares de ambiente — separados, estão em *P
 | C8 | Remediação negada pelo IAM | S_violation preservado, escala com o erro | `t_escalation` 5,98s ± 0,77 |
 | C9 | Mesma violação repetida | Disjuntor escala na 4ª, sem remediar | `t_escalation` 0,73s ± 0,06 |
 | C10 | Template adulterado para outro bucket | Sessão escopada nega a escrita | 10/10 |
-| C11 | Exceção gravada fora do canal de aprovação | A tabela nega a escrita; a do papel `exception-writer` é aceita | ainda sem série |
+| C11 | Exceção gravada fora do canal de aprovação | A tabela nega a escrita; a do papel `exception-writer` é aceita | 10/10 (`results/revocation/`) |
+| C12 | Exceção revogada por status antes do vencimento | Reavalia na hora, remedia e verifica | 10/10: remediado 8,13 s ± 0,48 depois da revogação (`results/revocation/`) |
 | AUDIT | Ausência de execuções falhas inesperadas | Nenhuma além das esperadas do C4, C8, C9 e CTRL-06 | 10/10 |
 
 O **disjuntor disparou na quarta violação em 10 de 10 rodadas**: com limiar 3, as três
@@ -420,8 +421,8 @@ A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S
 e compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 
 Relatório com os gráficos interativos e a tabela completa: `results/report.html`.
-Cada série fica numa pasta própria — de `results/echo/` a `results/optimized/` (a
-atual), nove ao todo — com os `run-NN.json` brutos, e a página é regenerada a partir delas:
+Cada série fica numa pasta própria — de `results/echo/` a `results/revocation/`, dez ao
+todo; `results/optimized/` é a série somativa da monografia — com os `run-NN.json` brutos, e a página é regenerada a partir delas:
 
 ```bash
 S=results/optimized
