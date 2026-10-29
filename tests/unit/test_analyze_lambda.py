@@ -7,7 +7,9 @@ Covers:
 - Generic resource fetcher: result_path traversal, error_defaults, cache
 - OPA evaluation fail-secure behavior
 - Exception query: GSI usage, no Limit (regression: Limit=1 + FilterExpression
-  could skip a valid exception), ExceptionQueryError on failure
+  could skip a valid exception), ExceptionQueryError on failure; each candidate
+  re-read from the table with ConsistentRead, so a revoke (by status or by
+  deletion the index has not caught up with) stops counting at once
 - Exceptions are only queried for non-compliant resources
 - Canonical audit timestamp format
 """
@@ -343,25 +345,41 @@ class TestOpaBudget:
         assert captured['timeout'] == 2.5
 
 
+FUTURE = 4102444800  # 2100-01-01
+
+
+def exceptions_table(index_rows, table_rows):
+    """A table whose index returns `index_rows` and whose consistent GetItem
+    returns the row from `table_rows` (by exception_id), or nothing."""
+    table = MagicMock()
+    table.query.return_value = {'Items': index_rows}
+    by_id = {r['exception_id']: r for r in table_rows}
+    table.get_item.side_effect = lambda Key, ConsistentRead: (
+        {'Item': by_id[Key['exception_id']]} if Key['exception_id'] in by_id else {})
+    return table
+
+
+def live(eid='exc-1', **kw):
+    return {'exception_id': eid, 'approved_by': 'sec', 'valid_until': FUTURE, **kw}
+
+
 class TestQueryException:
     def test_returns_active_exception(self):
-        table = MagicMock()
-        table.query.return_value = {'Items': [{'exception_id': 'exc-1', 'approved_by': 'sec'}]}
+        table = exceptions_table([live()], [live()])
         with patch.object(handler, 'exceptions_table', table):
             result = query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b')
         assert result['exception_id'] == 'exc-1'
 
     def test_returns_none_when_no_items(self):
-        table = MagicMock()
-        table.query.return_value = {'Items': []}
+        table = exceptions_table([], [])
         with patch.object(handler, 'exceptions_table', table):
             assert query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b') is None
+        table.get_item.assert_not_called()
 
     def test_uses_resource_control_index_without_limit(self):
         """Regression: Limit=1 is applied BEFORE FilterExpression, so it could
         read only an expired exception and miss a valid one for the same pair."""
-        table = MagicMock()
-        table.query.return_value = {'Items': []}
+        table = exceptions_table([], [])
         with patch.object(handler, 'exceptions_table', table):
             query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b')
         kwargs = table.query.call_args[1]
@@ -370,11 +388,58 @@ class TestQueryException:
         assert kwargs['FilterExpression'] == 'valid_until > :now'
         assert 'Limit' not in kwargs
 
+    def test_candidate_is_reread_with_consistent_read(self):
+        table = exceptions_table([live()], [live()])
+        with patch.object(handler, 'exceptions_table', table):
+            query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b')
+        table.get_item.assert_called_once_with(Key={'exception_id': 'exc-1'}, ConsistentRead=True)
+
+    def test_revoked_by_status_does_not_count(self):
+        """Regression, reproduced on the account: the index projects no status,
+        so a row set to 'revoked' kept the resource in S_exception until
+        valid_until, and the revoke's own re-evaluation left it exposed."""
+        table = exceptions_table([live()], [live(status='revoked')])
+        with patch.object(handler, 'exceptions_table', table):
+            assert query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b') is None
+
+    def test_row_deleted_but_still_in_the_index_does_not_count(self):
+        """The index is eventually consistent: right after a revoke by deletion
+        it can still return the row. The table no longer has it."""
+        table = exceptions_table([live()], [])
+        with patch.object(handler, 'exceptions_table', table):
+            assert query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b') is None
+
+    def test_row_expired_on_the_table_does_not_count(self):
+        table = exceptions_table([live()], [live(valid_until=1)])
+        with patch.object(handler, 'exceptions_table', table):
+            assert query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b') is None
+
+    @pytest.mark.parametrize('status', ['revoked', 'pending', 'ACTIVE', ''])
+    def test_only_active_or_absent_status_counts(self, status):
+        assert not handler.is_live_grant(live(status=status), now=0)
+        assert handler.is_live_grant(live(status='active'), now=0)
+        assert handler.is_live_grant(live(), now=0)
+
+    def test_a_live_grant_behind_a_revoked_one_is_found(self):
+        table = exceptions_table([live('exc-1'), live('exc-2')],
+                                 [live('exc-1', status='revoked'), live('exc-2')])
+        with patch.object(handler, 'exceptions_table', table):
+            result = query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b')
+        assert result['exception_id'] == 'exc-2'
+
     def test_query_failure_raises_not_none(self):
         """Regression: a failed query must NOT be treated as 'no exception' —
         that would remediate a resource with a valid approved exception."""
         table = MagicMock()
         table.query.side_effect = RuntimeError('timeout')
+        with patch.object(handler, 'exceptions_table', table):
+            with pytest.raises(ExceptionQueryError):
+                query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b')
+
+    def test_reread_failure_raises_not_none(self):
+        """Same rule for the re-read: a failed GetItem is not 'no exception'."""
+        table = exceptions_table([live()], [])
+        table.get_item.side_effect = RuntimeError('AccessDenied')
         with patch.object(handler, 'exceptions_table', table):
             with pytest.raises(ExceptionQueryError):
                 query_exception('ctrl-s3-public-block', 'arn:aws:s3:::b')

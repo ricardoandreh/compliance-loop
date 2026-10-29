@@ -2,7 +2,7 @@
 Analyze Lambda Handler (Dynamic Multi-Control, Single Invocation)
 
 Receives pre-fetched control definitions from Step Function (QueryControls).
-No DynamoDB reads for controls table — only exceptions table is queried.
+No DynamoDB reads for controls table — only the exceptions table is read.
 """
 
 import boto3
@@ -192,6 +192,17 @@ class ExceptionQueryError(Exception):
     pass
 
 
+def is_live_grant(item: Dict[str, Any], now: int) -> bool:
+    """An exception counts only while it is active and inside its window.
+
+    A row without status is active, as the platform writes it on approval.
+    'revoked' is the platform's early revoke that keeps the row; any other value
+    is unknown to the loop and does not count, so the resource is remediated
+    rather than left exposed on a status nobody defined.
+    """
+    return item.get('status', 'active') == 'active' and int(item.get('valid_until', 0)) > now
+
+
 def query_exception(control_id: str, resource_arn: str) -> Optional[Dict[str, Any]]:
     """Return the active exception for the resource/control, or None if none exists.
 
@@ -201,6 +212,7 @@ def query_exception(control_id: str, resource_arn: str) -> Optional[Dict[str, An
     destructive for an authorized resource). On query failure, escalate.
     """
     try:
+        now = int(time.time())
         # No Limit: the FilterExpression (valid_until > now) is applied AFTER
         # DynamoDB reads items, so Limit=N could return fewer than N post-filter.
         # If an expired exception for this pair sorts before a still-valid one,
@@ -213,11 +225,23 @@ def query_exception(control_id: str, resource_arn: str) -> Optional[Dict[str, An
             KeyConditionExpression='resource_arn = :arn AND control_id = :cid',
             FilterExpression='valid_until > :now',
             ExpressionAttributeValues={
-                ':arn': resource_arn, ':cid': control_id, ':now': int(time.time())
+                ':arn': resource_arn, ':cid': control_id, ':now': now
             }
         )
-        items = resp.get('Items', [])
-        return items[0] if items else None
+        # The index only names candidates; the decision is taken on the table.
+        # A GSI is eventually consistent, so right after a revoke the index can
+        # still hold a row the table no longer has — and the revoke's own
+        # immediate re-evaluation is exactly the read that lands in that gap.
+        # It also projects no status, so a row revoked by status = 'revoked'
+        # looks live there until valid_until. A strongly consistent read of the
+        # row settles both.
+        for candidate in resp.get('Items', []):
+            item = exceptions_table.get_item(
+                Key={'exception_id': candidate['exception_id']}, ConsistentRead=True
+            ).get('Item')
+            if item and is_live_grant(item, now):
+                return item
+        return None
     except Exception as e:
         print(f"DynamoDB exception query error: {e}")
         raise ExceptionQueryError(str(e))

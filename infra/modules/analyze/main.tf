@@ -126,8 +126,11 @@ resource "aws_iam_role_policy" "dynamodb" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # The one index the handler queries; the table itself is never read.
-      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = ["${var.exceptions_table_arn}/index/resource-control-index"] }
+      # The index finds the candidate exceptions; GetItem re-reads each one
+      # from the table with ConsistentRead, because the index lags behind a
+      # revoke and does not project the status.
+      { Effect = "Allow", Action = ["dynamodb:Query"], Resource = ["${var.exceptions_table_arn}/index/resource-control-index"] },
+      { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = [var.exceptions_table_arn] }
     ]
   })
 }

@@ -394,8 +394,12 @@ def test_property_8_exception_query_correctness(
         # No matching exception
         mock_table.query.return_value = {'Items': []}
     
-    # Patch the exceptions_table
-    with patch('analyze_handler.exceptions_table', mock_table):
+    # The candidate is re-read from the table (ConsistentRead) and judged
+    # against the handler's clock, pinned here to the same base time.
+    mock_table.get_item.return_value = {'Item': exception_item} if has_matching_exception else {}
+
+    with patch('analyze_handler.exceptions_table', mock_table), \
+         patch('analyze_handler.time.time', return_value=base_time):
         result = query_exception(control_id, resource_arn)
     
     # Verify query was called with correct parameters
@@ -511,11 +515,13 @@ def test_property_end_to_end_classification(event, config, has_exception, except
                 'approved_by': 'test@example.com'
             }
             mock_exceptions.query.return_value = {'Items': [exception_item]}
+            mock_exceptions.get_item.return_value = {'Item': exception_item}
         else:
             mock_exceptions.query.return_value = {'Items': []}
 
-        # Execute handler
-        output = lambda_handler(handler_event, None)
+        # Execute handler, its clock pinned to the base time the exception uses
+        with patch('analyze_handler.time.time', return_value=base_time):
+            output = lambda_handler(handler_event, None)
 
     assert output['resource_arn'] == event['resource_arn']
     assert len(output['results']) == 1, "One result per control"

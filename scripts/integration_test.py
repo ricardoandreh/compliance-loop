@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Integration test runner for MAPE-K Compliance Automation Loop.
-Executes scenarios C1-C11 and CTRL-01..06 against the live AWS environment.
+Executes scenarios C1-C12 and CTRL-01..06 against the live AWS environment.
 Collects timing metrics per hypothesis (H1: tempo de exposição, with the MTTR as its
 component; H2: rastreabilidade; H3: convergência do laço).
 
@@ -1253,6 +1253,60 @@ def test_c11():
     return True, {}
 
 
+def test_c12():
+    """C12: Exceção revogada por status antes do vencimento → remediação"""
+    # The revoke that keeps the row: the platform sets status = 'revoked' and the
+    # grant must stop counting at once, not at valid_until. The index the Analyze
+    # queries projects no status, so the Analyze re-reads each candidate from the
+    # table; before that, this revoke re-evaluated the resource, found the grant
+    # still "live" and left the bucket public with no schedule left to fix it.
+    name = f"compliance-inttest-c12-{int(time.time())}"
+    arn = f"arn:aws:s3:::{name}"
+    metrics = {}
+    create_bucket(name)
+    eid = None
+    try:
+        eid = put_exception("ctrl-s3-public-block", arn, int(time.time()) + 86400)
+        time.sleep(1)
+        t_event = aws_now()
+        set_public_access(name, block=False)
+        time.sleep(WAIT_CLOUDTRAIL)
+        assert wait_for_executions(name, t_event, ["SUCCEEDED"]), "No SUCCEEDED executions found"
+        wait_quiesce()
+        assert not any(get_public_access(name).values()), "Bucket remediated despite exception"
+
+        t_revoke = aws_now()
+        exceptions_writer().update_item(
+            Key={"exception_id": eid}, UpdateExpression="SET #s = :r",
+            ExpressionAttributeNames={"#s": "status"}, ExpressionAttributeValues={":r": "revoked"})
+        log(f"Exception {eid} revoked by status")
+
+        execs = wait_for_executions(name, t_revoke, ["SUCCEEDED"], timeout=90)
+        assert execs, "no finished execution after the revoke"
+        chosen = pick_execution(execs, trigger="exception_revoked")
+        timing = get_execution_timing(chosen["arn"])
+        metrics["t_remediation_post_revoke"] = round(timing["stop"] - t_revoke, 2)
+        verify, vt = verification_round(name, chosen["arn"], t_revoke)
+        assert verify["status"] == "SUCCEEDED", f"remediation did not converge: {verify['arn']}"
+        metrics["t_verified_post_revoke"] = round(vt["stop"] - t_revoke, 2)
+
+        cfg = get_public_access(name)
+        assert all(cfg.values()), f"Bucket not remediated after the revoke: {cfg}"
+        cutoff = datetime.fromtimestamp(t_revoke, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        after = [v["state"] for v in query_violations(arn) if v["timestamp"] >= cutoff]
+        assert "S_exception" not in after, f"revoked exception still counted: {after}"
+        assert "S_violation" in after, f"No S_violation after the revoke: {after}"
+
+        log(f"t_remediation_post_revoke={metrics['t_remediation_post_revoke']}s  t_verified_post_revoke={metrics['t_verified_post_revoke']}s", "TIME")
+        log("C12 PASSED", "OK")
+        return True, metrics
+    finally:
+        if eid:
+            # Already revoked: deleting the row is housekeeping, no re-evaluation.
+            delete_exception(eid)
+        delete_bucket(name)
+
+
 TESTS = [
     ("C1", "Acesso público do S3 desligado pelo console → remediação", test_c1),
     ("C2", "Acesso público do S3 com exceção ativa → S_exception, sem remediar", test_c2),
@@ -1265,6 +1319,7 @@ TESTS = [
     ("C9", "Mesma violação repetida → disjuntor escala na 4ª", test_c9),
     ("C10", "Template adulterado para outro bucket → sessão escopada nega", test_c10),
     ("C11", "Exceção gravada fora do canal de aprovação → negada pela tabela", test_c11),
+    ("C12", "Exceção revogada por status antes do vencimento → remediação", test_c12),
     ("CTRL-01", "S3: acesso público bloqueado", test_ctrl_s3_public_block),
     ("CTRL-02", "S3: TLS obrigatório na bucket policy", test_ctrl_s3_ssl_only),
     ("CTRL-03", "S3: versioning ativo", test_ctrl_s3_versioning),
