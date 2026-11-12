@@ -403,7 +403,7 @@ python3 scripts/build_report_data.py --results results/optimized                
 
 O que lê a conta (`classify_cold_starts.py`, `verification_consistency.py`,
 `audit_log_completeness.py`, `audit_cloudtrail_link.py`, `cost_model.py`,
-`lambda_sizing.py`, `report/collect_series_facts.py`) consulta logs, tabelas e
+`lambda_sizing.py`, `collect_series_facts.py`) consulta logs, tabelas e
 o histórico do CloudTrail da janela da série, e só funciona enquanto eles
 existem: 90 dias para o CloudTrail, 30 dias para os logs das Lambdas. Os
 resultados dessas conferências estão gravados ao lado dos dados
@@ -506,26 +506,23 @@ A otimização chave: o provider OpenTofu é pré-inicializado e armazenado no S
 (123 MB em zstd, 780 MB extraído, provider 6.66.0), baixado e extraído em `/tmp` no init
 e compartilhado via symlink entre controles. Elimina `tofu init` (~30-50s) de cada invocação.
 
-Relatório com os gráficos interativos e a tabela completa: `results/report.html`.
 Cada série fica numa pasta própria — de `results/echo/` a `results/revocation/`, dez ao
-todo; `results/optimized/` é a série somativa da monografia — com os `run-NN.json` brutos, e a página é regenerada a partir delas:
+todo; `results/optimized/` é a série somativa da monografia — com os `run-NN.json` brutos. Os dados derivados de cada série são regenerados assim:
 
 ```bash
 S=results/optimized
 # Com acesso à conta (uma vez por série, enquanto o histórico existe):
 .venv/bin/python scripts/classify_cold_starts.py --results $S
 .venv/bin/python scripts/verification_consistency.py --results $S
-.venv/bin/python scripts/report/collect_series_facts.py --results $S
+.venv/bin/python scripts/collect_series_facts.py --results $S
 # Offline, a partir dos arquivos acima:
 python3 scripts/build_report_data.py --results $S --out $S/report_data.json
-python3 scripts/report/render_report.py        # -> results/report.html
 ```
 
 O Step Functions guarda o histórico por 90 dias; os três primeiros passos gravam
 em cada série o que só existe na conta (classificação frio/quente, consistência
 de leitura, containers do Execute e execuções por rodada), e daí em diante a
-página é reconstruída só com o repositório. O CSS, os gráficos e as notas de
-metodologia ficam em `scripts/report/`.
+análise é refeita só com o repositório.
 
 ## Operação
 

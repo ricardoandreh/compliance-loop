@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Turn the collected runs into the payload the results page embeds.
+Aggregate a series' runs into one file of per-scenario samples and statistics.
 
-Keeps the page reproducible: re-run this after collecting more runs and paste
-the output back in, rather than hand-editing numbers into the HTML.
+The output, <results>/report_data.json, is what the tables and figures of the
+monograph are computed from, so the numbers are regenerated from the raw runs
+instead of being edited by hand.
 
 Usage:
     python3 scripts/build_report_data.py --results results/three-state               # print JSON

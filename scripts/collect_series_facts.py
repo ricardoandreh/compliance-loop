@@ -2,8 +2,8 @@
 """
 Collect the facts about a benchmark series that only exist in the AWS account.
 
-The results page is rendered offline (render_report.py), but three of its
-findings come from the account and expire with it — Step Functions keeps
+Most of a series is analysed offline from its run-NN.json files, but three
+facts come from the account and expire with it — Step Functions keeps
 execution history for 90 days, CloudWatch Logs as long as its retention:
 
 - executions per suite round (Step Functions history);
@@ -13,16 +13,16 @@ execution history for 90 days, CloudWatch Logs as long as its retention:
   scenario's cost can be checked in the regime it actually ran in.
 
 Run this once per series while the history is still there; it writes
-<results>/series_facts.json, and from then on the page can be rebuilt from the
-repository alone.
+<results>/series_facts.json, and from then on the series can be analysed from
+the repository alone (compare_series.py, build_report_data.py).
 
 "Fast" is a descriptive split of an Execute duration distribution that is
 clearly bimodal (~4.2 s against ~5.3 s, nothing in between), not a
 classification threshold: the container each invocation ran in is recorded next
-to it, and the page reports the regime by container.
+to it, so the regime can be reported by container.
 
 Usage:
-    python3 scripts/report/collect_series_facts.py --results results/no-wait
+    python3 scripts/collect_series_facts.py --results results/no-wait
 """
 
 import argparse
@@ -34,7 +34,7 @@ import sys
 
 import boto3
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from classify_cold_starts import REGION, lambda_request_ids, list_executions, run_windows  # noqa: E402
 import deployment  # noqa: E402
 
