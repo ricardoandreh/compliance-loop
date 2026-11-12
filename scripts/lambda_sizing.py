@@ -26,6 +26,7 @@ import boto3
 
 sys.path.insert(0, os.path.dirname(__file__))
 from classify_cold_starts import REGION, run_windows  # noqa: E402
+import deployment  # noqa: E402
 
 FUNCTIONS = ("analyze", "execute", "escalation", "controls-sync", "exception-scheduler-sync")
 
@@ -61,7 +62,7 @@ def main():
 
     table = {}
     for f in FUNCTIONS:
-        name = f"compliance-loop-{f}-dev"
+        name = deployment.name(f)
         cfg = lam.get_function_configuration(FunctionName=name)
         durations, memory, inits = [], [], []
         for m in reports(logs, name, since, until):

@@ -16,6 +16,12 @@ variable "project_name" {
   default     = "compliance-loop"
 }
 
+variable "artifact_bucket" {
+  description = "S3 bucket for the state, the control artifacts and the provider cache; defaults to <project_name>-artifacts-<account_id>, which scripts/bootstrap.sh creates"
+  type        = string
+  default     = null
+}
+
 variable "github_token" {
   description = "GitHub personal access token for creating issues"
   type        = string

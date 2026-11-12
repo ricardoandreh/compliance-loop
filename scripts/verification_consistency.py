@@ -33,6 +33,7 @@ import boto3
 
 sys.path.insert(0, os.path.dirname(__file__))
 from classify_cold_starts import REGION, list_executions, run_windows  # noqa: E402
+import deployment  # noqa: E402
 
 
 def history(sfn, arn):
@@ -77,7 +78,7 @@ def main():
     session = boto3.Session(region_name=REGION)
     sfn = session.client("stepfunctions")
     account = session.client("sts").get_caller_identity()["Account"]
-    sm = f"arn:aws:states:{REGION}:{account}:stateMachine:compliance-loop-compliance-loop-dev"
+    sm = f"arn:aws:states:{REGION}:{account}:stateMachine:{deployment.STATE_MACHINE}"
 
     windows = run_windows(args.results)
     execs = list_executions(sfn, sm, windows[0][1], windows[-1][2] + 300)

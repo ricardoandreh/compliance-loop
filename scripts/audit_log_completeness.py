@@ -40,8 +40,9 @@ import boto3
 
 sys.path.insert(0, os.path.dirname(__file__))
 from classify_cold_starts import REGION, run_windows  # noqa: E402
+import deployment  # noqa: E402
 
-TABLE = "compliance-loop-violations-log-dev"
+TABLE = deployment.name("violations-log")
 STATES = {"S_nominal", "S_exception", "S_violation"}
 CANONICAL_TS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 BASE = ("violation_id", "resource_arn", "control_id", "account_id", "region", "policy_version", "state", "timestamp")

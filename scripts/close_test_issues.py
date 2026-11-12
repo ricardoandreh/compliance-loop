@@ -22,6 +22,7 @@ Usage:
     python3 scripts/close_test_issues.py --title "..." # close one exact title
 """
 
+import os
 import argparse
 import json
 import re
@@ -49,7 +50,8 @@ TEST_RESOURCE_PATTERNS = [
 GITHUB = "https://api.github.com"
 
 
-def github_params(region="us-east-1"):
+def github_params(region=None):
+    region = region or os.environ.get("AWS_REGION", "us-east-1")
     ssm = boto3.client("ssm", region_name=region)
     resp = ssm.get_parameters(
         Names=[
@@ -112,7 +114,7 @@ def main():
     ap = argparse.ArgumentParser(description="Close test-fixture compliance issues")
     ap.add_argument("--dry-run", action="store_true", help="list without closing")
     ap.add_argument("--title", help="close the single open issue with this exact title")
-    ap.add_argument("--region", default="us-east-1")
+    ap.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
     args = ap.parse_args()
 
     params = github_params(args.region)

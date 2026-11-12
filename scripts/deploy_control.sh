@@ -15,8 +15,14 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-BUCKET="${CONTROLS_BUCKET:-compliance-mvp-terraform-state}"
-TABLE="${CONTROLS_TABLE:-compliance-loop-controls-dev}"
+PROJECT="${PROJECT_NAME:-compliance-loop}"
+ENVIRONMENT="${ENVIRONMENT:-dev}"
+# The artifact bucket defaults to the name bootstrap.sh creates; set
+# ARTIFACT_BUCKET when the deployment uses another one (CONTROLS_BUCKET is the
+# old name of the same variable).
+default_bucket() { echo "${PROJECT}-artifacts-$(aws sts get-caller-identity --query Account --output text --region "$REGION")"; }
+BUCKET="${ARTIFACT_BUCKET:-${CONTROLS_BUCKET:-$(default_bucket)}}"
+TABLE="${CONTROLS_TABLE:-${PROJECT}-controls-${ENVIRONMENT}}"
 CONTROLS_DIR="$(cd "$(dirname "$0")/../controls" && pwd)"
 
 deploy_control() {

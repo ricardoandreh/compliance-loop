@@ -54,3 +54,6 @@ venv/
 .vscode/
 wheels/
 *.zip
+
+# Configuração local do backend (gerada por scripts/bootstrap.sh); *.tfvars já está acima
+infra/backend.*.hcl

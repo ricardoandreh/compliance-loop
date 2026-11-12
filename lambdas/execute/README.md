@@ -33,38 +33,21 @@ e fixe a nova versão no script.
 ## Provider Cache
 
 O pacote oficial `linux_arm64` do provider é baixado e extraído na estrutura de
-um `.terraform/` já inicializado — não é preciso emular arm64:
+um `.terraform/` já inicializado (não é preciso emular arm64), empacotado em
+zstd e publicado no bucket de artefatos:
 
 ```bash
-mkdir gen && cd gen
-cat > provider.tf <<'TF'
-terraform {
-  required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 6.0" }
-  }
-}
-TF
-TOFU="docker run --rm -u $(id -u):$(id -g) -v $PWD:/w -w /w ghcr.io/opentofu/opentofu:1.12.6"
-$TOFU providers lock -platform=linux_arm64 -platform=linux_amd64   # lock com os hashes do arm64
-$TOFU providers mirror -platform=linux_arm64 /w/mirror              # pacote assinado
-V=6.66.0; D=build/tf-dot-terraform/providers/registry.opentofu.org/hashicorp/aws/$V
-mkdir -p $D/linux_arm64 && : > $D/linux_arm64.lock
-unzip -q mirror/registry.opentofu.org/hashicorp/aws/terraform-provider-aws_${V}_linux_arm64.zip -d $D/linux_arm64
-echo '["/opt/providers"]' > build/tf-dot-terraform/plugin_path
-cp .terraform.lock.hcl build/tf-lock.hcl
-python3.14 - <<'PY'
-import tarfile
-from compression import zstd
-with zstd.open("tf-dot-terraform.tar.zst", "wb", level=3) as z, tarfile.open(fileobj=z, mode="w|") as tar:
-    for name in ("tf-dot-terraform", "tf-lock.hcl"):
-        tar.add(f"build/{name}", arcname=name)
-PY
-aws s3 cp tf-dot-terraform.tar.zst s3://compliance-mvp-terraform-state/provider-cache/
+ARTIFACT_BUCKET=<bucket> bash scripts/build_provider_cache.sh
+# -> s3://<bucket>/provider-cache/tf-dot-terraform.tar.zst (~123 MB, provider AWS 6.66.0)
 ```
 
-A restrição do lock (`~> 6.0`) precisa aceitar a dos `controls/*/remediation.tf`.
-O cache anterior (provider 5.100.0, usado nas séries publicadas) ficou em
-`provider-cache/tf-dot-terraform-aws-5.100.0.tar.gz`.
+O `scripts/bootstrap.sh` chama esse script numa conta nova. A versão do provider
+é a que `provider.tf` resolve (`~> 6.0`, fixada pelo lock que o script gera) e
+precisa aceitar a restrição dos `controls/*/remediation.tf`. Para trocar de
+versão, ajuste `provider.tf`, rode o script de novo e meça uma nova série: o
+cache está no caminho medido (a atualização 5.100.0 -> 6.66.0 custou +1,06 s na
+remediação, ver `results/upgrade/`). O cache anterior (5.100.0, usado nas séries
+até `results/final/`) fica em `provider-cache/tf-dot-terraform-aws-5.100.0.tar.gz`.
 
 ## Arquivo auxiliar
 

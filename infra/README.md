@@ -26,7 +26,7 @@ docker run --rm \
   -v "$HOME/.aws:/root/.aws:ro" \
   -w /project/infra \
   -e AWS_REGION=us-east-1 \
-  ghcr.io/opentofu/opentofu:latest \
+  ghcr.io/opentofu/opentofu:1.12.6 \
   apply -auto-approve
 
 # Ou localmente (se tofu instalado)
@@ -40,6 +40,8 @@ cd infra && tofu apply
 | `region` | `us-east-1` | Região AWS |
 | `environment` | `dev` | Ambiente (dev/staging/prod) |
 | `project_name` | `compliance-loop` | Prefixo para nomes de recursos |
+| `artifact_bucket` | `<project_name>-artifacts-<conta>` | Bucket do state, dos artefatos dos controles e do cache do provider (criado por `scripts/bootstrap.sh`) |
+| `exception_writer_principals` | `[]` (confia na conta) | Quem pode assumir o papel `exception-writer`, o único que escreve exceções |
 | `github_token` | — | PAT para criação de issues |
 | `github_repo` | — | Repositório no formato `owner/repo` |
 
@@ -66,7 +68,13 @@ Exemplos:
 
 ## State
 
-State local (`terraform.tfstate`) para desenvolvimento. Para produção, configurar backend S3.
+Backend S3 no bucket de artefatos, configurado no `init`:
+
+```bash
+tofu -chdir=infra init -backend-config=backend.hcl   # arquivo gerado por scripts/bootstrap.sh
+```
+
+`backend.hcl.example` mostra o formato. Rode sempre a partir da raiz do repositório com `-chdir=infra` (ver README principal).
 
 ## Custo estimado (dev, us-east-1)
 

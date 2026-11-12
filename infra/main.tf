@@ -12,11 +12,10 @@ terraform {
     }
   }
 
-  backend "s3" {
-    bucket = "compliance-mvp-terraform-state"
-    key    = "compliance-loop/dev/terraform.tfstate"
-    region = "us-east-1"
-  }
+  # The bucket, key and region come from infra/backend.hcl, written by
+  # scripts/bootstrap.sh (template in backend.hcl.example):
+  #   tofu -chdir=infra init -backend-config=backend.hcl
+  backend "s3" {}
 }
 
 provider "aws" {
@@ -24,6 +23,14 @@ provider "aws" {
 }
 
 data "aws_caller_identity" "current" {}
+
+locals {
+  # One bucket holds the state, the control artifacts (controls/*/policy.rego
+  # and remediation.tf) and the Execute's provider cache. S3 names are global,
+  # so the default is derived from the account instead of written here;
+  # scripts/bootstrap.sh creates it.
+  artifact_bucket = coalesce(var.artifact_bucket, "${var.project_name}-artifacts-${data.aws_caller_identity.current.account_id}")
+}
 
 # --- Modules ---
 
@@ -67,7 +74,7 @@ module "analyze" {
   environment           = var.environment
   exceptions_table_name = module.knowledge.exceptions_table_name
   exceptions_table_arn  = module.knowledge.exceptions_table_arn
-  policy_bucket         = "compliance-mvp-terraform-state"
+  policy_bucket         = local.artifact_bucket
   opa_layer_arn         = module.opa_layer.layer_arn
   account_id            = data.aws_caller_identity.current.account_id
 }
@@ -83,11 +90,11 @@ module "execute" {
   project_name       = var.project_name
   environment        = var.environment
   tofu_layer_arn     = module.tofu_layer.layer_arn
-  remediation_bucket = "compliance-mvp-terraform-state"
+  remediation_bucket = local.artifact_bucket
   account_id         = data.aws_caller_identity.current.account_id
   protected_bucket_arns = [
     "arn:aws:s3:::${module.monitoring.cloudtrail_bucket_name}",
-    "arn:aws:s3:::compliance-mvp-terraform-state",
+    "arn:aws:s3:::${local.artifact_bucket}",
   ]
 }
 
@@ -173,6 +180,7 @@ module "operations" {
 
 # --- Outputs ---
 
+output "artifact_bucket" { value = local.artifact_bucket }
 output "state_machine_arn" { value = module.orchestration.state_machine_arn }
 output "state_machine_name" { value = module.orchestration.state_machine_name }
 output "controls_table_name" { value = module.knowledge.controls_table_name }

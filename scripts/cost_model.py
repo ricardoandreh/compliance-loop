@@ -34,6 +34,7 @@ import boto3
 
 sys.path.insert(0, os.path.dirname(__file__))
 from classify_cold_starts import REGION, list_executions, run_windows  # noqa: E402
+import deployment  # noqa: E402
 
 PRICES = {
     "sfn_transition": 0.025 / 1000,            # Step Functions Standard, per transition
@@ -52,7 +53,7 @@ PRICES = {
 # line ("Memory Size"), not assumed: a fixed table priced the Execute at 2 GB
 # after it moved to 3008 MB, understating the optimized series.
 FUNCTIONS = ("analyze", "execute", "escalation", "controls-sync", "exception-scheduler-sync")
-SM = "compliance-loop-compliance-loop-dev"
+SM = deployment.STATE_MACHINE
 
 
 def history(sfn, arn):
@@ -72,7 +73,7 @@ def billed(logs, function, since_ms, until_ms):
     """(invocations, billed GB-seconds) from the REPORT lines."""
     n, gb_seconds, token = 0, 0.0, None
     while True:
-        kw = {"logGroupName": f"/aws/lambda/compliance-loop-{function}-dev", "filterPattern": "REPORT",
+        kw = {"logGroupName": deployment.log_group(function), "filterPattern": "REPORT",
               "startTime": since_ms, "endTime": until_ms}
         if token:
             kw["nextToken"] = token
@@ -138,7 +139,7 @@ def main():
 
     functions = {f: billed(logs, f, int(since * 1000), int(until * 1000)) for f in FUNCTIONS}
     groups = {"step-functions": f"/aws/vendedlogs/states/{SM}",
-              **{f: f"/aws/lambda/compliance-loop-{f}-dev" for f in FUNCTIONS}}
+              **{f: deployment.log_group(f) for f in FUNCTIONS}}
     log_bytes = {k: ingested_bytes(cw, g, start, end) for k, g in groups.items()}
 
     transitions = sum(k["transitions"] for k in kinds.values())

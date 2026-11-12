@@ -4,7 +4,11 @@ variable "exceptions_table_arn" { type = string }
 
 resource "aws_s3_bucket" "cloudtrail_logs" {
   bucket = "${var.project_name}-cloudtrail-logs-${var.environment}"
-  tags   = { Name = "${var.project_name}-cloudtrail-logs", Environment = var.environment }
+  # The trail writes here continuously, so a `destroy` finds the bucket
+  # non-empty; the logs are the trail's own copy (the audit numbers come from
+  # the event history and the functions' log groups), so they go with it.
+  force_destroy = true
+  tags          = { Name = "${var.project_name}-cloudtrail-logs", Environment = var.environment }
 }
 
 resource "aws_s3_bucket_public_access_block" "cloudtrail_logs" {

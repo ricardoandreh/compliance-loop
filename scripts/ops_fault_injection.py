@@ -56,16 +56,17 @@ from botocore.exceptions import ConnectionError as AWSConnectionError  # noqa: E
 sys.path.insert(0, os.path.dirname(__file__))
 import close_test_issues as gh  # noqa: E402
 import replay_intake  # noqa: E402
+import deployment  # noqa: E402
 
-REGION = "us-east-1"
-P = "compliance-loop-dev"
-EXCEPTIONS = "compliance-loop-exceptions-dev"
-VIOLATIONS = "compliance-loop-violations-log-dev"
-STREAM_DLQ = "compliance-loop-stream-failures-dev"
+REGION = deployment.REGION
+P = deployment.PREFIX_ENV
+EXCEPTIONS = deployment.name("exceptions")
+VIOLATIONS = deployment.name("violations-log")
+STREAM_DLQ = deployment.name("stream-failures")
 INTAKE_DLQ = replay_intake.QUEUE
-INTAKE_ROLE = "compliance-loop-eventbridge-sfn-dev"
+INTAKE_ROLE = deployment.name("eventbridge-sfn")
 DENY = "fault-injection-deny-start-execution"
-TOPIC = "compliance-loop-alerts-dev"
+TOPIC = deployment.name("alerts")
 RESULTS = "results/ops_fault_injection.json"
 IAM_PROPAGATION = 30
 
@@ -174,7 +175,7 @@ def sync(s):
     # Only the exception-writer role may write the table (its resource policy
     # denies everyone else), so the bad row goes in the way a real one would.
     account = s.client("sts").get_caller_identity()["Account"]
-    creds = s.client("sts").assume_role(RoleArn=f"arn:aws:iam::{account}:role/compliance-loop-exception-writer-dev",
+    creds = s.client("sts").assume_role(RoleArn=f"arn:aws:iam::{account}:role/{deployment.name('exception-writer')}",
                                         RoleSessionName="fault-injection")["Credentials"]
     ddb = boto3.Session(region_name=REGION, aws_access_key_id=creds["AccessKeyId"],
                         aws_secret_access_key=creds["SecretAccessKey"],
@@ -281,7 +282,8 @@ def intake(s):
         time.sleep(IAM_PROPAGATION)
 
         t0 = time.time()
-        s3.create_bucket(Bucket=bucket)
+        kw = {} if REGION == "us-east-1" else {"CreateBucketConfiguration": {"LocationConstraint": REGION}}
+        s3.create_bucket(Bucket=bucket, **kw)
         print(f"created {bucket} at {now()}")
         deadline = t0 + 300
         while time.time() < deadline and depth(sqs, queue) == 0:

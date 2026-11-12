@@ -34,7 +34,9 @@ import statistics
 
 import boto3
 
-REGION = "us-east-1"
+import deployment
+
+REGION = deployment.REGION
 SCENARIOS = {
     # scenario: (bucket prefix, input fields the harness matched, metric, which
     # match the harness kept). The pick rule has to mirror the harness exactly:
@@ -131,7 +133,7 @@ def report_lines(logs, function, since, until):
     """RequestId -> Init Duration in seconds (None when the container was warm)."""
     inits, token = {}, None
     while True:
-        kw = {"logGroupName": f"/aws/lambda/compliance-loop-{function}-dev",
+        kw = {"logGroupName": deployment.log_group(function),
               "filterPattern": "REPORT", "startTime": int(since * 1000),
               "endTime": int(until * 1000)}
         if token:
@@ -156,7 +158,7 @@ def main():
     session = boto3.Session(region_name=REGION)
     sfn, logs = session.client("stepfunctions"), session.client("logs")
     account = session.client("sts").get_caller_identity()["Account"]
-    arn = f"arn:aws:states:{REGION}:{account}:stateMachine:compliance-loop-compliance-loop-dev"
+    arn = f"arn:aws:states:{REGION}:{account}:stateMachine:{deployment.STATE_MACHINE}"
 
     windows = run_windows(args.results)
     since, until = windows[0][1], windows[-1][2]

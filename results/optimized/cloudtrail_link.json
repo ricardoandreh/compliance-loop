@@ -1,0 +1,21 @@
+{
+  "results": "results/optimized",
+  "window": [
+    "2026-09-27T00:37:08.000Z",
+    "2026-09-27T03:25:34.000Z"
+  ],
+  "cloudtrail_write_events_scanned": 1680,
+  "log_rows": 1160,
+  "success_rows": 430,
+  "success_rows_with_successful_write_in_own_session": 430,
+  "success_rows_without_write": [],
+  "failed_rows": 10,
+  "failed_rows_with_only_denied_writes": 10,
+  "remediation_sessions": 470,
+  "sessions_without_log_row": 30,
+  "sessions_without_log_row_by_scenario": {
+    "c10a PutBucketPublicAccessBlock ok": 10,
+    "c10a PutBucketPublicAccessBlock AccessDenied": 10,
+    "c10b PutBucketPublicAccessBlock AccessDenied": 10
+  }
+}

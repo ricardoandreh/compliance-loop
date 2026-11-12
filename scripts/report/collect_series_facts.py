@@ -36,6 +36,7 @@ import boto3
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from classify_cold_starts import REGION, lambda_request_ids, list_executions, run_windows  # noqa: E402
+import deployment  # noqa: E402
 
 # Below this gap between the two tiers, a series is taken to have one tier.
 MIN_TIER_GAP_S = 0.5
@@ -59,7 +60,7 @@ def fast_threshold(durations):
         return 0.0
     width, middle = max(gaps)
     return round(middle, 3) if width >= MIN_TIER_GAP_S else 0.0
-FUNCTION = "compliance-loop-execute-dev"
+FUNCTION = deployment.name("execute")
 
 
 def report_lines(logs, since, until):
@@ -88,7 +89,7 @@ def main():
     session = boto3.Session(region_name=REGION)
     sfn, logs = session.client("stepfunctions"), session.client("logs")
     account = session.client("sts").get_caller_identity()["Account"]
-    arn = f"arn:aws:states:{REGION}:{account}:stateMachine:compliance-loop-compliance-loop-dev"
+    arn = f"arn:aws:states:{REGION}:{account}:stateMachine:{deployment.STATE_MACHINE}"
 
     windows = run_windows(args.results)
     per_round = [len(list_executions(sfn, arn, s, e)) for _, s, e in windows]

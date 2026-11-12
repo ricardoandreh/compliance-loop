@@ -1,0 +1,8 @@
+# Copy to infra/backend.hcl (git-ignored) or let scripts/bootstrap.sh write it.
+# Then: tofu -chdir=infra init -backend-config=backend.hcl
+#
+# The bucket is the artifact bucket (see variable "artifact_bucket"), created by
+# scripts/bootstrap.sh before the first init.
+bucket = "compliance-loop-artifacts-123456789012"
+key    = "compliance-loop/dev/terraform.tfstate"
+region = "us-east-1"

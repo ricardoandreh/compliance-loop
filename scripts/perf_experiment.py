@@ -37,10 +37,13 @@ import uuid
 
 import boto3
 
-REGION = "us-east-1"
-EXECUTE = "compliance-loop-execute-dev"
-ANALYZE = "compliance-loop-analyze-dev"
-BUCKET = "compliance-mvp-terraform-state"
+sys.path.insert(0, os.path.dirname(__file__))
+import deployment  # noqa: E402
+
+REGION = deployment.REGION
+EXECUTE = deployment.name("execute")
+ANALYZE = deployment.name("analyze")
+BUCKET = deployment.artifact_bucket(boto3.client("sts", region_name=REGION).get_caller_identity()["Account"])
 CONTROLS = ["ctrl-s3-public-block", "ctrl-s3-ssl-only", "ctrl-s3-versioning", "ctrl-s3-encryption",
             "ctrl-ebs-encryption-default"]
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")

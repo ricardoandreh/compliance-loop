@@ -47,9 +47,9 @@ def aws_now():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--region", default="us-east-1")
-    ap.add_argument("--prefix", default="compliance-loop")
-    ap.add_argument("--env", default="dev")
+    ap.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
+    ap.add_argument("--prefix", default=os.environ.get("PROJECT_NAME", "compliance-loop"))
+    ap.add_argument("--env", default=os.environ.get("ENVIRONMENT", "dev"))
     ap.add_argument("--interval", type=int, default=30, help="seconds between probe buckets")
     ap.add_argument("--max-minutes", type=int, default=25, help="stop probing after this long")
     ap.add_argument("--late-minutes", type=int, default=5, help="keep watching for late deliveries")
@@ -106,7 +106,8 @@ def main():
         i += 1
         name = f"compliance-probe-{stamp}-{i:02d}"
         t_create = aws_now()
-        s3.create_bucket(Bucket=name)
+        kw = {} if REGION == "us-east-1" else {"CreateBucketConfiguration": {"LocationConstraint": REGION}}
+        s3.create_bucket(Bucket=name, **kw)
         probes.append({"name": name, "t_create": t_create, "t_create_iso": iso(t_create),
                        "since_restore_s": round(t_create - t_put2, 1),
                        "exec_start": None, "delay_s": None, "executions": 0})

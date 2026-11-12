@@ -172,9 +172,18 @@ falha enquanto as duas coisas não baterem.
 
 ## Pré-requisitos
 
-- Python 3.14+ com `boto3` — os scripts de teste e benchmark não rodam sem ele
-- AWS CLI configurado
-- OpenTofu (executado via Docker: `ghcr.io/opentofu/opentofu:1.12.6`)
+- Uma conta AWS com permissão de administrador: o `apply` cria dez papéis IAM,
+  uma trail do CloudTrail, tabelas, filas, funções e agendamentos. Região
+  `us-east-1` por padrão. Não funciona em contas sem `iam:CreateRole` (AWS
+  Academy Learner Lab, por exemplo): a autoridade por incidente e o canal único
+  de exceções dependem de papéis dedicados
+- AWS CLI v2 autenticada (`aws sts get-caller-identity` responde)
+- Docker: o OpenTofu, o OPA dos testes e o build do cache do provider rodam em
+  contêineres, sempre em versão fixada
+- Python 3.14 com `boto3` para os scripts de teste e benchmark (o build do cache do provider aceita o `zstd` da linha de comando no lugar do 3.14):
+  `python3.14 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`
+- `jq`, `zip`, `unzip`, `curl`, `file`
+- Um repositório no GitHub para as issues de escalação (ver *Escalação para o GitHub*)
 
 Versões fixadas (nenhuma é `latest`):
 
@@ -185,46 +194,108 @@ Versões fixadas (nenhuma é `latest`):
 | OpenTofu (layer do Execute) | 1.12.6 | `scripts/build_execute.sh` |
 | OPA (layer do Analyze, testes e CI) | 1.21.0 | `scripts/build_analyze.sh` |
 | Provider AWS (infra) | 6.66.0 | `infra/main.tf`, `infra/.terraform.lock.hcl` |
-| Provider AWS (cache do Execute) | 6.66.0 | `controls/*/remediation.tf` (`~> 6.0`), cache no S3 |
+| Provider AWS (cache do Execute) | 6.66.0 | `lambdas/execute/provider.tf` (`~> 6.0`), `scripts/build_provider_cache.sh` |
 | Memória do Execute | 3008 MB | `infra/modules/execute/main.tf` (medido em `results/perf/`) |
 
-As séries até `results/final/` foram medidas com OPA 1.4.2 e o provider 5.100.0; a
-série atual é `results/optimized/` — ver *Ameaças à validade* no `design.md`.
+As séries até `results/final/` foram medidas com OPA 1.4.2 e o provider 5.100.0;
+a série somativa é `results/optimized/` e a décima, `results/revocation/` (ver
+*Ameaças à validade* no `design.md`).
 
-O `boto3` precisa estar no interpretador que você usa para chamar os scripts.
-Neste ambiente ele vive num virtualenv:
+## Deploy do zero
 
-```bash
-lambdas/analyze/.venv/bin/python scripts/integration_test.py
-lambdas/analyze/.venv/bin/python scripts/benchmark.py --runs 10
-```
-
-O `benchmark.py` repassa o próprio interpretador (`sys.executable`) ao invocar
-o `integration_test.py`, então basta acertar o de fora. Chamar com o `python3`
-do sistema falha com `ModuleNotFoundError: No module named 'boto3'`.
-
-## Deploy
-
-Rode **a partir da raiz do repositório**, com `-chdir=infra`:
+Oito comandos, a partir da raiz do repositório. O `Makefile` tem um alvo para
+cada um (`make bootstrap`, `make init`, `make apply`, `make controls`...).
 
 ```bash
-# 1. Provisionar infraestrutura (empacota e publica as Lambdas junto)
-tofu -chdir=infra init
-tofu -chdir=infra apply
+# 0. Conta e região
+aws sts get-caller-identity
 
-# 2. Deploy dos controles (só quando policy.rego / remediation.tf / control.json mudarem)
-./scripts/deploy_control.sh --all
-```
+# 1. Bucket de artefatos, backend, layers e cache do provider (idempotente)
+bash scripts/bootstrap.sh            # cria <project>-artifacts-<conta>, infra/backend.dev.hcl e infra/dev.tfvars
 
-O código das Lambdas é empacotado pelo `archive_file` durante o `apply` — não
-há passo manual de `zip` + `update-function-code`.
+# 2. Infraestrutura
+tofu -chdir=infra init -reconfigure -backend-config=backend.dev.hcl
+tofu -chdir=infra apply -var-file=dev.tfvars
 
-**Depois de um `apply` que mude o padrão da regra**, regenere a regra viva: o
-Terraform não a atualiza (`ignore_changes`), quem a escreve é o `controls-sync`.
-
-```bash
+# 3. Controles e regra de eventos
+./scripts/deploy_control.sh --all    # publica controls/* no bucket e na tabela
 aws lambda invoke --function-name compliance-loop-controls-sync-dev --payload '{}' /dev/stdout
+
+# 4. Escalação (token e repositório do GitHub no SSM)
+./scripts/setup_ssm_github.sh <token> <owner> <repo>
+
+# 5. Um cenário, depois a suíte inteira
+.venv/bin/python scripts/integration_test.py --test C1
+.venv/bin/python scripts/integration_test.py
 ```
+
+Uma trail recém-criada leva alguns minutos para começar a entregar eventos ao
+EventBridge: numa implantação nova, os cenários disparados 1,2 e 3,4 min depois
+do início da trail não geraram execução, e o de 4,3 min já gerou. A suíte
+espera a trail completar cinco minutos antes de começar (`TRAIL_WARMUP_S=0`
+desliga a espera).
+
+Os scripts derivam os nomes dos recursos das mesmas três variáveis do
+OpenTofu, lidas do ambiente: `AWS_REGION`, `PROJECT_NAME` e `ENVIRONMENT`
+(padrões `us-east-1`, `compliance-loop`, `dev`; ver `scripts/deployment.py`).
+Uma implantação com outro prefixo ou ambiente só precisa exportá-las.
+
+**Dependências de rede do bootstrap.** O binário do OPA, o do OpenTofu e o
+provider AWS vêm de *releases* no GitHub, que ficam fora do ar de vez em quando
+(504 por horas, visto em 09/11/2026). Os scripts tentam de novo, o do OpenTofu
+cai para a imagem `ghcr.io/opentofu/opentofu:1.12.6`, e as layers já
+construídas podem ser mantidas com `--skip-layers`. O cache do provider não tem
+mirror: com o registro indisponível, copie o de uma implantação existente
+(`aws s3 cp s3://<bucket-antigo>/provider-cache/tf-dot-terraform.tar.zst
+s3://<bucket-novo>/provider-cache/`) e rode o bootstrap com `--skip-cache`. O
+`tofu init` da infraestrutura também baixa o provider do registro; um
+`TF_PLUGIN_CACHE_DIR` reaproveita o que já foi baixado entre ambientes.
+
+O bucket de artefatos guarda o state, `controls/*/policy.rego` e
+`remediation.tf` e o cache do provider. Seu nome padrão é
+`<project_name>-artifacts-<id da conta>`, e os scripts derivam o mesmo nome;
+com outro nome (`--bucket` no bootstrap), exporte `ARTIFACT_BUCKET` antes de
+chamar os scripts. O código das Lambdas é empacotado pelo `archive_file`
+durante o `apply`; as layers (`lambdas/analyze/opa_layer.zip`,
+`lambdas/execute/tofu_layer.zip`) são artefatos de build ignorados pelo git,
+que o bootstrap gera.
+
+**Depois de um `apply` que mude o padrão da regra**, regenere a regra viva
+(passo 3): o OpenTofu não a atualiza (`ignore_changes`); quem a escreve é o
+`controls-sync`.
+
+**Este roteiro foi executado do zero em 09/11/2026**, como a cópia `repro` em
+`us-east-2` da mesma conta: bootstrap, `apply` de 84 recursos, seis controles
+publicados e 11 cenários (C1–C6, C8, C10–C12, CTRL-01) contra a cópia, com o
+C8 parando na issue por falta dos parâmetros do GitHub. O que falhou no caminho
+virou correção neste README e nos scripts: a espera pela trail, o *retry* e o
+*fallback* dos downloads, a versão fixa do provider no cache, a remoção dos
+`import` da conta original e a região obrigatória da cópia.
+
+**Segunda cópia na mesma conta** (para reproduzir sem tocar a implantação em
+uso): em **outra região**, com outro ambiente:
+
+```bash
+bash scripts/bootstrap.sh --region us-east-2 --env repro
+make init apply controls sync-rule REGION=us-east-2 ENV=repro
+AWS_DEFAULT_REGION=us-east-2 ./scripts/setup_ssm_github.sh <token> <owner> <repo>
+make integration REGION=us-east-2 ENV=repro
+```
+
+Cada ambiente tem o seu par `infra/backend.<env>.hcl` e `infra/<env>.tfvars`,
+e todos os nomes levam o sufixo do ambiente. A outra região é obrigatória: a
+trail do CloudTrail e a regra do EventBridge são regionais, e dois laços na
+mesma região reagiriam ambos a cada bucket e disputariam os mesmos recursos.
+Os parâmetros do GitHub no SSM também são regionais.
+
+**Custo**: uma execução da suíte (18 cenários, ~16 min) custa cerca de US$
+0,04 em uso variável; a camada de operação (13 alarmes e o painel) custa US$
+4,30 por mês enquanto estiver implantada. `make destroy ENV=<env>` remove tudo,
+menos o bucket de artefatos, que guarda o estado e por isso é apagado à mão
+depois (é versionado: todas as versões antes do bucket). A cópia `repro` foi
+desmontada assim em 09/11/2026; o `destroy` parou uma vez no bucket de logs da
+trail, que a trail enche enquanto existe, e o módulo passou a marcá-lo com
+`force_destroy`.
 
 > **Credenciais com `aws login`.** O provider AWS dentro do container do
 > OpenTofu não lê a sessão do novo `aws login` (`~/.aws/login/cache`). Exporte
@@ -237,31 +308,23 @@ aws lambda invoke --function-name compliance-loop-controls-sync-dev --payload '{
 >   ghcr.io/opentofu/opentofu:1.12.6 -chdir=infra apply
 > ```
 
-> **Não rode de dentro de `infra/`.** Se o `tofu` do seu PATH for o wrapper
-> Docker (`docker run -v "$(pwd):/workspace" -w /workspace ...`), ele monta
-> apenas o diretório atual. A partir de `infra/`, o `lambdas/` fica fora do
-> mount e os módulos de layer falham com:
->
-> ```
-> Call to function "filebase64sha256" failed:
->   open ../lambdas/analyze/opa_layer.zip: no such file or directory
-> ```
->
-> O arquivo existe — é o container que não o enxerga. Rodar da raiz com
-> `-chdir=infra` monta o repositório inteiro e resolve. Os caminhos
-> `${path.module}/../../../lambdas/...` dos módulos estão corretos.
+> **Não rode de dentro de `infra/`.** Os módulos de layer leem
+> `../lambdas/*.zip`; um wrapper Docker que monta só o diretório atual não os
+> enxerga e falha em `filebase64sha256`. Rodar da raiz com `-chdir=infra`
+> monta o repositório inteiro.
 
-Alternativa sem wrapper, invocando o Docker diretamente da raiz:
+### Escalação para o GitHub
 
-```bash
-docker run --rm -v "$(pwd):/work" -v "$HOME/.aws:/root/.aws:ro" \
-  -w /work/infra ghcr.io/opentofu/opentofu:1.12.6 apply
-```
-
-As layers OPA e OpenTofu usam zips pré-construídos
-(`lambdas/analyze/opa_layer.zip`, `lambdas/execute/tofu_layer.zip`), que são
-artefatos de build ignorados pelo git — precisam existir localmente antes do
-`apply`.
+Tudo o que o laço não resolve vira uma issue: as escalações dos cenários e os
+alarmes da operação. A Lambda de escalação lê de `/compliance/github/*` no SSM
+Parameter Store o token, o dono e o repositório (`scripts/setup_ssm_github.sh`
+os grava). Serve qualquer repositório com issues habilitadas, inclusive um
+vazio criado para isso; o token precisa só de leitura e escrita em issues
+daquele repositório (fine-grained PAT). Sem os parâmetros, as escalações ficam
+na fila, vão à DLQ e disparam o alarme `escalation-dlq`; o C8, que afirma a
+issue ligada à linha da trilha, falha, e C4, C9 e CTRL-06 passam deixando as
+escalações sem issue (visto na cópia `repro` em 09/11/2026). `scripts/close_test_issues.py`
+fecha as issues que a suíte abre.
 
 ## Testes
 
@@ -280,17 +343,17 @@ OpenTofu a cada push, sem precisar de conta AWS.
 
 ```bash
 # Offline: unitários, propriedade e contrato
-lambdas/analyze/.venv/bin/python -m pytest tests -q
+.venv/bin/python -m pytest tests -q
 
 # Testes de integração end-to-end (todos os cenários + controles)
-lambdas/analyze/.venv/bin/python scripts/integration_test.py
+.venv/bin/python scripts/integration_test.py
 
 # Teste específico
-lambdas/analyze/.venv/bin/python scripts/integration_test.py --test C1
-lambdas/analyze/.venv/bin/python scripts/integration_test.py --test CTRL-03
+.venv/bin/python scripts/integration_test.py --test C1
+.venv/bin/python scripts/integration_test.py --test CTRL-03
 
 # Com métricas em JSON
-lambdas/analyze/.venv/bin/python scripts/integration_test.py --json
+.venv/bin/python scripts/integration_test.py --json
 ```
 
 ### Políticas e contrato de remediação
@@ -314,16 +377,39 @@ repete a suíte, preserva o JSON bruto de cada rodada e agrega:
 ```bash
 # 10 execuções -> results/<série>/run-NN.json + summary.{json,md}
 # Cada série é uma configuração do sistema: uma pasta por série, nunca misturadas
-lambdas/analyze/.venv/bin/python scripts/benchmark.py --runs 10 --out results/<série>
+.venv/bin/python scripts/benchmark.py --runs 10 --out results/<série>
 
 # Reagrega o que já está em disco, sem tocar na AWS
-lambdas/analyze/.venv/bin/python scripts/benchmark.py --aggregate-only --out results/optimized
+.venv/bin/python scripts/benchmark.py --aggregate-only --out results/optimized
 ```
 
 Reporta n, média, desvio amostral, mediana, amplitude e IC 95% por cenário e
 por hipótese. Latências contam apenas rodadas em que o cenário passou; a taxa
 de sucesso aparece ao lado. Métricas com n=1 são marcadas como observação
 única, não como média.
+
+### Reproduzir os números publicados
+
+Os dados brutos de cada série estão em `results/<série>/run-NN.json`, uma
+pasta por configuração do artefato, e as tags marcam o código que os produziu:
+`v1.0.0` é a série somativa (`results/optimized/`) e `v1.1.0`, a décima
+(`results/revocation/`). Tudo o que agrega esses arquivos roda sem conta AWS:
+
+```bash
+.venv/bin/python scripts/benchmark.py --aggregate-only --out results/optimized   # summary.{json,md}
+.venv/bin/python scripts/compare_series.py                                       # Welch, permutação, Holm, g -> results/comparisons.json
+python3 scripts/build_report_data.py --results results/optimized                 # report_data.json
+```
+
+O que lê a conta (`classify_cold_starts.py`, `verification_consistency.py`,
+`audit_log_completeness.py`, `audit_cloudtrail_link.py`, `cost_model.py`,
+`lambda_sizing.py`, `report/collect_series_facts.py`) consulta logs, tabelas e
+o histórico do CloudTrail da janela da série, e só funciona enquanto eles
+existem: 90 dias para o CloudTrail, 30 dias para os logs das Lambdas. Os
+resultados dessas conferências estão gravados ao lado dos dados
+(`log_audit.json`, `cloudtrail_link.json`, `cost_model.json`,
+`series_facts.json`), e uma série nova (`make series SERIE=<nome>`) refaz o
+caminho inteiro.
 
 ## Cenários validados
 
@@ -427,9 +513,9 @@ todo; `results/optimized/` é a série somativa da monografia — com os `run-NN
 ```bash
 S=results/optimized
 # Com acesso à conta (uma vez por série, enquanto o histórico existe):
-lambdas/analyze/.venv/bin/python scripts/classify_cold_starts.py --results $S
-lambdas/analyze/.venv/bin/python scripts/verification_consistency.py --results $S
-lambdas/analyze/.venv/bin/python scripts/report/collect_series_facts.py --results $S
+.venv/bin/python scripts/classify_cold_starts.py --results $S
+.venv/bin/python scripts/verification_consistency.py --results $S
+.venv/bin/python scripts/report/collect_series_facts.py --results $S
 # Offline, a partir dos arquivos acima:
 python3 scripts/build_report_data.py --results $S --out $S/report_data.json
 python3 scripts/report/render_report.py        # -> results/report.html

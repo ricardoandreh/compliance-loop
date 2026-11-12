@@ -295,9 +295,9 @@ def main():
     # configurations written to the same directory would be aggregated together.
     parser.add_argument("--out", required=True, help="series directory for raw and aggregated output, e.g. results/three-state")
     parser.add_argument("--test", help="restrict every run to one scenario (e.g. C1)")
-    parser.add_argument("--region", default="us-east-1")
-    parser.add_argument("--prefix", default="compliance-loop")
-    parser.add_argument("--env", default="dev")
+    parser.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
+    parser.add_argument("--prefix", default=os.environ.get("PROJECT_NAME", "compliance-loop"))
+    parser.add_argument("--env", default=os.environ.get("ENVIRONMENT", "dev"))
     parser.add_argument("--aggregate-only", action="store_true",
                         help="skip execution; re-aggregate the run-NN.json already in --out")
     parser.add_argument("--settle", type=int, default=30,

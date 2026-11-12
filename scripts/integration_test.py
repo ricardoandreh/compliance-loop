@@ -23,13 +23,13 @@ from datetime import datetime, timezone
 # --- Config ---
 
 REGION = PREFIX = ENV = SFN_ARN = CONTROLS_TABLE = EXCEPTIONS_TABLE = VIOLATIONS_TABLE = None
-EXCEPTION_WRITER_ARN = None
+EXCEPTION_WRITER_ARN = ARTIFACT_BUCKET = None
 s3 = sfn = dynamodb = None
 WAIT_CLOUDTRAIL = 25
 
 
 def init(region, prefix, env):
-    global REGION, PREFIX, ENV, SFN_ARN, CONTROLS_TABLE, EXCEPTIONS_TABLE, VIOLATIONS_TABLE, EXCEPTION_WRITER_ARN
+    global REGION, PREFIX, ENV, SFN_ARN, CONTROLS_TABLE, EXCEPTIONS_TABLE, VIOLATIONS_TABLE, EXCEPTION_WRITER_ARN, ARTIFACT_BUCKET
     global s3, sfn, dynamodb
     REGION, PREFIX, ENV = region, prefix, env
     acct = boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
@@ -38,6 +38,10 @@ def init(region, prefix, env):
     EXCEPTIONS_TABLE = f"{PREFIX}-exceptions-{ENV}"
     VIOLATIONS_TABLE = f"{PREFIX}-violations-log-{ENV}"
     EXCEPTION_WRITER_ARN = f"arn:aws:iam::{acct}:role/{PREFIX}-exception-writer-{ENV}"
+    # Same default name scripts/bootstrap.sh creates; CONTROLS_BUCKET is the old
+    # name of the variable.
+    ARTIFACT_BUCKET = (os.environ.get("ARTIFACT_BUCKET") or os.environ.get("CONTROLS_BUCKET")
+                       or f"{PREFIX}-artifacts-{acct}")
     s3 = boto3.client("s3", region_name=REGION)
     sfn = boto3.client("stepfunctions", region_name=REGION)
     dynamodb = boto3.resource("dynamodb", region_name=REGION)
@@ -46,6 +50,36 @@ def init(region, prefix, env):
     CLOCK_OFFSET = measure_clock_offset()
     if abs(CLOCK_OFFSET) >= 1.0:
         log(f"local clock is {CLOCK_OFFSET:+.2f}s off AWS; metrics compensated", "WARN")
+    trail_warmup()
+
+
+TRAIL_WARMUP_S = 300
+
+
+def trail_warmup():
+    """Wait out the silence of a trail that has just started logging.
+
+    EventBridge only receives a trail's events a few minutes after the trail
+    starts: in a fresh deployment (us-east-2, 2026-11-09) the scenarios run 1.2
+    and 3.4 min after StartLoggingTime got no execution at all, while the one at
+    4.3 min did. A scenario run inside that window fails for no fault of the
+    loop, so the suite waits until the trail is five minutes old. Set
+    TRAIL_WARMUP_S=0 to skip (for example, right after a reconfiguration you
+    want to probe).
+    """
+    budget = float(os.environ.get("TRAIL_WARMUP_S", TRAIL_WARMUP_S))
+    if budget <= 0:
+        return
+    try:
+        status = boto3.client("cloudtrail", region_name=REGION).get_trail_status(Name=f"{PREFIX}-s3-events-{ENV}")
+        started = status["StartLoggingTime"].timestamp()
+    except Exception as e:
+        log(f"could not read the trail status ({e}); not waiting for warm-up", "WARN")
+        return
+    remaining = budget - (time.time() - started)
+    if remaining > 0:
+        log(f"trail started logging {budget - remaining:.0f}s ago; waiting {remaining:.0f}s for EventBridge delivery to begin", "WARN")
+        time.sleep(remaining)
 
 
 # --- Helpers ---
@@ -56,7 +90,9 @@ def log(msg, level="INFO"):
 
 
 def create_bucket(name):
-    s3.create_bucket(Bucket=name)
+    # Outside us-east-1, S3 requires the region as a location constraint.
+    kw = {} if REGION == "us-east-1" else {"CreateBucketConfiguration": {"LocationConstraint": REGION}}
+    s3.create_bucket(Bucket=name, **kw)
 
 
 def wait_quiesce(timeout=60):
@@ -890,7 +926,7 @@ def test_c10():
     metrics = {}
     lam = boto3.client("lambda", region_name=REGION)
     s3c = boto3.client("s3", region_name=REGION)
-    bucket = os.environ.get("CONTROLS_BUCKET", "compliance-mvp-terraform-state")
+    bucket = ARTIFACT_BUCKET
     create_bucket(classified)
     create_bucket(elsewhere)
     try:
@@ -1331,9 +1367,9 @@ TESTS = [
 
 def main():
     parser = argparse.ArgumentParser(description="MAPE-K Integration Tests")
-    parser.add_argument("--region", default="us-east-1")
-    parser.add_argument("--prefix", default="compliance-loop")
-    parser.add_argument("--env", default="dev")
+    parser.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
+    parser.add_argument("--prefix", default=os.environ.get("PROJECT_NAME", "compliance-loop"))
+    parser.add_argument("--env", default=os.environ.get("ENVIRONMENT", "dev"))
     parser.add_argument("--test", help="Run specific test (e.g., C1)")
     parser.add_argument("--json", action="store_true", help="Output metrics as JSON")
     parser.add_argument("--json-out", metavar="PATH",

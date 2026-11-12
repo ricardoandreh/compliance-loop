@@ -29,12 +29,17 @@ Usage:
 
 import argparse
 import json
+import os
+import sys
 
 import boto3
 
-REGION = "us-east-1"
-QUEUE = "compliance-loop-intake-failures-dev"
-STATE_MACHINE = "compliance-loop-compliance-loop-dev"
+sys.path.insert(0, os.path.dirname(__file__))
+import deployment  # noqa: E402
+
+REGION = deployment.REGION
+QUEUE = deployment.name("intake-failures")
+STATE_MACHINE = deployment.STATE_MACHINE
 
 
 def replay(session, dry_run=False):
