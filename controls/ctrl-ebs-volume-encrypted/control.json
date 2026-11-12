@@ -1,17 +1,65 @@
 {
-  "control_id": {"S": "ctrl-ebs-volume-encrypted"},
-  "description": {"S": "EBS volumes must be encrypted (detective: remediation is manual)"},
-  "cloudtrail_events": {"SS": ["CreateVolume"]},
-  "rego_policy_package": {"S": "ebs_volume_encrypted"},
-  "rego_s3_key": {"S": "controls/ctrl-ebs-volume-encrypted/policy.rego"},
-  "remediation": {"S": "manual"},
-  "resource_type": {"S": "aws_ebs_volume"},
-  "severity": {"S": "HIGH"},
-  "policy_version": {"S": "v1.0"},
-  "fetch_config": {"M": {
-    "service": {"S": "ec2"},
-    "method": {"S": "describe_volumes"},
-    "params": {"M": {"VolumeIds": {"L": [{"S": "{resource_id}"}]}}},
-    "result_path": {"S": "Volumes.0"}
-  }}
+  "control_id": {
+    "S": "ctrl-ebs-volume-encrypted"
+  },
+  "description": {
+    "S": "EBS volumes must be encrypted (detective: remediation is manual)"
+  },
+  "cloudtrail_events": {
+    "SS": [
+      "CreateVolume"
+    ]
+  },
+  "rego_policy_package": {
+    "S": "ebs_volume_encrypted"
+  },
+  "rego_s3_key": {
+    "S": "controls/ctrl-ebs-volume-encrypted/policy.rego"
+  },
+  "remediation": {
+    "S": "manual"
+  },
+  "resource_type": {
+    "S": "aws_ebs_volume"
+  },
+  "severity": {
+    "S": "HIGH"
+  },
+  "nist_sp800_53": {
+    "SS": [
+      "SC-28"
+    ]
+  },
+  "iso_iec_27002": {
+    "SS": [
+      "8.24"
+    ]
+  },
+  "policy_version": {
+    "S": "v1.0"
+  },
+  "fetch_config": {
+    "M": {
+      "service": {
+        "S": "ec2"
+      },
+      "method": {
+        "S": "describe_volumes"
+      },
+      "params": {
+        "M": {
+          "VolumeIds": {
+            "L": [
+              {
+                "S": "{resource_id}"
+              }
+            ]
+          }
+        }
+      },
+      "result_path": {
+        "S": "Volumes.0"
+      }
+    }
+  }
 }

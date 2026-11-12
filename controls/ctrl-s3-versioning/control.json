@@ -26,6 +26,16 @@
   "severity": {
     "S": "MEDIUM"
   },
+  "nist_sp800_53": {
+    "SS": [
+      "CP-9"
+    ]
+  },
+  "iso_iec_27002": {
+    "SS": [
+      "8.13"
+    ]
+  },
   "policy_version": {
     "S": "v1.0"
   },

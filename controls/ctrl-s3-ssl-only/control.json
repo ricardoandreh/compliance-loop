@@ -27,6 +27,17 @@
   "severity": {
     "S": "HIGH"
   },
+  "nist_sp800_53": {
+    "SS": [
+      "SC-8"
+    ]
+  },
+  "iso_iec_27002": {
+    "SS": [
+      "8.24",
+      "5.14"
+    ]
+  },
   "policy_version": {
     "S": "v1.0"
   },
