@@ -1,5 +1,5 @@
 # Entry points for a fresh account and for the day-to-day loop. Each target is
-# one documented command; see README.md for what they do and in which order.
+# one documented command; see REPRODUCING.md for what they do and in which order.
 #
 # TOFU: `tofu` on the PATH, or the Docker image (run from the repo root, so the
 # container sees lambdas/ as well as infra/):

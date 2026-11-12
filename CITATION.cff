@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "Se usar este artefato, cite a monografia que ele acompanha."
+title: "compliance-loop"
+abstract: "Laço MAPE-K orientado a eventos que detecta, remedia e verifica desvios de conformidade em recursos da AWS, com exceções com prazo e autoridade de remediação por incidente."
+type: software
+authors:
+  - family-names: "Lima"
+    given-names: "Ricardo André da Silva"
+repository-code: "https://github.com/ricardoandreh/compliance-loop"
+license: MIT
+version: "1.1.0"
+date-released: "2026-10-29"
+keywords:
+  - conformidade contínua
+  - computação autonômica
+  - MAPE-K
+  - política como código
+  - computação em nuvem
+preferred-citation:
+  type: thesis
+  title: "Conformidade em Tempo de Execução com Governança de Exceções: um laço de realimentação MAPE-K orientado a eventos"
+  authors:
+    - family-names: "Lima"
+      given-names: "Ricardo André da Silva"
+  year: 2026
+  thesis-type: "Trabalho de Conclusão de Curso (Bacharelado em Sistemas de Informação)"
+  institution:
+    name: "Instituto Federal Catarinense"
+    city: "Araquari"
+    region: "SC"
+    country: "BR"

@@ -13,7 +13,7 @@
 #
 # A second copy in the same account must go to another region: the CloudTrail
 # trail and the EventBridge rule are regional, and two loops in one region would
-# both react to every bucket, racing each other. README, "Segunda cópia".
+# both react to every bucket, racing each other. REPRODUCING.md, "Segunda cópia".
 #
 # Usage: bash scripts/bootstrap.sh [--region us-east-1] [--project compliance-loop]
 #                                  [--env dev] [--bucket NAME] [--skip-layers] [--skip-cache]

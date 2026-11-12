@@ -74,7 +74,7 @@ Backend S3 no bucket de artefatos, configurado no `init`:
 tofu -chdir=infra init -backend-config=backend.hcl   # arquivo gerado por scripts/bootstrap.sh
 ```
 
-`backend.hcl.example` mostra o formato. Rode sempre a partir da raiz do repositório com `-chdir=infra` (ver README principal).
+`backend.hcl.example` mostra o formato. Rode sempre a partir da raiz do repositório com `-chdir=infra` (ver `REPRODUCING.md`).
 
 ## Custo estimado (dev, us-east-1)
 
